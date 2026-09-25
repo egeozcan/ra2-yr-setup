@@ -111,6 +111,10 @@ typedef struct {
 #pragma pack(pop)
 
 _Static_assert(sizeof(NodeName) == 0x85, "NodeNameType size");
+_Static_assert(offsetof(NodeName, StartPoint) == 0x5B, "NodeNameType.StartPoint");
+_Static_assert(offsetof(NodeName, Team) == 0x63, "NodeNameType.Team");
+_Static_assert(offsetof(Session, Config.Slots.Starts) == 0xA4, "AISlots.Starts at 0xA8B2DC");
+_Static_assert(offsetof(Session, Config.Slots.Allies) == 0xC4, "AISlots.Allies at 0xA8B2FC");
 _Static_assert(offsetof(Session, Config) == 0x18, "Session.Config");
 _Static_assert(offsetof(GameModeOptions, Money) == 0x0C, "Money");
 _Static_assert(offsetof(GameModeOptions, GameSpeed) == 0x18, "GameSpeed");
@@ -167,6 +171,24 @@ static void ini_str(const char *sec, const char *key, const char *def, char *out
 /* ---- the replacement for the main menu ---- */
 static int started;
 
+/* Start positions and teams go where the skirmish menu puts them; the game's own code then uses them:
+ * ScenarioClass::AssignHouses (0x687F10) copies them into each house (HouseClass +0x16058 start,
+ * +0x1605C team), MPGameModeClass vtable +0x80 (0x5D6BE0) places houses with a fixed start, +0x84 gives
+ * the rest random free starts, and +0x88 AllyTeams (0x5D74A0) allies every two houses with the same team.
+ * The game's values: start 0..7 or -2 = random (-1 would index the start list at -1), team 0..3 = A..D or
+ * -1 = none. yspawn.ini uses -1 for random start. */
+static int ini_start(const char *sec)
+{
+    int v = ini_int(sec, "Start", -1);
+    return v >= 0 && v < 8 ? v : -2;
+}
+
+static int ini_team(const char *sec)
+{
+    int v = ini_int(sec, "Team", -1);
+    return v >= 0 && v < 4 ? v : -1;
+}
+
 static char GFASTCALL spawn_start(char unused)
 {
     (void)unused;
@@ -182,7 +204,9 @@ static char GFASTCALL spawn_start(char unused)
     int mode = ini_int("Settings", "GameMode", 1);
     int country = ini_int("Settings", "Country", 0);
     int color = ini_int("Settings", "Color", 0);
-    logmsg("scenario=%s mode=%d country=%d color=%d", scenario, mode, country, color);
+    int start = ini_start("Settings");
+    int team = ini_team("Settings");
+    logmsg("scenario=%s mode=%d country=%d color=%d start=%d team=%d", scenario, mode, country, color, start, team);
 
     *GAME_ISACTIVE = 1;
     INIT_COMMON_DIALOGS();
@@ -253,11 +277,13 @@ static char GFASTCALL spawn_start(char unused)
         o->Slots.Countries[i] = c;
         o->Slots.Colors[i] = ini_int(sec, "Color", i);
         o->Slots.Difficulties[i] = ini_int(sec, "Difficulty", 2);   /* 0 hard, 1 medium, 2 easy */
+        o->Slots.Starts[i] = ini_start(sec);
+        o->Slots.Allies[i] = ini_team(sec);
         if (!ais)
             o->AIDifficulty = o->Slots.Difficulties[i];
         ais++;
-        logmsg("AI slot %d: country %d color %d difficulty %d", i, c, o->Slots.Colors[i],
-               o->Slots.Difficulties[i]);
+        logmsg("AI slot %d: country %d color %d difficulty %d start %d team %d", i, c, o->Slots.Colors[i],
+               o->Slots.Difficulties[i], o->Slots.Starts[i], o->Slots.Allies[i]);
     }
     o->AIPlayers = ais;
 
@@ -265,8 +291,10 @@ static char GFASTCALL spawn_start(char unused)
     NodeName *node = GAME_ALLOC(sizeof *node);
     memset(node, 0, sizeof *node);
     MultiByteToWideChar(CP_ACP, 0, name, -1, node->Name, 20);
-    node->Country = country;
-    node->Color = color;
+    node->Country = node->InitialCountry = country;
+    node->Color = node->InitialColor = color;
+    node->StartPoint = node->InitialStartPoint = start;   /* read through 0x696F50 */
+    node->Team = node->InitialTeam = team;                 /* read directly (+0x63) */
     node->Time = -1;
 
     DynVec *v = NODE_ARRAY;

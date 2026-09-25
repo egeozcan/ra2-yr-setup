@@ -88,3 +88,23 @@ def preview(map_text):
     if w <= 0 or h <= 0 or len(out) < w * h * 3:
         return None
     return w, h, bytes(out[:w * h * 3])
+
+
+def start_points(map_text):
+    """{start position (0-7): (x, y)} in preview pixels. A map cell (cx, cy) (waypoint value cy*1000+cx)
+    lies at x = cx - cy + W, y = (cx + cy - W) / 2 on the preview, W being the width in [Map] Size;
+    this matches the red start markers the game draws into the preview to within a pixel."""
+    width, points, sec = None, {}, None
+    for line in map_text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            sec = line[1:line.find("]")]
+        elif "=" in line:
+            key, value = line.split("=", 1)
+            if sec == "Map" and key == "Size":
+                width = int(value.split(",")[2])
+            elif sec == "Waypoints" and key.isdigit() and int(key) < 8:
+                points[int(key)] = int(value)
+    if width is None:
+        return {}
+    return {n: (v % 1000 - v // 1000 + width, (v % 1000 + v // 1000 - width) / 2) for n, v in points.items()}

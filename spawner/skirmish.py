@@ -7,8 +7,8 @@ usage: skirmish.py                    open the window
        skirmish.py --install-desktop  add "Skirmish Setup" to the desktop's application menu
 
 Needs the system Python (/usr/bin/python3), which has GTK 4 and libadwaita; the linuxbrew python3
-on PATH has no gi module. The last used settings are kept in ~/.config/ra2-yr-setup/skirmish.json;
-spawner/yspawn.ini (used by spawn.py run) is not changed.
+on PATH has no gi module. The last used settings are kept in ~/.config/ra2-yr-setup/skirmish.json
+and named presets in skirmish-presets.json next to it; spawner/yspawn.ini (used by spawn.py run) is not changed.
 """
 import configparser, json, os, random, subprocess, sys, threading
 import gi
@@ -23,6 +23,7 @@ import mappreview, mixextract
 
 APP_ID = "local.ra2yr.SkirmishSetup"
 SAVED = os.path.expanduser("~/.config/ra2-yr-setup/skirmish.json")
+PRESETS = os.path.expanduser("~/.config/ra2-yr-setup/skirmish-presets.json")
 DESKTOP = os.path.expanduser("~/.local/share/applications/ra2yr-skirmish-setup.desktop")
 
 RANDOM = -1
@@ -30,6 +31,7 @@ COUNTRIES = ["America", "Korea", "France", "Germany", "Britain", "Libya", "Iraq"
 COLORS = [("Gold", "#e8c43a"), ("Red", "#d02a2a"), ("Blue", "#3160d8"), ("Green", "#35a53a"),
           ("Orange", "#ee8a24"), ("Sky blue", "#43c4e8"), ("Purple", "#8a45c9"), ("Pink", "#f070b4")]
 DIFFICULTIES = ["Hard", "Medium", "Easy"]          # yspawn.ini: 0 hard, 1 medium, 2 easy
+TEAMS = ["None", "A", "B", "C", "D"]               # yspawn.ini Team: -1 none, 0..3 = A..D
 SPEEDS = ["Fastest", "Faster", "Fast", "Normal", "Slow", "Slower", "Slowest"]   # GameSpeed 0..6
 SWITCHES = [("Bases", "Start with a base (MCV)"), ("ShortGame", "Short game"),
             ("Superweapons", "Superweapons"), ("Crates", "Crates"), ("MCVRedeploy", "MCV repacks"),
@@ -44,29 +46,56 @@ def default_settings():
     ini = spawn.read_config()
     s = ini["Settings"]
     out = {"Map": s.get("Map", "Tsunami.mmx"), "Name": s.get("Name", "Commander"), "Country": s.getint("Country", 0),
-           "Color": s.getint("Color", 0), "GameSpeed": s.getint("GameSpeed", 0)}
+           "Color": s.getint("Color", 0), "Start": s.getint("Start", RANDOM), "Team": s.getint("Team", RANDOM),
+           "GameSpeed": s.getint("GameSpeed", 0)}
     for key, _, lo, _, _ in NUMBERS:
         out[key] = s.getint(key, lo)
     for key, _ in SWITCHES:
         out[key] = bool(s.getint(key, 1))
     out["AI"] = [{"Country": ini[sec].getint("Country", 8), "Color": ini[sec].getint("Color", 1),
-                  "Difficulty": ini[sec].getint("Difficulty", 2)}
+                  "Difficulty": ini[sec].getint("Difficulty", 2), "Start": ini[sec].getint("Start", RANDOM),
+                  "Team": ini[sec].getint("Team", RANDOM)}
                  for sec in ini.sections() if sec.startswith("AI")]
     return out
 
 
-def load_settings():
+def normalize(saved):
+    """Settings as the window expects them: defaults filled in, and a copy so nothing is shared with `saved`."""
     s = default_settings()
-    try:
-        s.update(json.load(open(SAVED)))
-    except (OSError, ValueError):
-        pass
+    s.update(json.loads(json.dumps(saved)))
+    for p in [s] + s["AI"]:   # settings saved before start positions and teams existed
+        p.setdefault("Start", RANDOM)
+        p.setdefault("Team", RANDOM)
     return s
 
 
+def read_json(path):
+    try:
+        return json.load(open(path))
+    except (OSError, ValueError):
+        return {}
+
+
+def write_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    json.dump(data, open(path, "w"), indent=1)
+
+
+def load_settings():
+    return normalize(read_json(SAVED))
+
+
 def save_settings(s):
-    os.makedirs(os.path.dirname(SAVED), exist_ok=True)
-    json.dump(s, open(SAVED, "w"), indent=1)
+    write_json(SAVED, s)
+
+
+def load_presets():
+    """{name: settings} of the presets saved under a name, sorted by name."""
+    return dict(sorted(read_json(PRESETS).items(), key=lambda kv: kv[0].lower()))
+
+
+def save_presets(presets):
+    write_json(PRESETS, presets)
 
 
 def problems(s, map_info):
@@ -79,9 +108,16 @@ def problems(s, map_info):
         out.append(f"{short_name(map_info)} has room for {map_info['max']} players; you have {players}.")
     if not s["AI"]:
         out.append("Add at least one opponent.")
-    fixed = [c for c in [s["Color"]] + [a["Color"] for a in s["AI"]] if c != RANDOM]
-    if len(fixed) != len(set(fixed)):
-        out.append("Two players have the same colour.")
+    everyone = [s] + s["AI"]
+    for key, what in (("Color", "colour"), ("Start", "start position")):
+        fixed = [p[key] for p in everyone if p[key] != RANDOM]
+        if len(fixed) != len(set(fixed)):
+            out.append(f"Two players have the same {what}.")
+    if map_info and any(p["Start"] >= map_info["max"] for p in everyone):
+        out.append(f"{short_name(map_info)} has only {map_info['max']} start positions.")
+    teams = {p["Team"] for p in everyone}
+    if len(teams) == 1 and RANDOM not in teams:
+        out.append("Everyone is on the same team, so there is nobody to fight.")
     return out
 
 
@@ -97,13 +133,14 @@ def build_config(s):
     name = "".join(ch for ch in s["Name"] if 32 <= ord(ch) < 127).strip()[:19] or "Commander"
     # GameMode 1 = Battle: mpmodesmd.ini says it is the only mode that allows AI players
     ini["Settings"] = {"Map": s["Map"], "Name": name, "Country": pick(s["Country"]), "Color": colors[0],
-                       "GameMode": 1, "GameSpeed": s["GameSpeed"]}
+                       "Start": s["Start"], "Team": s["Team"], "GameMode": 1, "GameSpeed": s["GameSpeed"]}
     for key, *_ in NUMBERS:
         ini["Settings"][key] = str(s[key])
     for key, _ in SWITCHES:
         ini["Settings"][key] = "1" if s[key] else "0"
     for i, ai in enumerate(s["AI"], 1):
-        ini[f"AI{i}"] = {"Country": pick(ai["Country"]), "Color": colors[i], "Difficulty": ai["Difficulty"]}
+        ini[f"AI{i}"] = {"Country": pick(ai["Country"]), "Color": colors[i], "Difficulty": ai["Difficulty"],
+                         "Start": ai["Start"], "Team": ai["Team"]}
     return ini
 
 
@@ -112,6 +149,7 @@ CSS = "".join(f".swatch-{i} {{ background: {rgb}; border-radius: 3px; min-width:
               for i, (_, rgb) in enumerate(COLORS)) + """
 .swatch-random { border: 1px dashed alpha(currentColor, .5); border-radius: 3px; min-width: 12px; min-height: 12px; }
 .map-preview { border-radius: 8px; background: black; }
+.players { padding: 12px; }
 """
 
 
@@ -147,37 +185,20 @@ def choice_model(names, with_random):
     return Gtk.StringList.new((["Random"] if with_random else []) + list(names))
 
 
-class OpponentRow(Adw.ActionRow):
-    def __init__(self, win, ai):
-        super().__init__()
-        self.win, self.ai = win, ai
-        self.country = Gtk.DropDown(model=choice_model(COUNTRIES, True), valign=Gtk.Align.CENTER)
-        self.country.set_selected(ai["Country"] + 1)
-        self.color = Gtk.DropDown(model=choice_model([c for c, _ in COLORS], True), valign=Gtk.Align.CENTER)
-        self.color.set_factory(color_factory())
-        self.color.set_selected(ai["Color"] + 1)
-        self.difficulty = Gtk.DropDown(model=choice_model(DIFFICULTIES, False), valign=Gtk.Align.CENTER)
-        self.difficulty.set_selected(ai["Difficulty"])
-        remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
-                            tooltip_text="Remove opponent", css_classes=["flat"])
-        for w in (self.country, self.color, self.difficulty, remove):
-            self.add_suffix(w)
-        self.country.connect("notify::selected", self.changed)
-        self.color.connect("notify::selected", self.changed)
-        self.difficulty.connect("notify::selected", self.changed)
-        remove.connect("clicked", lambda _: win.remove_ai(self))
-
-    def changed(self, *_):
-        self.ai.update(Country=self.country.get_selected() - 1, Color=self.color.get_selected() - 1,
-                       Difficulty=self.difficulty.get_selected())
-        self.win.refresh()
+def dropdown(model, selected, on_change, factory=None):
+    d = Gtk.DropDown(model=model, valign=Gtk.Align.CENTER)
+    if factory:
+        d.set_factory(factory)
+    d.set_selected(selected)
+    d.connect("notify::selected", lambda w, _: on_change(w.get_selected()))
+    return d
 
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app, dry_run):
         super().__init__(application=app, title="Skirmish Setup", default_width=1150, default_height=780)
         self.s, self.dry_run = load_settings(), dry_run
-        self.maps, self.map_rows, self.ai_rows = {}, [], []
+        self.maps, self.map_rows, self.start_points, self.preview_size = {}, [], {}, None
         self.game_running, self.launched_at, self.installing = False, 0, False
 
         # header
@@ -185,6 +206,7 @@ class Window(Adw.ApplicationWindow):
         self.start.connect("clicked", self.on_start)
         self.title = Adw.WindowTitle(title="Skirmish Setup", subtitle="Yuri's Revenge")
         header = Adw.HeaderBar(title_widget=self.title)
+        header.pack_start(self.build_presets_menu())
         header.pack_end(self.start)
 
         # banners: launcher not installed / Steam not running
@@ -210,12 +232,9 @@ class Window(Adw.ApplicationWindow):
         sidebar.append(random_map)
 
         # content: settings
-        page = Adw.PreferencesPage()
+        page = self.page = Adw.PreferencesPage()
         page.add(self.build_map_group())
-        page.add(self.build_player_group())
-        page.add(self.build_ai_group())
-        page.add(self.build_game_group())
-        page.add(self.build_rules_group())
+        self.build_settings_groups()
 
         split = Adw.OverlaySplitView(sidebar=sidebar, content=page, min_sidebar_width=260,
                                      max_sidebar_width=340, sidebar_width_fraction=0.28)
@@ -233,42 +252,87 @@ class Window(Adw.ApplicationWindow):
         self.refresh()
 
     # ---- groups ----
+    def build_settings_groups(self):
+        """The groups below the map, built from self.s; called again to show loaded settings."""
+        for g in getattr(self, "settings_groups", []):
+            self.page.remove(g)
+        self.settings_groups = [self.build_players_group(), self.build_game_group(), self.build_rules_group()]
+        for g in self.settings_groups:
+            self.page.add(g)
+
     def build_map_group(self):
         g = Adw.PreferencesGroup()
-        self.preview = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, height_request=240,
+        self.preview = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, height_request=260,
                                    css_classes=["map-preview"], overflow=Gtk.Overflow.HIDDEN)
+        self.marks = Gtk.DrawingArea(can_target=False)
+        self.marks.set_draw_func(self.draw_marks)
+        overlay = Gtk.Overlay(child=self.preview)
+        overlay.add_overlay(self.marks)
         self.map_title = Gtk.Label(css_classes=["title-2"], xalign=0, margin_top=12)
         self.map_sub = Gtk.Label(css_classes=["dim-label"], xalign=0)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        for w in (self.preview, self.map_title, self.map_sub):
+        for w in (overlay, self.map_title, self.map_sub):
             box.append(w)
         g.add(box)
         return g
 
-    def build_player_group(self):
-        g = Adw.PreferencesGroup(title="You")
-        name = Adw.EntryRow(title="Name", text=self.s["Name"], max_length=19)
-        name.connect("changed", lambda e: self.set("Name", e.get_text()))
-        country = Adw.ComboRow(title="Country", model=choice_model(COUNTRIES, True))
-        country.set_selected(self.s["Country"] + 1)
-        country.connect("notify::selected", lambda r, _: self.set("Country", r.get_selected() - 1))
-        color = Adw.ComboRow(title="Colour", model=choice_model([c for c, _ in COLORS], True))
-        color.set_factory(color_factory())
-        color.set_selected(self.s["Color"] + 1)
-        color.connect("notify::selected", lambda r, _: self.set("Color", r.get_selected() - 1))
-        for r in (name, country, color):
-            g.add(r)
-        return g
-
-    def build_ai_group(self):
-        self.ai_group = Adw.PreferencesGroup(title="Opponents", description="Country, colour and difficulty")
+    def build_players_group(self):
+        g = self.players_group = Adw.PreferencesGroup(title="Players")
         self.add_ai_button = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add opponent",
                                         css_classes=["flat"], valign=Gtk.Align.CENTER)
         self.add_ai_button.connect("clicked", self.on_add_ai)
-        self.ai_group.set_header_suffix(self.add_ai_button)
-        for ai in self.s["AI"]:
-            self.add_ai_row(ai)
-        return self.ai_group
+        g.set_header_suffix(self.add_ai_button)
+        name = Adw.EntryRow(title="Your name", text=self.s["Name"], max_length=19)
+        name.connect("changed", lambda e: self.set("Name", e.get_text()))
+        g.add(name)
+        self.player_grid = Gtk.Grid(column_spacing=8, row_spacing=8)
+        card = Gtk.Box(css_classes=["card", "players"], margin_top=12)
+        card.append(self.player_grid)
+        g.add(card)
+        self.rebuild_players()
+        return g
+
+    def rebuild_players(self):
+        """One grid row per player: you first, then the AI opponents."""
+        grid = self.player_grid
+        while (child := grid.get_first_child()) is not None:
+            grid.remove(child)
+        info = self.current_map()
+        starts = info["max"] if info else 8
+        for col, text in enumerate(["", "Country", "Colour", "Team", "Start", "Difficulty"]):
+            grid.attach(Gtk.Label(label=text, xalign=0, css_classes=["caption-heading", "dim-label"]), col, 0, 1, 1)
+        for row, p in enumerate([self.s] + self.s["AI"], 1):
+            human = p is self.s
+            if p["Start"] >= starts:
+                p["Start"] = RANDOM
+            upd = lambda key, off=-1, p=p: (lambda v: self.set_player(p, key, v + off))
+            label = Gtk.Label(label="You" if human else f"AI {row - 1}", xalign=0, width_chars=4,
+                              css_classes=["heading"] if human else [])
+            cells = [label,
+                     dropdown(choice_model(COUNTRIES, True), p["Country"] + 1, upd("Country")),
+                     dropdown(choice_model([c for c, _ in COLORS], True), p["Color"] + 1, upd("Color"),
+                              color_factory()),
+                     dropdown(Gtk.StringList.new(TEAMS), p["Team"] + 1, upd("Team")),
+                     dropdown(choice_model([str(n) for n in range(1, starts + 1)], True), p["Start"] + 1,
+                              upd("Start"))]
+            if human:
+                cells.append(Gtk.Label(label="Human", xalign=0, css_classes=["dim-label"]))
+            else:
+                cells.append(dropdown(Gtk.StringList.new(DIFFICULTIES), p["Difficulty"], upd("Difficulty", 0)))
+                remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
+                                    tooltip_text="Remove opponent", css_classes=["flat"])
+                remove.connect("clicked", lambda _, p=p: self.remove_ai(p))
+                cells.append(remove)
+            cells[1].set_hexpand(True)
+            cells[2].set_hexpand(True)
+            for col, w in enumerate(cells):
+                grid.attach(w, col, row, 1, 1)
+        self.marks.queue_draw()
+
+    def set_player(self, p, key, value):
+        p[key] = value
+        self.marks.queue_draw()
+        self.refresh()
 
     def build_game_group(self):
         g = Adw.PreferencesGroup(title="Game")
@@ -315,7 +379,7 @@ class Window(Adw.ApplicationWindow):
                 issues.insert(0, "Steam is not running.")
         self.start.set_sensitive(not issues)
         self.start.set_tooltip_text(issues[0] if issues else None)
-        self.ai_group.set_description(issues[0] if issues and self.maps else "Country, colour and difficulty")
+        self.players_group.set_description(issues[0] if issues and self.maps else None)
 
     def check_environment(self):
         # the game takes a few seconds to appear after a start; count it as running meanwhile
@@ -376,6 +440,7 @@ class Window(Adw.ApplicationWindow):
         players = f"{m['min']}–{m['max']} players" if m["min"] != m["max"] else f"{m['max']} players"
         self.map_sub.set_text(f"{m['file']} · {players}")
         self.preview.set_paintable(self.map_texture(m))
+        self.rebuild_players()   # the Start choices depend on the map
         self.refresh()
 
     def map_texture(self, m):
@@ -383,7 +448,9 @@ class Window(Adw.ApplicationWindow):
             info = spawn.map_info(m["file"])
             text = mixextract.extract(info["data"], info["map"].lower() + ".map").decode("latin-1")
             w, h, rgb = mappreview.preview(text)
+            self.start_points, self.preview_size = mappreview.start_points(text), (w, h)
         except Exception:
+            self.start_points, self.preview_size = {}, None
             return None
         # double the pixels so the scaled-up picture stays crisp
         rows = [rgb[y * w * 3:(y + 1) * w * 3] for y in range(h)]
@@ -391,39 +458,132 @@ class Window(Adw.ApplicationWindow):
         data = b"".join(r + r for r in rows)
         return Gdk.MemoryTexture.new(w * 2, h * 2, Gdk.MemoryFormat.R8G8B8, GLib.Bytes.new(data), w * 6)
 
+    def draw_marks(self, area, cr, width, height):
+        """Numbered start positions over the preview, filled with the colour of the player who has chosen it."""
+        if not self.preview_size:
+            return
+        pw, ph = self.preview_size
+        scale = min(width / pw, height / ph)
+        ox, oy = (width - pw * scale) / 2, (height - ph * scale) / 2
+        taken = {p["Start"]: p["Color"] for p in [self.s] + self.s["AI"] if p["Start"] != RANDOM}
+        cr.select_font_face("sans-serif", 0, 1)
+        cr.set_font_size(13)
+        for n, (x, y) in self.start_points.items():
+            if n >= self.current_map()["max"]:
+                continue
+            x, y = ox + x * scale, oy + y * scale
+            cr.new_path()
+            cr.arc(x, y, 11, 0, 6.2832)
+            if n in taken and taken[n] != RANDOM:
+                rgb = COLORS[taken[n]][1]
+                cr.set_source_rgb(*(int(rgb[i:i + 2], 16) / 255 for i in (1, 3, 5)))
+            else:
+                cr.set_source_rgba(0, 0, 0, .65 if n not in taken else .9)
+            cr.fill_preserve()
+            cr.set_source_rgb(1, 1, 1)
+            cr.set_line_width(1.5)
+            cr.stroke()
+            ext = cr.text_extents(str(n + 1))
+            cr.move_to(x - ext.x_bearing - ext.width / 2, y - ext.y_bearing - ext.height / 2)
+            cr.show_text(str(n + 1))
+
     def on_random_map(self, _):
         rows = [r for r in self.map_rows if self.map_visible(r) and r.map["max"] >= 1 + len(self.s["AI"])]
         if rows:
             self.select_map(random.choice(rows).map["file"])
 
     # ---- opponents ----
-    def add_ai_row(self, ai):
-        row = OpponentRow(self, ai)
-        self.ai_rows.append(row)
-        self.ai_group.add(row)
-        self.renumber()
-
-    def renumber(self):
-        for i, row in enumerate(self.ai_rows, 1):
-            row.set_title(f"Opponent {i}")
-
     def on_add_ai(self, _):
         info = self.current_map()
         if info and 1 + len(self.s["AI"]) >= info["max"]:
             return
         used = {self.s["Color"]} | {a["Color"] for a in self.s["AI"]}
         color = next((c for c in range(len(COLORS)) if c not in used), RANDOM)
-        ai = {"Country": RANDOM, "Color": color, "Difficulty": 2}
-        self.s["AI"].append(ai)
-        self.add_ai_row(ai)
+        self.s["AI"].append({"Country": RANDOM, "Color": color, "Difficulty": 2, "Start": RANDOM, "Team": RANDOM})
+        self.rebuild_players()
         self.refresh()
 
-    def remove_ai(self, row):
-        self.s["AI"].remove(row.ai)
-        self.ai_rows.remove(row)
-        self.ai_group.remove(row)
-        self.renumber()
+    def remove_ai(self, ai):
+        self.s["AI"].remove(ai)
+        self.rebuild_players()
         self.refresh()
+
+    # ---- presets ----
+    def build_presets_menu(self):
+        """Header menu: save the current settings under a name, and load or delete saved ones."""
+        self.preset_name = Gtk.Entry(placeholder_text="Preset name", hexpand=True)
+        self.preset_name.connect("activate", self.on_save_preset)
+        save = Gtk.Button(label="Save", css_classes=["suggested-action"])
+        save.connect("clicked", self.on_save_preset)
+        entry_box = Gtk.Box(spacing=6)
+        entry_box.append(self.preset_name)
+        entry_box.append(save)
+        self.preset_list = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
+        self.preset_list.set_placeholder(Gtk.Label(label="No saved presets", margin_top=12, margin_bottom=12,
+                                                   css_classes=["dim-label"]))
+        self.preset_list.connect("row-activated", lambda _, row: self.load_preset(row.preset))
+        scroll = Gtk.ScrolledWindow(child=self.preset_list, propagate_natural_height=True, max_content_height=360,
+                                    hscrollbar_policy=Gtk.PolicyType.NEVER)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, width_request=300,
+                      margin_start=6, margin_end=6, margin_top=6, margin_bottom=6)
+        box.append(entry_box)
+        box.append(scroll)
+        self.presets_popover = Gtk.Popover(child=box)
+        button = Gtk.MenuButton(icon_name="document-open-symbolic", tooltip_text="Presets",
+                                popover=self.presets_popover)
+        button.connect("notify::active", lambda b, _: b.get_active() and self.fill_presets())
+        return button
+
+    def fill_presets(self):
+        self.preset_list.remove_all()
+        for name in load_presets():
+            row = Adw.ActionRow(title=GLib.markup_escape_text(name), activatable=True)
+            row.preset = name
+            delete = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
+                                tooltip_text="Delete preset", css_classes=["flat"])
+            delete.connect("clicked", lambda _, n=name: self.delete_preset(n))
+            row.add_suffix(delete)
+            self.preset_list.append(row)
+
+    def on_save_preset(self, _):
+        name = self.preset_name.get_text().strip()
+        if not name:
+            self.preset_name.grab_focus()
+            return
+        presets = load_presets()
+        verb = "Updated" if name in presets else "Saved"
+        presets[name] = json.loads(json.dumps(self.s))
+        save_presets(presets)
+        self.preset_name.set_text("")
+        self.fill_presets()
+        self.toast(f"{verb} preset “{name}”")
+
+    def delete_preset(self, name):
+        presets = load_presets()
+        presets.pop(name, None)
+        save_presets(presets)
+        self.fill_presets()
+        self.toast(f"Deleted preset “{name}”")
+
+    def load_preset(self, name):
+        saved = load_presets().get(name)
+        self.presets_popover.popdown()
+        if saved is None:
+            return self.toast(f"Preset “{name}” is gone")
+        self.s = normalize(saved)
+        missing = self.maps and self.s["Map"] not in self.maps
+        if missing:
+            self.s["Map"] = self.map_list.get_selected_row().map["file"]
+        self.build_settings_groups()
+        if self.maps:   # otherwise fill_maps selects self.s["Map"] when the maps arrive
+            self.search.set_text("")
+            row = next(r for r in self.map_rows if r.map["file"] == self.s["Map"])
+            if row is self.map_list.get_selected_row():
+                self.on_map_selected(None, row)   # select_row would not signal; the Start choices need the map
+            else:
+                self.select_map(self.s["Map"])
+        self.refresh()
+        self.toast(f"Loaded preset “{name}”" + (", but its map is missing; kept the current one" if missing else ""))
 
     # ---- actions ----
     def toast(self, text):

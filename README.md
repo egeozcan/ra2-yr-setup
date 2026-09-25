@@ -317,6 +317,11 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   archive: `amazon.mmx` holds `AMAZON01.map`. Before 2026-09-25 `run` could not start that map.
 - Every launch copies the `[gamemd]` settings into `[gamemd-spawn]` again, so a launch after `apply-working.sh`
   keeps the tested display settings.
+- `yspawn.log` in the game directory records each start step. A crash writes `except.txt` there too, and its
+  `Eip` shows where the crash happened.
+- **Start positions and teams** (added 2026-09-25): `Start=` (0–7, or -1 for random) and `Team=` (0–3 = A–D,
+  or -1 for none) in `[Settings]` and in each `[AIn]` section. Players on the same team are allied from the start.
+  Before this, your start was always position 0.
 
 ### Skirmish Setup window (2026-09-25)
 
@@ -326,10 +331,13 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   `--install-desktop` writes the menu entry, `~/.local/share/applications/ra2yr-skirmish-setup.desktop`.
 - **Maps:** a searchable list of every map in the game directory, with its in-game name, player count and
   preview picture. The names come from the game's string table and the pictures from the map's `[PreviewPack]`
-  (decoded by `spawner/mappreview.py`). The red squares on the preview are the start positions.
+  (decoded by `spawner/mappreview.py`). The start positions are drawn over the preview as numbered circles.
+  A position someone has chosen is filled with that player's colour.
 - **Settings:**
-  - your name, country and colour;
-  - up to 7 opponents (only as many as the map allows), each with a country, colour and difficulty;
+  - your name;
+  - a players table, with a row for you and one per opponent. Each row has country, colour, team (none or A–D) and
+    start position (random or 1 to the map's player count), plus difficulty for opponents;
+  - up to 7 opponents, but only as many as the map allows;
   - speed, credits, starting units and tech level;
   - the rule switches: bases, short game, superweapons, crates, MCV repacks, build off ally, bridges.
 - **Random:** Random country or colour is picked when you press Start. Random colours never repeat a colour
@@ -337,27 +345,28 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
 - **Game mode:** always Battle (`GameMode=1`). `mpmodesmd.ini` says it is the only mode that allows AI players.
   The list shows only maps made for it (`GameMode=standard` in the map's packet), which is currently all of them.
 - **Start is disabled** while there is a problem:
-  - too many players for the map, or two players with the same colour;
+  - too many players for the map;
+  - two players with the same colour or the same start position;
+  - everyone on the same team;
   - the game is already running, or it was started less than 20 s ago;
   - Steam is not running;
   - the launcher is not installed. A banner then offers **Install**, which runs `spawn.py install`.
 - **Your last settings** are saved in `~/.config/ra2-yr-setup/skirmish.json`. The window changes neither
   `spawner/yspawn.ini` nor `spawn.py run`. The first time it opens, its defaults come from that file.
+- **Presets:** the folder button in the header saves the current settings under a name (the same name
+  overwrites) and lists the saved ones. Click one to load it; the bin deletes it. They are kept in
+  `~/.config/ra2-yr-setup/skirmish-presets.json`. If a preset's map is gone, the current map is kept.
 - **`--dry-run`:** Start only writes `yspawn.ini` and `yspawn.map` into the game directory, and does not launch.
-- **Not offered:** teams (alliances) and start positions. `yspawn.dll` does not read them: it leaves your start
-  position at 0 and sets every AI's to -1 (random). Whether 0 means the first position was not checked. Adding them would need a DLL change and an
-  in-game test.
 - **Tested:** the map scan (all 53 archives extract), the settings it writes (the same as the CLI's for the same
   settings), and the window in dry-run mode. It has not yet started a real match.
-- `yspawn.log` in the game directory records each start step. A crash writes `except.txt` there too, and its
-  `Eip` shows where the crash happened.
 
 How it works (`spawner/yspawn.c`):
 - The DLL replaces the two calls to the main menu (`0x48CDD3`, `0x48CFAA`) and skips the intro and logo.
 - In place of the menu, it:
   - loads the countries and sides (normally done by the menus; without it the start crashes at `0x6847B4`);
-  - fills in the session's game options and the AI slots;
-  - adds a player entry for you;
+  - fills in the session's game options and the AI slots, including each AI's start (`AISlots.Starts`) and
+    team (`AISlots.Allies`);
+  - adds a player entry for you (`NodeNameType`, with `StartPoint` at `+0x5B` and `Team` at `+0x63`);
   - calls the game's own `StartScenario`.
 - Addresses and layouts come from the YRpp headers and CnCNet's `yrpp-spawner`. This is a much smaller,
   skirmish-only version of the spawner's start path.
@@ -375,5 +384,24 @@ How it works (`spawner/yspawn.c`):
   - Shroud was normal and the camera was on our MCV.
   - A memory read showed house 0 = Americans, human, and house 1 = Russians, AI.
   - After a finished match, `yspawn.log` ended with `match over, exiting` and there was no crash report.
+- Start positions and teams use the game's own code, the same fields the skirmish menu fills. Traced in this exe
+  on 2026-09-25:
+  - `ScenarioClass::AssignHouses` (`0x687F10`) copies each player's start into `HouseClass+0x16058` and team into
+    `+0x1605C`. For you it reads the start through `0x696F50`, for AIs from `AISlots`.
+  - MPGameMode vtable `+0x80` (`0x5D6BE0`) places every house whose start is not -2, and `+0x84` (`0x5D6C70`)
+    gives the rest random free positions. So "random" must be **-2**. The DLL turns the ini's -1 into -2.
+  - Before this change the AI slots got -1. `0x5D6BE0` then read the start list at index -1 and wrote the house
+    index just before `HouseIndices`. The random pass then gave the AI a proper position, so it went unnoticed.
+  - `AllyTeams` (vtable `+0x88`, `0x5D74A0`, called unconditionally from `0x686AE4`) allies, both ways, every
+    two houses with the same team (-1 and -2 mean no team). `Allies` is the bitfield at `HouseClass+0x5788`
+    (`IsAlliedWith`, `0x4F9A10`).
+  - `MakeAlly` (`0x4F9B70`) can call the AI "paranoid" check (`0x501640`), which allies the AIs against a
+    human. That check returns at once when `ScenarioClass+0x11E0` is set, and `AssignHouses` sets it whenever
+    an AI has a team. So teams don't make the AIs gang up on you, the same as with the menu.
+  - The start list (`0x688380`) holds waypoints 0, 1, 2, … in order. All 53 maps define waypoints
+    0 to max−1 with no gaps, so start k is always waypoint k.
+  - The 1-based numbers in Skirmish Setup are the map's waypoints 0–7. On the preview, cell (x, y) is at
+    x − y + W, (x + y − W) / 2, where W is the `[Map] Size` width. This matches the game's red markers to within a pixel.
+  - **Not yet checked in game:** the build is installed but no match has been played with teams or fixed starts.
 - The Cheat Defense has `SpySat=yes`, so building one reveals the whole map. That is intended and is not
   caused by the launcher.
