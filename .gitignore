@@ -1,0 +1,47 @@
+# ---- Personal / account data -------------------------------------------------
+# Machine-specific paths, LAN address, hostname, display and client names (see README placeholders).
+LOCAL.md
+
+# Steam localconfig.vdf copies (persona name, account ID, friends), Wine registry,
+# Sunshine state (Moonlight pairing certificates), streaming logs, desktop launchers.
+backups/
+
+# Game logs, crash dumps and screenshots: local paths, Steam user ID, EA game art.
+# (only the renderer test write-up referenced from README.md is kept; checked: no personal data)
+logs/*
+!logs/menu-investigation/
+logs/menu-investigation/*
+!logs/menu-investigation/RESULTS.md
+
+# ---- Third-party / EA files --------------------------------------------------
+# Renderer DLLs and release zips: get them from their upstream releases instead.
+installers/
+*.dll
+*.zip
+# Anything extracted from, or copied out of, the game's MIX archives.
+*.mix
+*.csf
+*.pal
+*.vpl
+rulesmd.ini
+artmd.ini
+aimd.ini
+# Generated art: reproducible with make_graphics.py / cheatdef_art.py, and it embeds small
+# stock pieces (VXL header palette, stock HVA, cameo frame border).
+mod/assets/
+# The recolour of EA's Tesla tank model is a derivative of stock art.
+mod/assets-recolor/
+mod/previews/recolor-*.png
+# Preview that shows the stock Grand Cannon sprite.
+mod/previews/cheatdef-scale-vs-stock-plate.png
+
+# ---- Python / tooling --------------------------------------------------------
+__pycache__/
+*.pyc
+.venv/
+mod/.venv/
+
+# ---- Editor / OS -------------------------------------------------------------
+.DS_Store
+*.swp
+*~

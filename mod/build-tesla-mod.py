@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""Build and install the "Liberator" mod: an overpowered, America-only Tesla tank with its own art.
+
+usage: build-tesla-mod.py install     # write the mod files into the game dir
+       build-tesla-mod.py uninstall   # remove them again (game falls back to stock)
+       build-tesla-mod.py build DIR   # just write the mod files to DIR
+
+Loose files in the game directory override the copies packed in the MIX archives:
+  rulesmd.ini  - stock rules (expandmd01.mix) + the unit, its weapons and warhead
+  artmd.ini    - stock art (ra2md.mix/localmd.mix) + the unit's art entry
+  ra2md.csf    - stock strings (langmd.mix) + its name "Liberator"
+  aimd.ini     - stock AI (ra2md.mix/localmd.mix) + a team so AI America builds and attacks with it
+  attnk*.vxl/.hva, attkicon.shp - model and cameo from mod/assets (made by make_graphics.py)
+  ggchdf.shp, g?chdfmk.shp, chdfglow.shp, chdftur.vxl/.hva, chdficon.shp - Cheat Defense art
+                 from mod/assets (made by cheatdef_art.py)
+Only Yuri's Revenge reads these *md files; base Red Alert 2 is unaffected.
+"""
+import os, shutil, subprocess, sys
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import csf, mixextract
+
+GAME = "/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
+ASSETS = ["attnk.vxl", "attnk.hva", "attnktur.vxl", "attnktur.hva", "attkicon.shp"]
+# Cheat Defense art, made by cheatdef_art.py (same list as its FILES)
+DEF_ASSETS = ["ggchdf.shp", "chdfglow.shp", "chdftur.vxl", "chdftur.hva", "chdficon.shp"] + \
+    [f"g{c}chdfmk.shp" for c in "taudlng"]
+ASSETS += DEF_ASSETS
+MANAGED = ["rulesmd.ini", "artmd.ini", "ra2md.csf", "aimd.ini"] + ASSETS
+UNIT_NAME = "Liberator"
+CAMEO = "ATTKICON"
+
+UNIT_ID = "ATTNK"
+LIST_KEY = "85"
+
+# Stats to put on top of a full copy of [TTNK]. Stock values in comments.
+UNIT_OVERRIDES = {
+    "Name": UNIT_NAME,
+    "Image": UNIT_ID,                    # own voxels + art entry
+    "UIName": f"Name:{UNIT_ID}",         # string added to ra2md.csf
+    "Prerequisite": "GAWEAP,GATECH",     # Allied war factory + Allied battle lab
+    "Owner": "Americans",
+    "RequiredHouses": "Americans",
+    "CrateGoodie": "no",                 # crates must not give it to other countries
+    "Primary": "ATankBolt",
+    "ElitePrimary": "ATankBoltE",
+    "Strength": "1500",                  # 300
+    "Speed": "9",                        # 6
+    "Sight": "10",                       # 8
+    "ROT": "8",                          # 5
+    "Cost": "1500",                      # 1200
+    "Soylent": "1500",
+    "SelfHealing": "yes",                # regenerates like it has a repair drone
+    "ImmuneToPsionics": "yes",           # Yuri can't mind-control it
+    "ImmuneToRadiation": "yes",
+    "Weight": "5",                       # 3.5, harder to shove around / chrono
+    "BuildTimeMultiplier": "1.0",        # 1.2
+}
+
+NEW_SECTIONS = f"""
+; ===== Liberator mod (America-only Tesla tank) =====
+[ATankBolt]
+Damage=300
+ROF=35
+Range=7
+Speed=100
+Warhead=LibertyElectric
+Report=TeslaTankAttack
+Projectile=Electricbounce
+IsElectricBolt=true
+
+[ATankBoltE]
+Damage=450
+ROF=25
+Range=8
+Speed=100
+Warhead=LibertyElectric
+Report=TeslaTankAttack
+Projectile=Electricbounce
+IsElectricBolt=true
+
+; Like [Electric], but full damage against buildings too
+[LibertyElectric]
+Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,200%,100%
+InfDeath=5
+Wood=yes
+Wall=yes
+AnimList=TSTIMPCT
+"""
+
+# ===== Cheat Defense: observer's building, never built by the AI =====
+DEF_ID = "CHEATDEF"
+DEF_NAME = "Cheat Defense"
+DEF_LIST_KEY = "407"
+ALL_COUNTRIES = "British,French,Germans,Americans,Alliance,Russians,Confederation,Africans,Arabs,YuriCountry"
+DEF_ART = "GTCHDF"   # own art: NewTheater swaps the 2nd letter per theater (files g?chdf*), G = generic
+# Put on top of a full copy of the Grand Cannon [GTGCAN], with its own art from cheatdef_art.py.
+DEF_OVERRIDES = {
+    "Name": DEF_NAME,
+    "UIName": f"Name:{DEF_ID}",
+    "Image": DEF_ART,                    # own base, build-up, glow anim and cameo (artmd.ini [GTCHDF])
+    "TurretAnim": "CHDFTUR",             # own voxel turret, chdftur.vxl/.hva
+    "TurretRecoil": "no",                # single-piece turret, no barrel voxel
+    "TurretAnimX": "0",                  # our base and turret pivot are exactly centred (stock 3)
+    "Owner": ALL_COUNTRIES,              # available whichever country you play
+    "TechLevel": "1",
+    "Cost": "1",
+    "Points": "1",
+    "Power": "0",                        # needs no power ...
+    "Powered": "no",                     # ... and keeps working without it
+    "Adjacent": "255",                   # can be placed (almost) any distance from your base
+    "BaseNormal": "no",                  # but does not extend your base for other buildings
+    "AIBuildThis": "no",                 # AI never builds it
+    "SpySat": "yes",                     # reveals the whole map, like the Spy Satellite Uplink
+    "Strength": "10000",
+    "Immune": "yes",                     # invulnerable
+    "Capturable": "false",
+    "Drainable": "no",                   # Yuri's Floating Disc can't drain it
+    "ImmuneToPsionics": "yes",
+    "Sight": "16",
+    "ROT": "60",                         # turret snaps onto targets
+    "Primary": "CheatBolt",
+}
+# the Grand Cannon is French-only and needs radar; drop those so any country can build it with just a Con Yard
+# and the Grand Cannon's barrel-recoil settings (our turret has no barrel)
+DEF_DROP = ("Prerequisite", "Secondary", "AIBasePlanningSide", "RequiredHouses", "ForbiddenHouses",
+            "BarrelTravel", "BarrelCompressFrames", "BarrelHoldFrames", "BarrelRecoverFrames", "TurretTravel")
+
+# art for the Cheat Defense; the base layout follows the Grand Cannon's [GTGCAN] entry
+DEF_ART_SECTIONS = f"""
+[{DEF_ART}]   ; Cheat Defense (mod)
+Remapable=yes
+NewTheater=yes
+Cameo=CHDFICON
+Foundation=2x2
+Height=3
+Buildup={DEF_ART}MK
+DemandLoadBuildup=true
+FreeBuildup=true
+PrimaryFireFLH=270,0,225   ; tips of the twin Tesla prongs
+CanHideThings=True
+CanBeHidden=False
+OccupyHeight=2
+ActiveAnim=CHDFGLOW
+ActiveAnimZAdjust=-30
+ActiveAnimPowered=no
+
+[CHDFGLOW]   ; Cheat Defense glow ring, crystals and arcs (mod)
+Normalized=yes
+LoopStart=0
+LoopEnd=15   ; inclusive: frames 0-15, like [NATSLA_AD] 10-19
+LoopCount=-1
+Rate=300
+Layer=ground
+Shadow=no
+"""
+
+DEF_SECTIONS = """
+; ===== Cheat Defense mod =====
+; one-shots anything on the ground or in the air within Grand Cannon range
+[CheatBolt]
+Damage=10000
+ROF=10
+Range=15
+Speed=100
+Warhead=CheatWH
+Projectile=CheatProj
+Report=TeslaCoilAttack
+IsElectricBolt=true
+
+[CheatProj]
+Inviso=yes
+Image=none
+AA=yes
+AG=yes
+SubjectToCliffs=no
+SubjectToElevation=no
+SubjectToWalls=no
+
+; full damage against every armour type, no splash
+[CheatWH]
+Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%
+InfDeath=5
+AnimList=TSTIMPCT
+"""
+
+
+def section_lines(lines, name):
+    """Return (start, end) indices of section `name` (header line .. line before next header)."""
+    start = next(i for i, l in enumerate(lines) if l.split(";")[0].strip() == f"[{name}]")
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
+    return start, end
+
+
+def clone_section(lines, src, new_id, overrides, drop=()):
+    """Full copy of section `src` as `new_id`: `overrides` replace or add keys, `drop` removes keys."""
+    s, e = section_lines(lines, src)
+    body, seen = [], set()
+    for l in lines[s + 1:e]:
+        key = l.split("=", 1)[0].strip() if "=" in l and not l.lstrip().startswith(";") else None
+        if key in drop:
+            continue
+        if key in overrides:
+            body.append(f"{key}={overrides[key]}")
+            seen.add(key)
+        else:
+            body.append(l)
+    while body and (not body[-1].strip() or body[-1].lstrip().startswith(";")):
+        body.pop()
+    body += [f"{k}={v}" for k, v in overrides.items() if k not in seen]
+    return [f"[{new_id}]"] + body
+
+
+def register(lines, list_section, key, type_id):
+    """Add key=type_id after the last entry of a type list such as [VehicleTypes]."""
+    s, e = section_lines(lines, list_section)
+    keys = [l.split("=", 1)[0].strip() for l in lines[s + 1:e] if "=" in l.split(";")[0]]
+    if key in keys:
+        raise SystemExit(f"[{list_section}] key {key} already used")
+    last = max(i for i in range(s + 1, e) if "=" in lines[i].split(";")[0])
+    lines.insert(last + 1, f"{key}={type_id}")
+
+
+def patch(text):
+    lines = text.split("\r\n")
+    for new_id in (UNIT_ID, DEF_ID):
+        if any(l.split(";")[0].strip() == f"[{new_id}]" for l in lines):
+            raise SystemExit(f"[{new_id}] already present; refusing to patch twice")
+
+    unit = clone_section(lines, "TTNK", UNIT_ID, UNIT_OVERRIDES)
+    defense = clone_section(lines, "GTGCAN", DEF_ID, DEF_OVERRIDES, DEF_DROP)
+    register(lines, "VehicleTypes", LIST_KEY, UNIT_ID)
+    register(lines, "BuildingTypes", DEF_LIST_KEY, DEF_ID)
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines += [""] + NEW_SECTIONS.strip("\n").split("\n")
+    lines += [""] + unit
+    lines += [""] + DEF_SECTIONS.strip("\n").split("\n")
+    lines += [""] + defense + ["", ""]
+    return "\r\n".join(lines)
+
+
+def stock(archive, path):
+    with open(os.path.join(GAME, archive), "rb") as f:
+        return mixextract.extract(f.read(), path)
+
+
+def patch_art(text):
+    lines = text.split("\r\n")
+    if any(l.split(";")[0].strip() == f"[{UNIT_ID}]" for l in lines):
+        raise SystemExit(f"art [{UNIT_ID}] already present")
+    s, e = section_lines(lines, "TTNK")
+    body = [l for l in lines[s + 1:e] if l.strip()]
+    body = [f"Cameo={CAMEO}" if l.startswith("Cameo=") else f"AltCameo={CAMEO}" if l.startswith("AltCameo=") else l
+            for l in body]
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines += ["", f"[{UNIT_ID}]   ; Liberator (mod)"] + body
+    lines += DEF_ART_SECTIONS.rstrip("\n").split("\n") + ["", ""]
+    return "\r\n".join(lines)
+
+
+# AI: modelled on the German Tank Destroyer team ("Nation German Tank Dest 1", 0A87293C-G)
+AI_TASKFORCE, AI_TEAM, AI_TRIGGER = "0F1BE800-G", "0F1BE810-G", "0F1BE820-G"
+AI_TEAM_TEMPLATE = "0A87293C-G"
+AI_SCRIPT = "08DA356C-G"  # stock "General Vehicle Attack"
+# name, team, owner, techlevel, condition 1 = owner owns >= 1 GATECH, weights 500/10/500,
+# skirmish, unused, side 1 (Allied), not base defence, no 2nd team, easy/medium/hard
+AI_TRIGGER_LINE = (f"{AI_TRIGGER}=Nation American Liberator 1,{AI_TEAM},Americans,2,1,GATECH,"
+                   "0100000003000000000000000000000000000000000000000000000000000000,"
+                   "500.000000,10.000000,500.000000,1,0,1,0,<none>,1,1,1")
+
+
+def append_to_list(lines, section, value):
+    """Add `value` under the next free numeric key of a list section like [TaskForces]."""
+    s, e = section_lines(lines, section)
+    entries = [i for i in range(s + 1, e) if "=" in lines[i].split(";")[0]]
+    keys = [int(lines[i].split("=", 1)[0]) for i in entries if lines[i].split("=", 1)[0].strip().isdigit()]
+    lines.insert(entries[-1] + 1, f"{max(keys) + 1}={value}")
+
+
+def patch_ai(text):
+    lines = text.split("\r\n")
+    if any(l.strip() == f"[{AI_TASKFORCE}]" for l in lines):
+        raise SystemExit("AI entries already present")
+    s, e = section_lines(lines, AI_TEAM_TEMPLATE)
+    team = [l for l in lines[s + 1:e] if l.strip()]
+    team = ["Name=Nation American Liberator 1" if l.startswith("Name=") else
+            f"TaskForce={AI_TASKFORCE}" if l.startswith("TaskForce=") else
+            f"Script={AI_SCRIPT}" if l.startswith("Script=") else l for l in team]
+    append_to_list(lines, "TaskForces", AI_TASKFORCE)
+    append_to_list(lines, "TeamTypes", AI_TEAM)
+    s, e = section_lines(lines, "AITriggerTypes")
+    last = max(i for i in range(s + 1, e) if "=" in lines[i].split(";")[0])
+    lines.insert(last + 1, AI_TRIGGER_LINE)
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines += ["", f"[{AI_TASKFORCE}]", "Name=3 Liberators", f"0=3,{UNIT_ID}", "Group=-1",
+              "", f"[{AI_TEAM}]"] + team + ["", ""]
+    return "\r\n".join(lines)
+
+
+def build(out_dir):
+    rules = patch(stock("expandmd01.mix", "rulesmd.ini").decode("latin-1")).encode("latin-1")
+    open(os.path.join(out_dir, "rulesmd.ini"), "wb").write(rules)
+    art = patch_art(stock("ra2md.mix", "localmd.mix/artmd.ini").decode("latin-1")).encode("latin-1")
+    open(os.path.join(out_dir, "artmd.ini"), "wb").write(art)
+    ai = patch_ai(stock("ra2md.mix", "localmd.mix/aimd.ini").decode("latin-1")).encode("latin-1")
+    open(os.path.join(out_dir, "aimd.ini"), "wb").write(ai)
+    tmp = os.path.join(out_dir, "ra2md.csf")
+    open(tmp, "wb").write(stock("langmd.mix", "ra2md.csf"))
+    header, entries = csf.load(tmp)
+    csf.set_string(entries, f"Name:{UNIT_ID}", UNIT_NAME)
+    csf.set_string(entries, f"Name:{DEF_ID}", DEF_NAME)
+    csf.save(tmp, header, entries)
+    for a in ASSETS:
+        src = os.path.join(HERE, "assets", a)
+        if not os.path.exists(src):
+            raise SystemExit(f"missing {src}; run make_graphics.py / cheatdef_art.py first")
+        shutil.copy(src, os.path.join(out_dir, a))
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "build":
+        os.makedirs(sys.argv[2], exist_ok=True)
+        build(sys.argv[2])
+    elif cmd in ("install", "uninstall"):
+        if subprocess.run(["pgrep", "-x", "gamemd.exe"], capture_output=True).returncode == 0:
+            raise SystemExit("Yuri's Revenge is running; close it first.")
+        if cmd == "install":
+            # build everything first so a failure leaves the game dir untouched
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                build(tmp)
+                for f in MANAGED:
+                    shutil.copy(os.path.join(tmp, f), os.path.join(GAME, f))
+                    print("installed", f)
+        else:
+            for f in MANAGED:
+                p = os.path.join(GAME, f)
+                if os.path.exists(p):
+                    os.remove(p)
+                    print("removed", f)
+            print("stock rules, art and strings will load")
+    else:
+        raise SystemExit(__doc__)
+
+
+if __name__ == "__main__":
+    main()
