@@ -72,7 +72,8 @@ setup. Read its warning before using it.
 - Keep 2560×1440; 5120×1440 crashed the game engine in the earlier investigation.
 - Steam must be running even for the manual Proton test launch.
 - Launch `RA2MD.exe` through Steam's runtime. Direct `gamemd.exe` attempts caused
-  String Manager initialization errors.
+  String Manager initialization errors. Update 2026-09-25: a direct launch with the game directory as
+  the working directory works; see the quick skirmish launcher section.
 - Do not infer that menus are correct from a centred battlefield: verify both.
 
 ## Source
@@ -159,11 +160,12 @@ certificate. Backed up the state file, retained the original enabled client
 entry, removed only the duplicate certificate entry, and restarted the normal
 Sunshine service. Client reconnection still requires verification.
 
-## Mod: Liberator, an America-only Tesla tank (2026-09-25)
+## Mod: Liberator, an Allied-only Tesla tank (2026-09-25)
 
 Lessons learned (engine facts, art conventions, voxel lighting, pitfalls): `mod/MODDING-NOTES.md`.
 
-An overpowered Tesla tank with its own model, cameo and name, buildable only by **America**.
+An overpowered Tesla tank with its own model, cameo and name, buildable by every **Allied** country
+(America, Korea, France, Germany, Britain; changed from America-only on 2026-09-25).
 It is installed as loose files in the game directory; these override the stock copies in the
 MIX archives. Only Yuri's Revenge reads them. No MIX file is modified.
 
@@ -172,7 +174,7 @@ MIX archives. Only Yuri's Revenge reads them. No MIX file is modified.
 | `rulesmd.ini` | stock rules (`expandmd01.mix`) + unit `ATTNK` (list entry 85), weapons, warhead |
 | `artmd.ini` | stock art (`ra2md.mix/localmd.mix`) + `[ATTNK]` art entry |
 | `ra2md.csf` | stock strings (`langmd.mix`) + `Name:ATTNK` = "Liberator" |
-| `aimd.ini` | stock AI (`ra2md.mix/localmd.mix`) + a Liberator team for AI America |
+| `aimd.ini` | stock AI (`ra2md.mix/localmd.mix`) + a Liberator team for Allied AI |
 | `attnk.vxl/.hva`, `attnktur.vxl/.hva` | hull and turret models |
 | `attkicon.shp` | 60×48 sidebar cameo |
 
@@ -212,15 +214,15 @@ It shares no geometry with the Tesla tank.
   afterwards overwrites it with the custom model again.
 
 Stats compared with the stock Tesla tank:
-- 1500 HP (stock 300), speed 9 (stock 6), self-healing, immune to mind control and radiation.
+- 1500 HP (stock 300), speed 4 (stock 6; was 9, halved and rounded down because Speed is an integer), self-healing, immune to mind control and radiation.
 - Weapon: 300 damage, range 7; elite: 450 damage, range 8. The bolt chains between targets.
 - Warhead `LibertyElectric` does full damage to buildings.
 - Requires an Allied War Factory and an Allied Battle Lab (`GAWEAP,GATECH`). The Battle Lab
-  itself needs America's Air Force Command. Cost 1500. Crates can't grant it.
-- **AI:** an AI playing America builds teams of 3 Liberators and attacks with them once it
+  itself needs an Air Force Command. Cost 3000 (was 1500). Crates can't grant it.
+- **AI:** an AI playing any Allied country builds teams of 3 Liberators and attacks with them once it
   owns a Battle Lab. The setup copies the German Tank Destroyer team: weight 500, the stock
-  "General Vehicle Attack" script, one team at a time, on every difficulty. Other countries' AI
-  never builds it.
+  "General Vehicle Attack" script, one team at a time, on every difficulty. Soviet and Yuri
+  AI never builds it.
 
 The in-game check has not been done yet. Old saves and online matches may not work
 while the mod is installed; uninstall it for those. `restore-stock.sh` does not
@@ -295,3 +297,47 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   hands off to the turret without a pop.
 - **Known gaps:** Iron Curtain or Force Shield targets and submerged submarines may still survive.
   The in-game check has not been done yet.
+
+## Quick skirmish launcher (2026-09-25)
+
+`spawner/` starts Yuri's Revenge straight into a skirmish, with no intro and no menus. It is for testing mods.
+- `python3 spawner/spawn.py install` builds `yspawn.dll`. On first use it also builds a podman image with the
+  32-bit mingw compiler. It then writes `gamemd-spawn.exe` into the game directory. That file is a copy of
+  `gamemd.exe` that also loads `yspawn.dll`, made by `add_import.py`. The stock `gamemd.exe` and the normal
+  Steam launch are not changed.
+  - cnc-ddraw picks its settings section by exe name. Its stock `[gamemd-spawn]` section (meant for CnCNet)
+    lacks `windowed=false`, so `install` copies the `[gamemd]` settings into it.
+  - `apply-working.sh` restores the backed-up `ddraw.ini`, so run `install` again after using it.
+- `python3 spawner/spawn.py run [MAP]` starts a match with the settings in `spawner/yspawn.ini`: map, country,
+  colour, credits, speed and AI opponents. `MAP` is any `.mmx`/`.yro` file in the game directory. The launch
+  uses the same gamescope, SteamLinuxRuntime_4 and Proton path as Steam, and Steam must be running.
+  When a match ends, the game exits instead of showing the menu.
+- `python3 spawner/spawn.py uninstall` removes `gamemd-spawn.exe`, `yspawn.dll/.ini/.map/.log`.
+- `yspawn.log` in the game directory records each start step. A crash writes `except.txt` there too, and its
+  `Eip` shows where the crash happened.
+
+How it works (`spawner/yspawn.c`):
+- The DLL replaces the two calls to the main menu (`0x48CDD3`, `0x48CFAA`) and skips the intro and logo.
+- In place of the menu, it:
+  - loads the countries and sides (normally done by the menus; without it the start crashes at `0x6847B4`);
+  - fills in the session's game options and the AI slots;
+  - adds a player entry for you;
+  - calls the game's own `StartScenario`.
+- Addresses and layouts come from the YRpp headers and CnCNet's `yrpp-spawner`. This is a much smaller,
+  skirmish-only version of the spawner's start path.
+- Several addresses were checked against this exe: the call sites, the HouseTypeClass vtable (slot 25
+  `LoadFromINI` = `0x511850`), and `IsHumanPlayer` at `+0x1EC`.
+- The Steam exe is 1.001 (build 2001-10-31, "1.001TUC"). It already has the launcher and copy-protection
+  checks patched out. Starting `gamemd.exe` directly with the game directory as the working directory
+  reached the main menu (2026-09-25). The earlier String Manager error was probably caused by the wrong
+  working directory; that was not reproduced.
+- Verified (2026-09-25):
+  - `uninstall`, `install` and `run` all worked, and the match started on Tsunami as America against an easy
+    Russian AI.
+  - The display was centred at 2560×1440, the same as a Steam launch, with the game directory's
+    `ddraw.dll` loaded.
+  - Shroud was normal and the camera was on our MCV.
+  - A memory read showed house 0 = Americans, human, and house 1 = Russians, AI.
+  - After a finished match, `yspawn.log` ended with `match over, exiting` and there was no crash report.
+- The Cheat Defense has `SpySat=yes`, so building one reveals the whole map. That is intended and is not
+  caused by the launcher.

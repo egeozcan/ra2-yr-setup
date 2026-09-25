@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and install the "Liberator" mod: an overpowered, America-only Tesla tank with its own art.
+"""Build and install the "Liberator" mod: an overpowered, Allied-only Tesla tank with its own art.
 
 usage: build-tesla-mod.py install     # write the mod files into the game dir
        build-tesla-mod.py uninstall   # remove them again (game falls back to stock)
@@ -9,7 +9,7 @@ Loose files in the game directory override the copies packed in the MIX archives
   rulesmd.ini  - stock rules (expandmd01.mix) + the unit, its weapons and warhead
   artmd.ini    - stock art (ra2md.mix/localmd.mix) + the unit's art entry
   ra2md.csf    - stock strings (langmd.mix) + its name "Liberator"
-  aimd.ini     - stock AI (ra2md.mix/localmd.mix) + a team so AI America builds and attacks with it
+  aimd.ini     - stock AI (ra2md.mix/localmd.mix) + a team so Allied AI builds and attacks with it
   attnk*.vxl/.hva, attkicon.shp - model and cameo from mod/assets (made by make_graphics.py)
   ggchdf.shp, g?chdfmk.shp, chdfglow.shp, chdftur.vxl/.hva, chdficon.shp - Cheat Defense art
                  from mod/assets (made by cheatdef_art.py)
@@ -31,6 +31,7 @@ UNIT_NAME = "Liberator"
 CAMEO = "ATTKICON"
 
 UNIT_ID = "ATTNK"
+ALLIED_COUNTRIES = "British,French,Germans,Americans,Alliance"
 LIST_KEY = "85"
 
 # Stats to put on top of a full copy of [TTNK]. Stock values in comments.
@@ -39,17 +40,17 @@ UNIT_OVERRIDES = {
     "Image": UNIT_ID,                    # own voxels + art entry
     "UIName": f"Name:{UNIT_ID}",         # string added to ra2md.csf
     "Prerequisite": "GAWEAP,GATECH",     # Allied war factory + Allied battle lab
-    "Owner": "Americans",
-    "RequiredHouses": "Americans",
+    "Owner": ALLIED_COUNTRIES,           # any Allied country
+    "RequiredHouses": ALLIED_COUNTRIES,
     "CrateGoodie": "no",                 # crates must not give it to other countries
     "Primary": "ATankBolt",
     "ElitePrimary": "ATankBoltE",
     "Strength": "1500",                  # 300
-    "Speed": "9",                        # 6
+    "Speed": "4",                        # 6; half the earlier 9 (Speed is an integer)
     "Sight": "10",                       # 8
     "ROT": "8",                          # 5
-    "Cost": "1500",                      # 1200
-    "Soylent": "1500",
+    "Cost": "3000",                      # 1200
+    "Soylent": "3000",
     "SelfHealing": "yes",                # regenerates like it has a repair drone
     "ImmuneToPsionics": "yes",           # Yuri can't mind-control it
     "ImmuneToRadiation": "yes",
@@ -58,7 +59,7 @@ UNIT_OVERRIDES = {
 }
 
 NEW_SECTIONS = f"""
-; ===== Liberator mod (America-only Tesla tank) =====
+; ===== Liberator mod (Allied-only Tesla tank) =====
 [ATankBolt]
 Damage=300
 ROF=35
@@ -265,9 +266,9 @@ def patch_art(text):
 AI_TASKFORCE, AI_TEAM, AI_TRIGGER = "0F1BE800-G", "0F1BE810-G", "0F1BE820-G"
 AI_TEAM_TEMPLATE = "0A87293C-G"
 AI_SCRIPT = "08DA356C-G"  # stock "General Vehicle Attack"
-# name, team, owner, techlevel, condition 1 = owner owns >= 1 GATECH, weights 500/10/500,
+# name, team, owner (<all>, narrowed by side), techlevel, condition 1 = owner owns >= 1 GATECH, weights 500/10/500,
 # skirmish, unused, side 1 (Allied), not base defence, no 2nd team, easy/medium/hard
-AI_TRIGGER_LINE = (f"{AI_TRIGGER}=Nation American Liberator 1,{AI_TEAM},Americans,2,1,GATECH,"
+AI_TRIGGER_LINE = (f"{AI_TRIGGER}=Allied Liberator 1,{AI_TEAM},<all>,2,1,GATECH,"
                    "0100000003000000000000000000000000000000000000000000000000000000,"
                    "500.000000,10.000000,500.000000,1,0,1,0,<none>,1,1,1")
 
@@ -286,7 +287,7 @@ def patch_ai(text):
         raise SystemExit("AI entries already present")
     s, e = section_lines(lines, AI_TEAM_TEMPLATE)
     team = [l for l in lines[s + 1:e] if l.strip()]
-    team = ["Name=Nation American Liberator 1" if l.startswith("Name=") else
+    team = ["Name=Allied Liberator 1" if l.startswith("Name=") else
             f"TaskForce={AI_TASKFORCE}" if l.startswith("TaskForce=") else
             f"Script={AI_SCRIPT}" if l.startswith("Script=") else l for l in team]
     append_to_list(lines, "TaskForces", AI_TASKFORCE)
@@ -327,7 +328,7 @@ def main():
         os.makedirs(sys.argv[2], exist_ok=True)
         build(sys.argv[2])
     elif cmd in ("install", "uninstall"):
-        if subprocess.run(["pgrep", "-x", "gamemd.exe"], capture_output=True).returncode == 0:
+        if subprocess.run(["pgrep", "-x", "gamemd.exe|gamemd-spawn.ex"], capture_output=True).returncode == 0:
             raise SystemExit("Yuri's Revenge is running; close it first.")
         if cmd == "install":
             # build everything first so a failure leaves the game dir untouched

@@ -48,4 +48,6 @@ report. Preserve INI CRLF bytes, and edit only with the game closed.
 
 Steam must be running for manual Proton launches. Use RA2MD.exe through Steam's
 runtime; direct gamemd.exe tests caused String Manager initialization errors.
+(2026-09-25: a direct gamemd.exe launch with the game directory as working
+directory reached the menu; see README, quick skirmish launcher.)
 Do not use `steam -applaunch 2229850` to assume Yuri's Revenge: it opened base RA2.
