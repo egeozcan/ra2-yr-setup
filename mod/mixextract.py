@@ -4,9 +4,10 @@
 usage: mixextract.py ARCHIVE NAME[/NESTED_NAME...] OUT_FILE
 e.g.   mixextract.py ra2md.mix localmd.mix/rulesmd.ini rulesmd.ini
 """
-import base64, struct, sys, zlib
+import base64, functools, struct, sys, zlib
 
 # ---- Blowfish (constants are the hex digits of pi) ----
+@functools.lru_cache(maxsize=None)   # callers slice the result, so it is never modified
 def _pi_hex_words(n):
     digits = n * 8 + 16
     prec = 4 * digits + 64

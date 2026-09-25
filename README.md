@@ -313,6 +313,42 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   uses the same gamescope, SteamLinuxRuntime_4 and Proton path as Steam, and Steam must be running.
   When a match ends, the game exits instead of showing the menu.
 - `python3 spawner/spawn.py uninstall` removes `gamemd-spawn.exe`, `yspawn.dll/.ini/.map/.log`.
+- The map inside a `.mmx`/`.yro` archive is the one named in its `.pkt` packet. It is not always named after the
+  archive: `amazon.mmx` holds `AMAZON01.map`. Before 2026-09-25 `run` could not start that map.
+- Every launch copies the `[gamemd]` settings into `[gamemd-spawn]` again, so a launch after `apply-working.sh`
+  keeps the tested display settings.
+
+### Skirmish Setup window (2026-09-25)
+
+`spawner/skirmish.py` is a GTK 4 / libadwaita window for setting up the match, then starting it through `spawn.py`.
+It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK bindings.
+- **Start it:** `/usr/bin/python3 spawner/skirmish.py`, or **Skirmish Setup** in the application menu.
+  `--install-desktop` writes the menu entry, `~/.local/share/applications/ra2yr-skirmish-setup.desktop`.
+- **Maps:** a searchable list of every map in the game directory, with its in-game name, player count and
+  preview picture. The names come from the game's string table and the pictures from the map's `[PreviewPack]`
+  (decoded by `spawner/mappreview.py`). The red squares on the preview are the start positions.
+- **Settings:**
+  - your name, country and colour;
+  - up to 7 opponents (only as many as the map allows), each with a country, colour and difficulty;
+  - speed, credits, starting units and tech level;
+  - the rule switches: bases, short game, superweapons, crates, MCV repacks, build off ally, bridges.
+- **Random:** Random country or colour is picked when you press Start. Random colours never repeat a colour
+  that is already taken.
+- **Game mode:** always Battle (`GameMode=1`). `mpmodesmd.ini` says it is the only mode that allows AI players.
+  The list shows only maps made for it (`GameMode=standard` in the map's packet), which is currently all of them.
+- **Start is disabled** while there is a problem:
+  - too many players for the map, or two players with the same colour;
+  - the game is already running, or it was started less than 20 s ago;
+  - Steam is not running;
+  - the launcher is not installed. A banner then offers **Install**, which runs `spawn.py install`.
+- **Your last settings** are saved in `~/.config/ra2-yr-setup/skirmish.json`. The window changes neither
+  `spawner/yspawn.ini` nor `spawn.py run`. The first time it opens, its defaults come from that file.
+- **`--dry-run`:** Start only writes `yspawn.ini` and `yspawn.map` into the game directory, and does not launch.
+- **Not offered:** teams (alliances) and start positions. `yspawn.dll` does not read them: it leaves your start
+  position at 0 and sets every AI's to -1 (random). Whether 0 means the first position was not checked. Adding them would need a DLL change and an
+  in-game test.
+- **Tested:** the map scan (all 53 archives extract), the settings it writes (the same as the CLI's for the same
+  settings), and the window in dry-run mode. It has not yet started a real match.
 - `yspawn.log` in the game directory records each start step. A crash writes `except.txt` there too, and its
   `Eip` shows where the crash happened.
 
