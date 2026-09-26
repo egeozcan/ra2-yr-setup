@@ -337,6 +337,7 @@ static char GFASTCALL spawn_start(char unused)
 #define JJ_ARRIVED_STOCK    0x54C1BD
 #define JJ_STATE_DONE       0x54C4FD
 #define STOP_EVENT          0x4C7512   /* EventClass::Execute, Stop, ESI = the techno */
+#define WAVE_KEEP           0x762B9B   /* WaveClass::Update_Wave: end the beam unless owner->Target == wave->Target */
 #define UNIT_AI_SLOT        0x7F5CCC   /* UnitClass vtable: AI */
 #define UNIT_AI             0x7360C0
 #define JUMPJET_ILOCO_VT    0x7ECD68   /* JumpjetLocomotionClass ILocomotion vtable */
@@ -401,6 +402,10 @@ __attribute__((used)) void carry_stop(BYTE *techno)
 void arrive_stub(void);
 /* at 0x4C7512, replacing "mov eax, [esi+0xAC]" */
 void stop_stub(void);
+/* at 0x762B9B, replacing "cmp [edi+0x2B4], ebx; jne 0x762C40"; EDI = the beam's owner, EBX = its target.
+ * The Magnetron beam lasts only while the owner still targets its victim, and a move order clears the target.
+ * Keep it while a human player's Magnetron carries that victim. */
+void wave_stub(void);
 __asm__(
     ".section .text\n"
     ".intel_syntax noprefix\n"
@@ -418,6 +423,22 @@ __asm__(
     "1:  mov dword ptr [esi+0x50], 2\n"  /* hovering */
     "    mov byte ptr [esi+0x4C], 0\n"   /* not moving: the hovering state then just holds position */
     "    push 0x54C4FD\n"           /* JJ_STATE_DONE */
+    "    ret\n"
+    "_wave_stub:\n"
+    "    cmp [edi+0x2B4], ebx\n"
+    "    je 2f\n"
+    "    cmp [edi+0x2AC], ebx\n"
+    "    jne 3f\n"
+    "    push eax\n"
+    "    mov eax, [edi+0x21C]\n"   /* owner house */
+    "    test eax, eax\n"
+    "    jz 4f\n"
+    "    cmp byte ptr [eax+0x1EC], 0\n"  /* IsHumanPlayer */
+    "4:  pop eax\n"
+    "    jnz 2f\n"
+    "3:  push 0x762C40\n"          /* end the beam */
+    "    ret\n"
+    "2:  push 0x762BA7\n"          /* keep it */
     "    ret\n"
     "_stop_stub:\n"
     "    pushad\n"
@@ -505,12 +526,18 @@ static void patch_magnetron(void)
         patch_rel(STOP_EVENT, 0xE8, (DWORD)stop_stub);
         ok++;
     }
+    if (patch_checked("magnetron beam", WAVE_KEEP,
+                      (const BYTE[]){ 0x39, 0x9F, 0xB4, 0x02, 0, 0, 0x0F, 0x85, 0x99, 0, 0, 0 }, 12)) {
+        patch(WAVE_KEEP + 5, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, 7);
+        patch_rel(WAVE_KEEP, 0xE9, (DWORD)wave_stub);
+        ok++;
+    }
     DWORD ai = UNIT_AI, fn = (DWORD)unit_ai;
     if (patch_checked("unit AI vtable slot", UNIT_AI_SLOT, (const BYTE *)&ai, 4)) {
         patch(UNIT_AI_SLOT, (const BYTE *)&fn, 4);
         ok++;
     }
-    logmsg("magnetron carry: %d of 5 patches applied", ok);
+    logmsg("magnetron carry: %d of 6 patches applied", ok);
 }
 
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */

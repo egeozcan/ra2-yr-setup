@@ -446,9 +446,11 @@ How it works (addresses in this exe, traced 2026-09-26; YRpp names):
   victim (hovering, no Magnetron attached) to Descending with `IsMoving` set. That is the state the stock arrival drop
   leaves, and the stock fall and landing code then runs. Every drop from the hover goes through this step.
 - **Checked before patching:** at start the DLL compares the stock bytes at each site. It skips any site that differs
-  and logs `magnetron carry: N of 5 patches applied` in `yspawn.log`.
-- **Beam:** the beam is drawn only while the Magnetron is still attacking the victim. After a move order the vehicle
-  follows with no beam.
+  and logs `magnetron carry: N of 6 patches applied` in `yspawn.log`.
+- **Beam** (added 2026-09-26): the beam is a `WaveClass` (type 3). `Update_Wave` (`0x762AF0`) keeps it only while its
+  owner's `Target` (`+0x2B4`) is the beam's target (check at `0x762B9B`), so a move order ended it while the vehicle was
+  still held. The DLL also keeps it while a human player's Magnetron has that target as its `LocomotorTarget`
+  (`+0x2AC`). The rest of the update for type 3 is only the beam animation. The log now says `N of 6 patches applied`.
 - **Not yet checked in game.** Things to watch for:
   - the hover height and spacing;
   - the follow lag with the default 8-frame interval;
