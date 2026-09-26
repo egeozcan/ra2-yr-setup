@@ -321,6 +321,7 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   `Eip` shows where the crash happened.
 - **Start positions and teams** (added 2026-09-25): `Start=` (0–7, or -1 for random) and `Team=` (0–3 = A–D,
   or -1 for none) in `[Settings]` and in each `[AIn]` section. Players on the same team are allied from the start.
+  Players with no team are allied with nobody, including other AIs (the stock game allies all team-less AIs).
   Before this, your start was always position 0.
 
 ### Skirmish Setup window (2026-09-25)
@@ -395,9 +396,11 @@ How it works (`spawner/yspawn.c`):
   - `AllyTeams` (vtable `+0x88`, `0x5D74A0`, called unconditionally from `0x686AE4`) allies, both ways, every
     two houses with the same team (-1 and -2 mean no team). `Allies` is the bitfield at `HouseClass+0x5788`
     (`IsAlliedWith`, `0x4F9A10`).
-  - `MakeAlly` (`0x4F9B70`) can call the AI "paranoid" check (`0x501640`), which allies the AIs against a
-    human. That check returns at once when `ScenarioClass+0x11E0` is set, and `AssignHouses` sets it whenever
-    an AI has a team. So teams don't make the AIs gang up on you, the same as with the menu.
+  - `0x501640` allies every computer player with every other one. It is called from several places, including
+    `MakeAlly` (`0x4F9B70`), and returns at once only when `ScenarioClass+0x11E0` is set. `AssignHouses`
+    sets that flag only when someone has a team. So in the stock game, with no teams, all the AIs are
+    allied against you. The DLL makes `0x501640` return at once (added 2026-09-25), so team **None**
+    means everyone for themselves. Teams still work as before, through `AllyTeams`.
   - The start list (`0x688380`) holds waypoints 0, 1, 2, … in order. All 53 maps define waypoints
     0 to max−1 with no gaps, so start k is always waypoint k.
   - The 1-based numbers in Skirmish Setup are the map's waypoints 0–7. On the preview, cell (x, y) is at

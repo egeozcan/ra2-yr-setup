@@ -22,6 +22,7 @@
 #define CALL_MAINMENU_2   0x48CFAA  /* Main_Game: call Select_Game after a match */
 #define SKIP_INTRO        0x52CB50  /* -> 0x52CB6E */
 #define SKIP_LOGO         0x52C5E0  /* -> 0x52C5F8 */
+#define AI_GANG_UP        0x501640  /* allies all computer players with each other, see DllMain */
 
 #define GAME_ISACTIVE     ((char *)0xA8E9A0)
 #define PCX_INITIALIZED   ((char *)0xAC48D4)
@@ -334,6 +335,10 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
     patch_rel(CALL_MAINMENU_2, 0xE8, (DWORD)spawn_start);
     patch_rel(SKIP_INTRO, 0xE9, 0x52CB6E);
     patch_rel(SKIP_LOGO, 0xE9, 0x52C5F8);
+    /* 0x501640 allies every computer player with every other one unless ScenarioClass+0x11E0 is set, and
+     * AssignHouses only sets that when someone has a team. So with no teams the stock game has all the AIs
+     * allied against you. Returning at once makes "no team" mean everyone for themselves. */
+    patch(AI_GANG_UP, (const BYTE[]){ 0xC3 }, 1);
     logmsg("patched");
     return TRUE;
 }
