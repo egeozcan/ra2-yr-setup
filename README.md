@@ -187,27 +187,46 @@ Commands:
   `cd mod && .venv/bin/python make_graphics.py`.
 - **To rename:** change `UNIT_NAME` in `build-tesla-mod.py` and the cameo label
   (`"Liberator"` in `make_graphics.py` `main`). Then run `make_graphics.py` and `install`.
-- Previews: `mod/previews/liberator-model.png` and `liberator-cameo.png`.
+- Previews: `make_graphics.py` also rewrites `mod/previews/liberator-*.png`.
 - Libraries: `liberator_model.py` (the model), `mixextract.py` (encrypted MIX reader), `vxl.py` (VXL/HVA), `csf.py`
-  (string table), `render.py` (preview renderer and SHP read/write).
+  (string table), `render.py` (preview renderers, including `draw_vpl`, which draws voxels through
+  `voxels.vpl` like the game, and SHP read/write).
 
 Art: a completely custom model, built from primitives by `mod/liberator_model.py`.
 It shares no geometry with the Tesla tank.
+- **Style (2026-09-26 restyle to match the stock Allied vehicles):**
+  - It uses the palette indices the Grizzly, Prism Tank and Tank Destroyer use: blue-grey steel
+    88/90/92/94, dark greys 55–59 for running gear and details, and house colour 23/26 on trim.
+    Each material picks its index by face direction (top, side, underside), and colours are otherwise
+    flat, so the engine's voxel lighting does the shading.
+  - The Tesla parts follow the stock Tesla tank: grey coil discs (50/51/13) with dark gaps.
+    The only light is a small blue-white electrode (192/193).
+  - Like the stock models, only the outer shell of voxels is stored.
+  - Drawn through `voxels.vpl` at 1 px per voxel, its average luminance is 80, close to the stock
+    Allied tanks' 69–77, with a similar colour mix. The first version measured 112 and used pale
+    lavender steel, orange copper, neon cyan and yellow lights.
 - **Hull** (48×31×12 voxels):
-  - a low, angular body with a sloped glacis;
-  - house-colour armour skirts over the tracks, with road wheels below them;
-  - a recessed engine grille, headlights, and white stars on the fenders.
-- **Turret** (36×24×21 voxels, pivoting at the hull centre, sitting on the hull top at z 9.5):
-  - a faceted house-colour turret with a steel roof;
-  - a copper-wound Tesla cannon ending in a glowing cyan electrode ball;
-  - twin capacitor banks, and a rear Tesla mast with copper rings and an orb.
-- **Cameo:** rendered from the model and labelled LIBERATOR in the stock label style.
-- **Previews** in `mod/previews/`: `liberator-model.png` (turret at several angles),
-  `liberator-ingame-scale.png` (about 1 px per voxel) and `liberator-cameo.png`.
+  - a stepped deck with a sloped glacis, driver hatch and vents, and lower fenders beside it;
+  - house-colour front fenders and three-panel side skirts;
+  - tracks with road wheels, sprocket and idler;
+  - stowage boxes and headlights on the fenders, two engine grilles and exhausts at the rear.
+- **Turret** (38×24×13 voxels, pivoting at the hull centre, sitting on the turret ring at z 12):
+  - a faceted steel turret with house-colour cheeks and a rear bustle;
+  - a Tesla gun of four coil discs ending in the electrode;
+  - two capacitor coils on the roof, a commander cupola and an antenna.
+- **Cameo:** rendered from the model and labelled LIBERATOR in the stock label style. It is still
+  a clean render, unlike the painted stock cameos.
+- **Previews** in `mod/previews/`, drawn through `voxels.vpl`:
+  - `liberator-model.png`: close-ups, two of them with the turret turned;
+  - `liberator-ingame-scale.png`: 1 px per voxel at eight facings, enlarged 3×;
+  - `liberator-cameo.png`.
 - **Palette:** every colour index used is identical in all six theatre unit palettes.
-- **Muzzle position:** the fire point is still the stock `PrimaryFireFLH=60,0,100`. The
-  electrode sits about 3 voxels further forward and lower than the stock coil tips, so check
-  where the bolt starts in game.
+- **Muzzle position:** `PrimaryFireFLH=120,0,100` (`UNIT_FLH` in `build-tesla-mod.py`) points at the
+  electrode (`ELECTRODE` in `liberator_model.py`), at about 6 leptons per voxel. A screenshot on
+  2026-09-26 showed the bolt starting at the tip of the coil gun.
+- **First custom version** (2026-09-25): to get the brighter model back, restore
+  `mod/liberator_model.py` from commit `c1980fd` and set `UNIT_FLH` in `build-tesla-mod.py` back to
+  `60,0,100`. Then run `make_graphics.py` and `install`.
 - **Previous version:** the earlier recolour of the stock model is kept in `mod/assets-recolor/`,
   with its previews in `recolor-*.png`. To go back to it, copy it over `mod/assets/` and run `install`.
   Its generator code was removed, so that folder is the only copy. Running `make_graphics.py`
@@ -224,8 +243,13 @@ Stats compared with the stock Tesla tank:
   "General Vehicle Attack" script, one team at a time, on every difficulty. Soviet and Yuri
   AI never builds it.
 
-The in-game check has not been done yet. Old saves and online matches may not work
-while the mod is installed; uninstall it for those. `restore-stock.sh` does not
+**In-game check (2026-09-26):** screenshots taken with `spawner/showcase.py` (see the quick skirmish
+launcher) show the restyled Liberator next to the Grizzly, Prism Tank, Tank Destroyer and Tesla Tank. It
+reads as the same family and is closest in tone to the Prism Tank. It is a little lighter than the
+Grizzly and Tank Destroyer, because vehicles are lit brighter than `VPL_LIGHT` predicts. Its bolt starts
+at the gun tip and chains between targets. No user has played with it yet.
+
+Old saves and online matches may not work while the mod is installed; uninstall it for those. `restore-stock.sh` does not
 remove these files; run the uninstall command as well.
 
 ## Mod: Cheat Defense (2026-09-25)
@@ -323,6 +347,27 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   or -1 for none) in `[Settings]` and in each `[AIn]` section. Players on the same team are allied from the start.
   Players with no team are allied with nobody, including other AIs (the stock game allies all team-less AIs).
   Before this, your start was always position 0.
+- **Test units** (added 2026-09-26): an optional `[Units]` section in the ini puts vehicles on the map once the
+  match has loaded. Each line is `n=TYPE,COUNTRY,X,Y,FACING,MISSION`:
+  - `TYPE`: a vehicle ID such as `ATTNK`;
+  - `COUNTRY`: the country of the house that gets it, such as `Americans` or `Russians`;
+  - `X,Y`: the map cell;
+  - `FACING`: 0–255 (0 north, 64 east);
+  - `MISSION`: `Sleep` (never fires), `Guard`, `Area_Guard`, `Hunt`, or a number.
+
+  `yspawn.log` lists each vehicle and whether it could be placed. A map's own `[Units]` didn't work for this.
+  Vehicles pre-placed for `<Player @ A>` or for a country name never showed up for the player in a match started
+  this way; the cause wasn't investigated.
+- **`python3 spawner/showcase.py [SPEED]`** (added 2026-09-26) starts Tsunami with a test line-up next to your
+  start:
+  - the Liberator beside the Grizzly, Prism Tank, Tank Destroyer and Tesla Tank, all facing the same way;
+  - four Liberators at different facings;
+  - one guarding Liberator that fires at three sleeping Apocalypse tanks.
+
+  Speed defaults to 6 (slowest), so the bolts last long enough to catch. To take screenshots remotely:
+  - The display must be awake. Captures of a sleeping display are black, and KDE's idle dimming shows in them.
+  - `kscreen-doctor --dpms on` wakes it, and `kde-inhibit --power --screenSaver sleep 600` keeps it on.
+  - Then run `spectacle -b -n -f -o shot.png`. The game fills 2560×1440 starting at x 1280.
 
 ### Skirmish Setup window (2026-09-25)
 

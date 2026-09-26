@@ -2,8 +2,9 @@
 """Build the Liberator's art: voxel models (attnk.vxl/.hva, attnktur.vxl/.hva) and cameo (attkicon.shp).
 
 usage: make_graphics.py [OUT_DIR]      (default: mod/assets; needs numpy + Pillow)
-The model is built from scratch by liberator_model.py. Palettes, the stock .hva files (one
+The model is built from scratch by liberator_model.py. Palettes, voxels.vpl, the stock .hva files (one
 identity section each, reused as-is) and the stock cameo frame are read from the game's MIX archives.
+Also writes the previews in mod/previews/ (liberator-*.png), drawn through voxels.vpl like the game.
 """
 import os, shutil, sys
 import numpy as np
@@ -19,7 +20,7 @@ def extract_sources(dst):
     for archive, path in (("ra2.mix", "local.mix/ttnk.vxl"), ("ra2.mix", "local.mix/ttnk.hva"),
                           ("ra2.mix", "local.mix/ttnktur.vxl"), ("ra2.mix", "local.mix/ttnktur.hva"),
                           ("ra2.mix", "cache.mix/unittem.pal"), ("ra2.mix", "cache.mix/cameo.pal"),
-                          ("language.mix", "cameo.mix/ttnkicon.shp")):
+                          ("language.mix", "cameo.mix/ttnkicon.shp"), ("ra2md.mix", "localmd.mix/voxels.vpl")):
         with open(os.path.join(game, archive), "rb") as f:
             data = mixextract.extract(f.read(), path)
         open(os.path.join(dst, os.path.basename(path)), "wb").write(data)
@@ -40,7 +41,48 @@ def main():
         shutil.copy(os.path.join(src, "ttnk.hva"), os.path.join(out, "attnk.hva"))
         shutil.copy(os.path.join(src, "ttnktur.hva"), os.path.join(out, "attnktur.hva"))
         make_cameo(hull, turret, src, os.path.join(out, "attkicon.shp"), "Liberator")
+        make_previews(hull, turret, src, os.path.join(out, "attkicon.shp"), PREVIEWS)
     print("wrote attnk.vxl/.hva, attnktur.vxl/.hva, attkicon.shp to", out)
+    print("wrote liberator-model.png, liberator-ingame-scale.png, liberator-cameo.png to", PREVIEWS)
+
+
+# ---------------- previews ----------------
+PREVIEWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "previews")
+HOUSE_BLUE = (40, 90, 230)
+GRASS = (74, 92, 52)
+
+
+def make_previews(hull, turret, src, cameo, out_dir):
+    """Model close-ups and in-game scale, both drawn through voxels.vpl, plus the cameo enlarged."""
+    from PIL import Image
+    import render as R
+    from cheatdef_art import VPL_LIGHT
+    upal = R.remap_colors(R.load_pal(os.path.join(src, "unittem.pal")), HOUSE_BLUE)
+    vpl = R.load_vpl(os.path.join(src, "voxels.vpl"))
+
+    def strip(views, size, k):
+        tiles = []
+        for facing, turn in views:
+            ix = R.draw_vpl([(hull, 0), (turret, turn)], facing, vpl, NORMALS, VPL_LIGHT, size, k)
+            t = np.empty((size[1], size[0], 3), np.uint8)
+            t[:] = GRASS
+            t[ix > 0] = upal[ix[ix > 0]]
+            tiles.append(t)
+        return np.concatenate(tiles, 1)
+
+    # close-ups: four facings, then two with the turret turned against the hull
+    views = [(30, 0), (120, 0), (210, 0), (300, 0), (45, 60), (250, -90)]
+    img = np.concatenate([strip(views[:3], (330, 260), 5), strip(views[3:], (330, 260), 5)], 0)
+    Image.fromarray(img).save(os.path.join(out_dir, "liberator-model.png"))
+    # in-game scale (1 px per voxel), eight facings, enlarged 3x without smoothing
+    img = strip([(f, 0) for f in range(0, 360, 45)], (80, 64), 1)
+    Image.fromarray(img).resize((img.shape[1] * 3, img.shape[0] * 3), Image.NEAREST).save(
+        os.path.join(out_dir, "liberator-ingame-scale.png"))
+    cpal = R.load_pal(os.path.join(src, "cameo.pal"))
+    _, _, frames = R.read_shp(cameo)
+    img = cpal[frames[0][4]]
+    Image.fromarray(img).resize((img.shape[1] * 4, img.shape[0] * 4), Image.NEAREST).save(
+        os.path.join(out_dir, "liberator-cameo.png"))
 
 
 # ---------------- cameo ----------------

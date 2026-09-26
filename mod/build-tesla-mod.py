@@ -31,6 +31,9 @@ UNIT_NAME = "Liberator"
 CAMEO = "ATTKICON"
 
 UNIT_ID = "ATTNK"
+# Fire position in leptons (forward, sideways, up): the electrode tip of the model,
+# liberator_model.ELECTRODE (20, 0, 16.5 voxels) at about 6 leptons per voxel. Stock TTNK: 60,0,100.
+UNIT_FLH = "120,0,100"
 ALLIED_COUNTRIES = "British,French,Germans,Americans,Alliance"
 LIST_KEY = "85"
 
@@ -253,8 +256,8 @@ def patch_art(text):
         raise SystemExit(f"art [{UNIT_ID}] already present")
     s, e = section_lines(lines, "TTNK")
     body = [l for l in lines[s + 1:e] if l.strip()]
-    body = [f"Cameo={CAMEO}" if l.startswith("Cameo=") else f"AltCameo={CAMEO}" if l.startswith("AltCameo=") else l
-            for l in body]
+    swap = {"Cameo": CAMEO, "AltCameo": CAMEO, "PrimaryFireFLH": UNIT_FLH, "ElitePrimaryFireFLH": UNIT_FLH}
+    body = [f"{l.split('=')[0]}={swap[l.split('=')[0]]}" if l.split("=")[0] in swap else l for l in body]
     while lines and lines[-1] == "":
         lines.pop()
     lines += ["", f"[{UNIT_ID}]   ; Liberator (mod)"] + body

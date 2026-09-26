@@ -10,7 +10,7 @@ the way they are.
 Each fact is marked with how it was established:
 - **[stock]:** read from the game's own files.
 - **[measured]:** computed or checked offline.
-- **[in game]:** confirmed on screen by the user.
+- **[in game]:** seen in the running game, either by the user or on a screenshot of it.
 - **[assumed]:** a reasoned guess that has not been verified.
 
 ---
@@ -154,6 +154,21 @@ Each fact is marked with how it was established:
   - small icy-blue lights instead of neon cyan.
 
   The user then called the base "perfect".
+- **Stock Allied vehicle colours [stock, measured].** Measured on the Grizzly (`gtnk*`, the image of rules
+  `[MTNK]`), Prism Tank (`sref*`), Tank Destroyer (`tnkd`) and IFV (`fv*`):
+  - Steel 88/90/92/94 makes up 50–67% of the voxels, dark greys 55–59 about 30%, and house colour
+    (mostly 23, with some 26/27) 5–20%. They have almost no white and no saturated colours; the Prism
+    Tank's crystal is a few voxels of 15.
+  - Tops are mostly 88, sides 92/94/55/59 and undersides 94/92. That up/side/down choice is the only
+    painted-in shading.
+  - The Tesla tank (`ttnk*`) draws its coils as grey discs (13, 49–51) with dark gaps (53–56), with no glow.
+  - Drawn through `voxels.vpl` at 1 px per voxel over 12 facings, the average luminance is 69–77
+    (standard deviation 30–35). The first Liberator measured 112 and looked toy-like next to them.
+    The restyled one measures 80 (standard deviation 29).
+  - Their voxels are hollow shells: interior voxels are not stored (the Grizzly hull is 41×30×12
+    with 4508 voxels).
+  - The unit IDs don't match the file names. Rules `[MTNK]` is the Grizzly, but it uses `Image=GTNK`. The
+    `mtnk*` voxels belong to the Apocalypse (`[APOC]` has `Image=MTNK`).
 - **Cameo [stock].** 60×48 in `cameo.pal`. The stock 2 px frame and the label strip style are reused; the label is
   hand-drawn in a 3×5 font.
 
@@ -203,7 +218,7 @@ The engine does not shade voxels with real 3D light. It uses **`voxels.vpl`**, a
 | `mixextract.py` | Read-only MIX reader, with encrypted-header support. |
 | `vxl.py` | VXL/HVA read/write and the normal table. |
 | `csf.py` | String table (`ra2md.csf`) read/write. |
-| `render.py` | Palette loading and SHP reading. Its voxel preview renderer is **mirrored in y** compared with our world axes, and it does **not** apply `voxels.vpl`, so don't use it to judge voxel colours. |
+| `render.py` | Palette loading and SHP reading. Its `render` voxel preview is **mirrored in y** compared with our world axes, and it does **not** apply `voxels.vpl`, so don't use it to judge voxel colours. `draw_vpl` does apply `voxels.vpl` (with `VPL_LIGHT`) at any zoom, with a depth test; use it for voxel previews and for side-by-side checks against stock voxels. |
 | `liberator_model.py` / `make_graphics.py` | The Liberator's voxel model and cameo. |
 | `cheatdef_art.py` | Cheat Defense art. It ray-marches one signed-distance-function scene into the SHPs and cameo, and voxelises it into the turret. `vpl_draw` emulates in-game voxel drawing. It runs in about 30 s. |
 | `build-tesla-mod.py install/uninstall/build DIR` | Builds the INI, CSF and asset set and installs or removes it. |
@@ -217,13 +232,34 @@ Working practices:
   - emulate voxels through `voxels.vpl`.
 - **In-game screenshots are the ground truth.** Crop and zoom them. To measure, align the base SHP against the
   screenshot, which gives the offset, then compare or fit.
+- **Drawing voxels larger than 1 px needs a depth test [measured].** Splatting each voxel as a k×k block in
+  one pass per offset lets a farther voxel's later pass paint over a nearer one, which leaves stripes.
+  Depth towards the viewer is `0.612·(x + y) + 0.5·z`. `cheatdef_art.vpl_draw` uses 2×2 passes and
+  a different depth weighting. At 1 px its output differs from `render.draw_vpl` only in single-shade
+  texture, so the Cheat Defense art is unaffected.
 - **Keep a copy of every voxel that was shown in a screenshot.** The first fit needed the exact installed turret and
   had to be regenerated from a backup of the generator.
 
 ## 8. Still open
 
+Checked on screenshots on 2026-09-26 (`spawner/showcase.py`):
+- **The restyled Liberator matches the stock vehicles [in game].** It is closest in tone to the Prism Tank
+  and a little lighter than the Grizzly and Tank Destroyer. Because it uses the stock indices, it matches
+  even though `VPL_LIGHT` doesn't predict vehicles well. Faces towards the viewer come out brighter on
+  vehicles than the building-turret fit says. Refit it from `showcase.py` screenshots if vehicle art ever
+  needs tuning.
+- **The Liberator's fire position is right [in game].** `PrimaryFireFLH=120,0,100` was aimed at the electrode
+  at (20, 0, 16.5) voxels, using about 6 leptons per voxel, and the bolt starts at the gun tip. That fits
+  the 6 leptons per voxel figure, though it's a single check.
+- **Pre-placed map units didn't show up [in game].** Vehicles added to a map's `[Units]` (appended after
+  `[Digest]`), owned by `<Player @ A>` or by a country name, never appeared for the player in a match started
+  by `yspawn`. Nobody checked whether they existed under the shroud for some other house. Use the launcher's
+  own `[Units]` (README, quick skirmish launcher).
+- **Evidence:** the full screenshots and the voxels they show are in
+  `logs/liberator-ingame-2026-09-26/` (not in git).
+
 Not yet confirmed in game:
-- where the bolt starts (`PrimaryFireFLH=270,0,225`);
+- where the Cheat Defense bolt starts (`PrimaryFireFLH=270,0,225`);
 - whether the glow animation draws over the turret (`ActiveAnimZAdjust=-30`);
 - whether the build-up hands over to the turret smoothly;
 - how the latest turret looks.

@@ -112,3 +112,49 @@ def shp_to_image(path, pal, frame=0):
     out = np.zeros((H, W, 3), np.uint8)
     out[y:y + h, x:x + w] = pal[a]
     return Image.fromarray(out, "RGB")
+
+
+def load_vpl(path):
+    """voxels.vpl: (light levels x 256) table, output index = vpl[level, colour]."""
+    d = open(path, "rb").read()
+    n = struct.unpack_from("<I", d, 8)[0]
+    return np.frombuffer(d, np.uint8, n * 256, 16 + 768).reshape(n, 256)
+
+
+def draw_vpl(parts, facing, vpl, normals, light, size=(80, 64), k=1, ground_y=0.62):
+    """Draw voxel sections the way the game does: 2:1 dimetric view, k px per voxel (1 = in-game
+    scale), each voxel's colour looked up in voxels.vpl at light level light[0] + normal . light[1:]
+    (world axes, see cheatdef_art.VPL_LIGHT). parts: [(section, extra yaw in degrees)].
+    Returns an index image (0 = empty) in the unit palette."""
+    W, H = size
+    img = np.zeros((H, W), np.uint8)
+    dep = np.full((H, W), -1e9)
+    pts, cols, nrms = [], [], []
+    for sec, turn in parts:
+        p, col, nrm = voxel_points(sec)
+        t = math.radians(facing + turn)
+        rot = np.array([[math.cos(t), -math.sin(t), 0], [math.sin(t), math.cos(t), 0], [0, 0, 1]])
+        pts.append(p @ rot.T)
+        nrms.append(normals[np.minimum(nrm, len(normals) - 1)] @ rot.T)
+        cols.append(col)
+    p, col, nrm = np.concatenate(pts), np.concatenate(cols), np.concatenate(nrms)
+    level = np.clip(np.round(light[0] + nrm @ np.asarray(light[1:])), 0, len(vpl) - 1).astype(int)
+    out = vpl[level, col]
+    c30 = math.cos(math.radians(30))
+    sx = W / 2 + k * (p[:, 0] - p[:, 1]) / math.sqrt(2)
+    sy = H * ground_y + k * ((p[:, 0] + p[:, 1]) / (2 * math.sqrt(2)) - p[:, 2] * c30)
+    depth = (p[:, 0] + p[:, 1]) / math.sqrt(2) * c30 + p[:, 2] * 0.5     # towards the viewer
+    wx, wy = (2, 2) if k == 1 else (math.ceil(1.42 * k), math.ceil(1.58 * k))
+    ox, oy = (0, 0) if k == 1 else (wx // 2, wy // 2)
+    for dx in range(wx):
+        for dy in range(wy):
+            X = np.floor(sx).astype(int) + dx - ox
+            Y = np.floor(sy).astype(int) + dy - oy
+            ok = (X >= 0) & (X < W) & (Y >= 0) & (Y < H)
+            X, Y, d, c = X[ok], Y[ok], depth[ok], out[ok]
+            o = np.argsort(d)                       # nearest last, so it wins duplicate pixels
+            X, Y, d, c = X[o], Y[o], d[o], c[o]
+            front = d > dep[Y, X]                   # and never paints over something nearer
+            img[Y[front], X[front]] = c[front]
+            dep[Y[front], X[front]] = d[front]
+    return img

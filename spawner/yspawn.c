@@ -12,6 +12,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define GFASTCALL __attribute__((fastcall))
@@ -190,6 +191,8 @@ static int ini_team(const char *sec)
     return v >= 0 && v < 4 ? v : -1;
 }
 
+static void spawn_units(void);
+
 static char GFASTCALL spawn_start(char unused)
 {
     (void)unused;
@@ -318,6 +321,8 @@ static char GFASTCALL spawn_start(char unused)
     logmsg("starting scenario");
     char ok = START_SCENARIO(scenario, 0, -1);
     logmsg("StartScenario returned %d", ok);
+    if (ok)
+        spawn_units();
     return ok;
 }
 
@@ -689,6 +694,81 @@ static void patch_magnetron(void)
         ok++;
     }
     logmsg("magnetron carry: %d of 7 patches applied", ok);
+}
+
+/* ---- test units ----
+ * Optional [Units] section in yspawn.ini, read once the scenario is loaded: n=TYPE,COUNTRY,X,Y,FACING,MISSION puts a
+ * vehicle (a UnitTypeClass ID such as ATTNK) on map cell X,Y for the house playing COUNTRY (a HouseTypeClass ID such
+ * as Americans). FACING is 0-255 (0 north, 64 east); MISSION is Sleep (never fires), Guard, Area_Guard, Hunt or a
+ * number. For screenshots and tests: vehicles in the map's own [Units] did not show up for the player. Vtable slots follow the YRpp
+ * declaration order and were checked against this exe (CreateObject 0x747560 calls UnitClass::UnitClass 0x7353C0). */
+#define UNITTYPE_ARRAY    ((DynVec *)0xA83CE0)
+#define HOUSE_ARRAY       ((DynVec *)0xA80228)
+#define MAP_INSTANCE      ((void *)0x87F7E8)
+#define MAP_FLOOR_HEIGHT  0x578080   /* MapClass::GetCellFloorHeight(const CoordStruct&) */
+#define H_TYPE            0x034      /* HouseClass: HouseTypeClass* */
+#define T_ID              0x024      /* AbstractTypeClass: char ID[0x18] */
+#define VT_CREATEOBJECT   0x08C      /* ObjectTypeClass::CreateObject(HouseClass*) */
+#define VT_UNLIMBO        0x0D8      /* ObjectClass::Unlimbo(const CoordStruct&, DirType) */
+#define VT_QUEUEMISSION   0x1E8      /* MissionClass::QueueMission(Mission, bool) */
+
+static BYTE *find_type(DynVec *v, const char *id)
+{
+    for (int i = 0; i < v->Count; i++)
+        if (!_stricmp((char *)v->Items[i] + T_ID, id))
+            return v->Items[i];
+    return NULL;
+}
+
+static BYTE *find_house(const char *country)
+{
+    DynVec *v = HOUSE_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *type = FIELD(v->Items[i], H_TYPE, BYTE *);
+        if (type && !_stricmp((char *)type + T_ID, country))
+            return v->Items[i];
+    }
+    return NULL;
+}
+
+static int mission_number(const char *name)
+{
+    static const struct { const char *name; int value; } names[] = {
+        { "Sleep", 0 }, { "Guard", 5 }, { "Area_Guard", 11 }, { "Hunt", 15 }, { "Harmless", 23 },
+    };
+    for (size_t i = 0; i < sizeof names / sizeof *names; i++)
+        if (!_stricmp(name, names[i].name))
+            return names[i].value;
+    return atoi(name);
+}
+
+static void spawn_units(void)
+{
+    static char buf[8192];
+    if (!GetPrivateProfileSectionA("Units", buf, sizeof buf, INI))
+        return;
+    for (char *line = buf; *line; line += strlen(line) + 1) {
+        char *value = strchr(line, '=');
+        char type_id[32], country[32], mission[32];
+        int x, y, facing;
+        if (!value || sscanf(value + 1, "%31[^,],%31[^,],%d,%d,%d,%31s", type_id, country, &x, &y, &facing, mission) != 6) {
+            logmsg("units: bad line '%s'", line);
+            continue;
+        }
+        BYTE *type = find_type(UNITTYPE_ARRAY, type_id), *house = find_house(country);
+        if (!type || !house) {
+            logmsg("units: %s: no %s", line, type ? "house" : "vehicle type");
+            continue;
+        }
+        BYTE *obj = ((BYTE *(GTHISCALL *)(BYTE *, BYTE *))VFUNC(type, VT_CREATEOBJECT))(type, house);
+        Coord c = { x * 256 + 128, y * 256 + 128, 0 };
+        c.Z = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
+        char placed = obj && ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(obj, VT_UNLIMBO))(obj, &c, facing & 0xFF);
+        if (placed)
+            ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(obj, VT_QUEUEMISSION))(obj, mission_number(mission), 0);
+        logmsg("units: %s %s at %d,%d height %d facing %d %s: %s", type_id, country, x, y, c.Z, facing, mission,
+               placed ? "placed" : "could not be placed");
+    }
 }
 
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */
