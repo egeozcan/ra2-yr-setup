@@ -408,3 +408,49 @@ How it works (`spawner/yspawn.c`):
   - **Not yet checked in game:** the build is installed but no match has been played with teams or fixed starts.
 - The Cheat Defense has `SpySat=yes`, so building one reveals the whole map. That is intended and is not
   caused by the launcher.
+
+## Mod: Magnetron carry (2026-09-26)
+
+Yuri's Magnetron now keeps a grabbed vehicle in the air, and you choose where it goes down.
+- **Grab:** attack a vehicle with the Magnetron as usual. The vehicle is lifted and pulled over next to the Magnetron.
+  It then **stays hovering** there instead of dropping.
+- **Carry:** order the Magnetron to move anywhere. The held vehicle follows it through the air and hovers in the
+  nearest free cell beside it when the Magnetron stops.
+- **Drop:** press **Stop** (`S`) with the Magnetron selected. The vehicle falls where it is and takes the stock falling
+  damage (`FallingDamageMultiplier=1.0`, based on its current strength).
+- **Also drops it (stock):** the Magnetron dies, grabs a different vehicle, or anything else that ends the link
+  in the stock game.
+- Force-fire (`Ctrl`) on one of your own vehicles should let you move your own units (untested).
+- **Only your Magnetrons carry.** Computer players' Magnetrons keep the stock pull-and-drop behaviour, so an AI
+  never holds a vehicle forever.
+- **Only the quick skirmish launcher has it.** It is code in `spawner/yspawn.dll` (section "Magnetron carry" in
+  `yspawn.c`), so a normal Steam launch plays stock. No INI file is changed. To install or update it, run
+  `python3 spawner/spawn.py install`.
+
+How it works (addresses in this exe, traced 2026-09-26; YRpp names):
+- `ImbueLocomotor` (`0x710000`) gives the victim a Jumpjet locomotor and links the two objects: `+0x2AC`
+  `LocomotorTarget` on the Magnetron, `+0x2B0` `LocomotorSource` on the victim, and `+0x6AD` `IsAttackedByLocomotor`.
+  It then sends the victim towards the Magnetron. `ReleaseLocomotor` (`0x70FEE0`) breaks the link; a victim in the air
+  falls. The DLL changes three stock drop points so that a human player's Magnetron skips them:
+  - `FootClass::SetDestination` (call at `0x4D9509`): the Magnetron was given a move destination;
+  - `UnitClass::EnterIdleMode` (call at `0x7389BF`): the Magnetron went idle;
+  - Jumpjet cruising state (`0x54C1B3`): the victim arrived. Instead of release + Descending, the locomotor is set to
+    Hovering with `IsMoving` cleared, the state a hovering jumpjet sits in.
+- **Stop** (`EventClass::Execute` at `0x4C7512`) calls `ReleaseLocomotor` on the unit.
+- **Follow:** a wrapper on the `UnitClass::AI` vtable slot (`0x7F5CCC`) runs every 8 frames per Magnetron. When the
+  Magnetron is more than 1.5 cells from where its victim is heading, it calls the victim locomotor's `Move_To` with the
+  Magnetron's position. The locomotor itself picks the nearest free cell. Calling the victim's `SetDestination` would
+  not work, because the game ignores it while `IsAttackedByLocomotor` is set.
+- **Landing after a drop:** the Jumpjet `Process` (`0x54AEC0`) skips a locomotor that is Hovering and not moving
+  (`0x54D0D0`), so after `ReleaseLocomotor` the fall would never run. The same per-frame wrapper therefore sets such a
+  victim (hovering, no Magnetron attached) to Descending with `IsMoving` set. That is the state the stock arrival drop
+  leaves, and the stock fall and landing code then runs. Every drop from the hover goes through this step.
+- **Checked before patching:** at start the DLL compares the stock bytes at each site. It skips any site that differs
+  and logs `magnetron carry: N of 5 patches applied` in `yspawn.log`.
+- **Beam:** the beam is drawn only while the Magnetron is still attacking the victim. After a move order the vehicle
+  follows with no beam.
+- **Not yet checked in game.** Things to watch for:
+  - the hover height and spacing;
+  - the follow lag with the default 8-frame interval;
+  - behaviour when several Magnetrons carry at once;
+  - dropping onto an occupied cell or a building.

@@ -321,6 +321,196 @@ static char GFASTCALL spawn_start(char unused)
     return ok;
 }
 
+/* ---- Magnetron carry ----
+ * Stock: the Magnetron's IsLocomotor warhead gives the victim a Jumpjet locomotor (ImbueLocomotor 0x710000,
+ * magnetron+0x2AC LocomotorTarget = victim, victim+0x2B0 LocomotorSource = magnetron, victim+0x6AD
+ * IsAttackedByLocomotor) and sends it towards the Magnetron. ReleaseLocomotor (0x70FEE0) drops it: in the air it
+ * falls and takes damage. The stock drops happen when the Magnetron gets a destination (FootClass::SetDestination),
+ * goes idle (UnitClass::EnterIdleMode), or the victim arrives (Jumpjet cruising state).
+ * For a human player's Magnetron those drops are skipped: the victim hovers next to it and follows it around, and
+ * the Stop command (S) drops it. Computer players keep the stock behaviour. Death, transports, chrono, a new
+ * Magnetron target and the like still drop it through the untouched stock paths. */
+#define RELEASE_LOCOMOTOR   0x70FEE0
+#define CALL_RELEASE_SETDEST 0x4D9509  /* FootClass::SetDestination: release when given a destination */
+#define CALL_RELEASE_IDLE   0x7389BF   /* UnitClass::EnterIdleMode */
+#define JJ_ARRIVED          0x54C1B3   /* Jumpjet cruising state: victim arrived, release and descend */
+#define JJ_ARRIVED_STOCK    0x54C1BD
+#define JJ_STATE_DONE       0x54C4FD
+#define STOP_EVENT          0x4C7512   /* EventClass::Execute, Stop, ESI = the techno */
+#define UNIT_AI_SLOT        0x7F5CCC   /* UnitClass vtable: AI */
+#define UNIT_AI             0x7360C0
+#define JUMPJET_ILOCO_VT    0x7ECD68   /* JumpjetLocomotionClass ILocomotion vtable */
+#define CURRENT_FRAME       (*(int *)0xA8ED84)
+
+/* object offsets (YRpp, checked against this exe) */
+#define O_OWNER       0x21C   /* TechnoClass: HouseClass* */
+#define O_LOCOTARGET  0x2AC   /* TechnoClass: FootClass* the victim */
+#define O_LOCOSOURCE  0x2B0   /* TechnoClass: FootClass* the Magnetron */
+#define O_LOCATION    0x09C   /* AbstractClass: CoordStruct */
+#define O_LOCOMOTOR   0x674   /* FootClass: ILocomotion* */
+#define O_ATTACKEDBYLOCO 0x6AD
+#define H_ISHUMAN     0x1EC   /* HouseClass */
+/* JumpjetLocomotionClass, from its ILocomotion pointer (= object + 4) */
+#define J_DEST        0x3C    /* CoordStruct DestinationCoords */
+#define J_ISMOVING    0x48
+#define J_STATE       0x4C    /* 2 hovering, 3 cruising, 4 descending */
+
+typedef struct { int X, Y, Z; } Coord;
+typedef void (GTHISCALL *release_fn)(BYTE *, char);
+typedef void (__stdcall *moveto_fn)(void *, Coord);
+#define FIELD(p, off, type) (*(type *)((BYTE *)(p) + (off)))
+
+static int carry_owner(BYTE *mag)
+{
+    BYTE *house = FIELD(mag, O_OWNER, BYTE *);
+    return house && house[H_ISHUMAN];
+}
+
+/* the victim's locomotor, if it is the Jumpjet one the Magnetron gave it */
+static BYTE *victim_jumpjet(BYTE *victim)
+{
+    BYTE *loco = FIELD(victim, O_LOCOMOTOR, BYTE *);
+    return loco && FIELD(loco, 0, DWORD) == JUMPJET_ILOCO_VT ? loco : NULL;
+}
+
+/* replaces the calls to ReleaseLocomotor in SetDestination and EnterIdleMode */
+static void GTHISCALL release_unless_carry(BYTE *self, char set_target)
+{
+    if (!carry_owner(self))
+        ((release_fn)RELEASE_LOCOMOTOR)(self, set_target);
+}
+
+/* victim arrived next to the Magnetron: nonzero = keep it hovering instead of dropping it */
+__attribute__((used)) int carry_keep_hovering(BYTE *victim)
+{
+    BYTE *mag = FIELD(victim, O_LOCOSOURCE, BYTE *);
+    return mag && carry_owner(mag);
+}
+
+__attribute__((used)) void carry_stop(BYTE *techno)
+{
+    if (FIELD(techno, O_LOCOTARGET, BYTE *)) {
+        logmsg("magnetron: stop, dropping");
+        ((release_fn)RELEASE_LOCOMOTOR)(techno, 1);
+    }
+}
+
+/* at 0x54C1B3, replacing "mov dword [esi+0x80], 0"; ESI = JumpjetLocomotionClass, EAX = victim */
+void arrive_stub(void);
+/* at 0x4C7512, replacing "mov eax, [esi+0xAC]" */
+void stop_stub(void);
+__asm__(
+    ".section .text\n"
+    ".intel_syntax noprefix\n"
+    "_arrive_stub:\n"
+    "    mov dword ptr [esi+0x80], 0\n"
+    "    push eax\n"
+    "    push eax\n"
+    "    call _carry_keep_hovering\n"
+    "    add esp, 4\n"
+    "    test eax, eax\n"
+    "    pop eax\n"
+    "    jnz 1f\n"
+    "    push 0x54C1BD\n"           /* JJ_ARRIVED_STOCK: release and descend */
+    "    ret\n"
+    "1:  mov dword ptr [esi+0x50], 2\n"  /* hovering */
+    "    mov byte ptr [esi+0x4C], 0\n"   /* not moving: the hovering state then just holds position */
+    "    push 0x54C4FD\n"           /* JJ_STATE_DONE */
+    "    ret\n"
+    "_stop_stub:\n"
+    "    pushad\n"
+    "    push esi\n"
+    "    call _carry_stop\n"
+    "    add esp, 4\n"
+    "    popad\n"
+    "    mov eax, [esi+0xAC]\n"
+    "    ret\n"
+    ".att_syntax prefix\n");
+
+/* per frame, before UnitClass::AI */
+static void carry_update(BYTE *unit)
+{
+    BYTE *victim = FIELD(unit, O_LOCOTARGET, BYTE *), *loco;
+
+    /* Every drop from the carry hover lands here (Stop, the Magnetron dying, ...): ReleaseLocomotor unlinks the
+     * victim, but the Jumpjet Process (0x54AEC0) skips a locomotor that is Hovering and not moving, so neither the
+     * fall nor the landing would run. Descending with IsMoving set is what the stock arrival drop leaves behind. */
+    if (FIELD(unit, O_ATTACKEDBYLOCO, char) && !FIELD(unit, O_LOCOSOURCE, BYTE *) && (loco = victim_jumpjet(unit))
+        && FIELD(loco, J_STATE, int) == 2 && !FIELD(loco, J_ISMOVING, char)) {
+        FIELD(loco, J_STATE, int) = 4;
+        FIELD(loco, J_ISMOVING, char) = 1;
+    }
+
+    if (!victim || !carry_owner(unit) || !(loco = victim_jumpjet(victim)))
+        return;
+    if ((CURRENT_FRAME + ((DWORD)unit >> 4)) % 8)
+        return;
+    /* follow: when the Magnetron is over 1.5 cells from where the victim is heading, head for the Magnetron
+     * again. Move_To picks the nearest free cell to it. */
+    Coord *m = &FIELD(unit, O_LOCATION, Coord), *d = &FIELD(loco, J_DEST, Coord), *v = &FIELD(victim, O_LOCATION, Coord);
+    int dx = m->X - d->X, dy = m->Y - d->Y;
+    if (dx * dx + dy * dy <= 384 * 384)
+        return;
+    ((moveto_fn)FIELD(FIELD(loco, 0, BYTE *), 0x44, void *))(loco, *m);
+    /* if that is the cell it already hovers over, the hovering state would make it land: stay put instead */
+    if (d->X == v->X && d->Y == v->Y)
+        FIELD(loco, J_ISMOVING, char) = 0;
+}
+
+static void GTHISCALL unit_ai(BYTE *self)
+{
+    carry_update(self);
+    ((void (GTHISCALL *)(BYTE *))UNIT_AI)(self);
+}
+
+/* patch only when the bytes are the expected stock ones */
+static int patch_checked(const char *what, DWORD addr, const BYTE *expect, size_t n)
+{
+    if (memcmp((void *)addr, expect, n) == 0)
+        return 1;
+    logmsg("%s: unexpected bytes at %08lX, not patched", what, (unsigned long)addr);
+    return 0;
+}
+
+static void call_bytes(BYTE out[5], DWORD addr, DWORD target)
+{
+    DWORD rel = target - (addr + 5);
+    out[0] = 0xE8;
+    memcpy(out + 1, &rel, 4);
+}
+
+static void patch_magnetron(void)
+{
+    BYTE b[5];
+    int ok = 0;
+    call_bytes(b, CALL_RELEASE_SETDEST, RELEASE_LOCOMOTOR);
+    if (patch_checked("release on destination", CALL_RELEASE_SETDEST, b, 5)) {
+        patch_rel(CALL_RELEASE_SETDEST, 0xE8, (DWORD)release_unless_carry);
+        ok++;
+    }
+    call_bytes(b, CALL_RELEASE_IDLE, RELEASE_LOCOMOTOR);
+    if (patch_checked("release on idle", CALL_RELEASE_IDLE, b, 5)) {
+        patch_rel(CALL_RELEASE_IDLE, 0xE8, (DWORD)release_unless_carry);
+        ok++;
+    }
+    if (patch_checked("jumpjet arrival", JJ_ARRIVED, (const BYTE[]){ 0xC7, 0x86, 0x80, 0, 0, 0, 0, 0, 0, 0 }, 10)) {
+        patch(JJ_ARRIVED + 5, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90 }, 5);
+        patch_rel(JJ_ARRIVED, 0xE9, (DWORD)arrive_stub);
+        ok++;
+    }
+    if (patch_checked("stop event", STOP_EVENT, (const BYTE[]){ 0x8B, 0x86, 0xAC, 0, 0, 0 }, 6)) {
+        patch(STOP_EVENT + 5, (const BYTE[]){ 0x90 }, 1);
+        patch_rel(STOP_EVENT, 0xE8, (DWORD)stop_stub);
+        ok++;
+    }
+    DWORD ai = UNIT_AI, fn = (DWORD)unit_ai;
+    if (patch_checked("unit AI vtable slot", UNIT_AI_SLOT, (const BYTE *)&ai, 4)) {
+        patch(UNIT_AI_SLOT, (const BYTE *)&fn, 4);
+        ok++;
+    }
+    logmsg("magnetron carry: %d of 5 patches applied", ok);
+}
+
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
@@ -339,6 +529,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
      * AssignHouses only sets that when someone has a team. So with no teams the stock game has all the AIs
      * allied against you. Returning at once makes "no team" mean everyone for themselves. */
     patch(AI_GANG_UP, (const BYTE[]){ 0xC3 }, 1);
+    patch_magnetron();
     logmsg("patched");
     return TRUE;
 }
