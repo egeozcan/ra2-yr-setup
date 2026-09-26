@@ -171,6 +171,14 @@ Each fact is marked with how it was established:
     `mtnk*` voxels belong to the Apocalypse (`[APOC]` has `Image=MTNK`).
 - **Cameo [stock].** 60×48 in `cameo.pal`. The stock 2 px frame and the label strip style are reused; the label is
   hand-drawn in a 3×5 font.
+- **Stock cameos are painted close-ups [stock].** They show the vehicle filling the frame at a low three-quarter
+  angle, against blue sky and warm ground, with strong contrast. A clean render of the voxel model never looked like
+  them.
+  - **What worked [measured]:** an image-edit model repainted a 5:4 render of the model framed like a cameo
+    (`fal_cameo.py`).
+  - **How to judge it:** always at 60×48 next to stock cameos. A crop that looks good at full size can cut off
+    the gun at cameo size.
+  - **The prompt:** asking to keep "pose and framing" made 3 of 4 results stay voxel-like; one came out painted.
 
 ## 6. Voxel lighting (the important one)
 

@@ -698,11 +698,14 @@ static void patch_magnetron(void)
 
 /* ---- test units ----
  * Optional [Units] section in yspawn.ini, read once the scenario is loaded: n=TYPE,COUNTRY,X,Y,FACING,MISSION puts a
- * vehicle (a UnitTypeClass ID such as ATTNK) on map cell X,Y for the house playing COUNTRY (a HouseTypeClass ID such
- * as Americans). FACING is 0-255 (0 north, 64 east); MISSION is Sleep (never fires), Guard, Area_Guard, Hunt or a
- * number. For screenshots and tests: vehicles in the map's own [Units] did not show up for the player. Vtable slots follow the YRpp
+ * vehicle or a building (a UnitTypeClass or BuildingTypeClass ID such as ATTNK or GAWEAP) on map cell X,Y for the
+ * house playing COUNTRY (a HouseTypeClass ID such as Americans). FACING is 0-255 (0 north, 64 east); MISSION is Sleep
+ * (never fires), Guard, Area_Guard, Hunt or a number, and is ignored for buildings. A building goes on the nearest
+ * cell to X,Y (its top-left corner) where the game's own placement check lets it stand. For screenshots and tests: vehicles in the map's own [Units] did not show up for the player. Vtable slots follow the YRpp
  * declaration order and were checked against this exe (CreateObject 0x747560 calls UnitClass::UnitClass 0x7353C0). */
 #define UNITTYPE_ARRAY    ((DynVec *)0xA83CE0)
+#define BUILDINGTYPE_ARRAY ((DynVec *)0xA83C68)
+#define BTYPE_CAN_PLACE   0x464AC0   /* BuildingTypeClass::CanPlaceHere(CellStruct*, HouseClass*) */
 #define HOUSE_ARRAY       ((DynVec *)0xA80228)
 #define MAP_INSTANCE      ((void *)0x87F7E8)
 #define MAP_FLOOR_HEIGHT  0x578080   /* MapClass::GetCellFloorHeight(const CoordStruct&) */
@@ -731,6 +734,26 @@ static BYTE *find_house(const char *country)
     return NULL;
 }
 
+typedef struct { short X, Y; } CellXY;
+
+/* the nearest top-left cell to *x,*y, in growing squares, where the building can be placed */
+static int building_spot(BYTE *type, BYTE *house, int *x, int *y)
+{
+    for (int r = 0; r <= 12; r++)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                if (abs(dx) != r && abs(dy) != r)
+                    continue;
+                CellXY c = { *x + dx, *y + dy };
+                if (((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                    *x = c.X;
+                    *y = c.Y;
+                    return 1;
+                }
+            }
+    return 0;
+}
+
 static int mission_number(const char *name)
 {
     static const struct { const char *name; int value; } names[] = {
@@ -756,15 +779,20 @@ static void spawn_units(void)
             continue;
         }
         BYTE *type = find_type(UNITTYPE_ARRAY, type_id), *house = find_house(country);
+        int building = !type && (type = find_type(BUILDINGTYPE_ARRAY, type_id));
         if (!type || !house) {
-            logmsg("units: %s: no %s", line, type ? "house" : "vehicle type");
+            logmsg("units: %s: no %s", line, type ? "house" : "vehicle or building type");
+            continue;
+        }
+        if (building && !building_spot(type, house, &x, &y)) {
+            logmsg("units: %s: no room for the building near %d,%d", type_id, x, y);
             continue;
         }
         BYTE *obj = ((BYTE *(GTHISCALL *)(BYTE *, BYTE *))VFUNC(type, VT_CREATEOBJECT))(type, house);
         Coord c = { x * 256 + 128, y * 256 + 128, 0 };
         c.Z = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
         char placed = obj && ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(obj, VT_UNLIMBO))(obj, &c, facing & 0xFF);
-        if (placed)
+        if (placed && !building)
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(obj, VT_QUEUEMISSION))(obj, mission_number(mission), 0);
         logmsg("units: %s %s at %d,%d height %d facing %d %s: %s", type_id, country, x, y, c.Z, facing, mission,
                placed ? "placed" : "could not be placed");

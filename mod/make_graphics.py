@@ -103,13 +103,38 @@ FONT = {
 }
 
 
+# Painted cameo art: an image made with an image model from a render of the voxel model (see README),
+# cropped to CAMEO_ART_CROP (x0, y0, x1, y1; 5:4 like the 60x48 cameo). Without it the cameo is rendered.
+CAMEO_ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cameo-art", "liberator.png")
+CAMEO_ART_CROP = (100, 120, 1080, 904)
+W_CAMEO, H_CAMEO = 60, 48
+
+
 def make_cameo(hull, turret, src, out, label):
-    """Render the new model into a 60x48 cameo SHP using cameo.pal."""
+    """The 60x48 cameo SHP in cameo.pal: the painted art if there is any, else a render of the model."""
+    if os.path.exists(CAMEO_ART):
+        rgb = painted_cameo(CAMEO_ART, CAMEO_ART_CROP)
+    else:
+        rgb = rendered_cameo(hull, turret, src)
+    write_cameo(rgb, src, out, label)
+
+
+def painted_cameo(path, crop):
+    """Downscale the painted art to the cameo size, sharpened a little so the vehicle stays crisp."""
+    from PIL import Image, ImageFilter
+    img = Image.open(path).convert("RGB")
+    if crop:
+        img = img.crop(crop)
+    img = img.resize((W_CAMEO * 4, H_CAMEO * 4), Image.LANCZOS).filter(ImageFilter.UnsharpMask(2, 60, 2))
+    return np.asarray(img.resize((W_CAMEO, H_CAMEO), Image.LANCZOS)).astype(np.float32)
+
+
+def rendered_cameo(hull, turret, src):
+    """Render the model over a painted-style backdrop."""
     from PIL import Image, ImageFilter
     import render as R
     upal = R.remap_colors(R.load_pal(os.path.join(src, "unittem.pal")), (70, 110, 235))
-    cpal = R.load_pal(os.path.join(src, "cameo.pal"))
-    W, H, K = 60, 48, 4
+    W, H, K = W_CAMEO, H_CAMEO, 4
 
     # painted-style backdrop: stormy blue sky, bright horizon, snowy ground
     yy = np.linspace(0, 1, H * K)[:, None, None]
@@ -138,7 +163,15 @@ def make_cameo(hull, turret, src, out, label):
     img.alpha_composite(glow, (0, lift))
     img.alpha_composite(tank, (0, lift))
     img = img.convert("RGB").resize((W, H), Image.LANCZOS)
-    rgb = np.asarray(img).astype(np.float32)
+    return np.asarray(img).astype(np.float32)
+
+
+def write_cameo(rgb, src, out, label):
+    """Label strip, nearest cameo.pal colours and the stock frame, written as a one-frame SHP."""
+    import render as R
+    cpal = R.load_pal(os.path.join(src, "cameo.pal"))
+    W, H = W_CAMEO, H_CAMEO
+    rgb = rgb.copy()
 
     # label strip
     rgb[40:48] *= 0.35

@@ -214,8 +214,17 @@ It shares no geometry with the Tesla tank.
   - a faceted steel turret with house-colour cheeks and a rear bustle;
   - a Tesla gun of four coil discs ending in the electrode;
   - two capacitor coils on the roof, a commander cupola and an antenna.
-- **Cameo:** rendered from the model and labelled LIBERATOR in the stock label style. It is still
-  a clean render, unlike the painted stock cameos.
+- **Cameo** (painted 2026-09-26): `mod/cameo-art/liberator.png`, labelled LIBERATOR in the stock label style.
+  - How it was made: an image model (fal.ai `nano-banana/edit`) repainted a render of the voxel model in the
+    style of the stock cameos. It shows a realistic tank with the coil gun, a glowing electrode, blue sky and
+    sand.
+  - How it becomes the cameo: `make_graphics.py` crops it (`CAMEO_ART_CROP`), scales it to 60×48 and maps it to
+    `cameo.pal`.
+  - Without that file, the cameo falls back to a render of the model.
+  - For new art, run `mod/.venv/bin/python mod/fal_cameo.py KEYFILE [N]`. It saves N candidates in
+    `mod/cameo-art/` (git ignores them). Most come back still looking like voxels, so pick a painted one.
+    Copy it to `liberator.png`, set the crop, and run `make_graphics.py`.
+  - The key stays in the key file (see `LOCAL.md`); only fal.ai receives it.
 - **Previews** in `mod/previews/`, drawn through `voxels.vpl`:
   - `liberator-model.png`: close-ups, two of them with the turret turned;
   - `liberator-ingame-scale.png`: 1 px per voxel at eight facings, enlarged 3×;
@@ -347,13 +356,16 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   or -1 for none) in `[Settings]` and in each `[AIn]` section. Players on the same team are allied from the start.
   Players with no team are allied with nobody, including other AIs (the stock game allies all team-less AIs).
   Before this, your start was always position 0.
-- **Test units** (added 2026-09-26): an optional `[Units]` section in the ini puts vehicles on the map once the
-  match has loaded. Each line is `n=TYPE,COUNTRY,X,Y,FACING,MISSION`:
-  - `TYPE`: a vehicle ID such as `ATTNK`;
+- **Test units** (added 2026-09-26): an optional `[Units]` section in the ini puts vehicles and buildings on the
+  map once the match has loaded. Each line is `n=TYPE,COUNTRY,X,Y,FACING,MISSION`:
+  - `TYPE`: a vehicle or building ID such as `ATTNK` or `GAWEAP`;
   - `COUNTRY`: the country of the house that gets it, such as `Americans` or `Russians`;
   - `X,Y`: the map cell;
   - `FACING`: 0–255 (0 north, 64 east);
-  - `MISSION`: `Sleep` (never fires), `Guard`, `Area_Guard`, `Hunt`, or a number.
+  - `MISSION`: `Sleep` (never fires), `Guard`, `Area_Guard`, `Hunt`, or a number. Buildings ignore it.
+
+  For a building, `X,Y` is the top-left cell. It goes on the nearest spot where the game's own placement
+  check (`CanPlaceHere`) allows it, clear of trees, other buildings and the MCV.
 
   `yspawn.log` lists each vehicle and whether it could be placed. A map's own `[Units]` didn't work for this.
   Vehicles pre-placed for `<Player @ A>` or for a country name never showed up for the player in a match started
@@ -364,7 +376,15 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   - four Liberators at different facings;
   - one guarding Liberator that fires at three sleeping Apocalypse tanks.
 
-  Speed defaults to 6 (slowest), so the bolts last long enough to catch. To take screenshots remotely:
+  Speed defaults to 6 (slowest), so the bolts last long enough to catch.
+- **`python3 spawner/showcase.py base [SPEED]`** (added 2026-09-26) starts you with a small Allied base that can
+  build the Liberator right away, at `yspawn.ini`'s speed:
+  - a Construction Yard, three Power Plants, an Ore Refinery, a War Factory and a Battle Lab;
+  - three Liberators and 30000 credits;
+  - your MCV is there too.
+
+  Checked 2026-09-26: everything was placed and the match ran.
+- To take screenshots remotely:
   - The display must be awake. Captures of a sleeping display are black, and KDE's idle dimming shows in them.
   - `kscreen-doctor --dpms on` wakes it, and `kde-inhibit --power --screenSaver sleep 600` keeps it on.
   - Then run `spectacle -b -n -f -o shot.png`. The game fills 2560×1440 starting at x 1280.

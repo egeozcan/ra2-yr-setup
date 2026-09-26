@@ -29,6 +29,9 @@ aimd.ini
 # Generated art: reproducible with make_graphics.py / cheatdef_art.py, and it embeds small
 # stock pieces (VXL header palette, stock HVA, cameo frame border).
 mod/assets/
+# Cameo art candidates and the reference render made by mod/fal_cameo.py (the chosen one is liberator.png).
+mod/cameo-art/candidate-*.png
+mod/cameo-art/reference.png
 # The recolour of EA's Tesla tank model is a derivative of stock art.
 mod/assets-recolor/
 mod/previews/recolor-*.png
