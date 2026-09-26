@@ -194,6 +194,16 @@ def dropdown(model, selected, on_change, factory=None):
     return d
 
 
+def pills(options, selected, on_change):
+    """A pill-shaped segmented control, one toggle per (label, value) left to right."""
+    g = Adw.ToggleGroup(css_classes=["round"], valign=Gtk.Align.CENTER, can_shrink=False)
+    for label, value in options:
+        g.add(Adw.Toggle(label=label, name=str(value)))
+    g.set_active_name(str(selected))
+    g.connect("notify::active-name", lambda w, _: w.get_active_name() and on_change(int(w.get_active_name())))
+    return g
+
+
 class Window(Adw.ApplicationWindow):
     def __init__(self, app, dry_run):
         super().__init__(application=app, title="Skirmish Setup", default_width=1150, default_height=780)
@@ -318,7 +328,8 @@ class Window(Adw.ApplicationWindow):
             if human:
                 cells.append(Gtk.Label(label="Human", xalign=0, css_classes=["dim-label"]))
             else:
-                cells.append(dropdown(Gtk.StringList.new(DIFFICULTIES), p["Difficulty"], upd("Difficulty", 0)))
+                cells.append(pills([(d, i) for i, d in enumerate(DIFFICULTIES)][::-1], p["Difficulty"],
+                                   upd("Difficulty", 0)))
                 remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
                                     tooltip_text="Remove opponent", css_classes=["flat"])
                 remove.connect("clicked", lambda _, p=p: self.remove_ai(p))
