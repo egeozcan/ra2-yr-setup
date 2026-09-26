@@ -418,8 +418,15 @@ Yuri's Magnetron now keeps a grabbed vehicle in the air, and you choose where it
   nearest free cell beside it when the Magnetron stops.
 - **Drop:** press **Stop** (`S`) with the Magnetron selected. The vehicle falls where it is and takes the stock falling
   damage (`FallingDamageMultiplier=1.0`, based on its current strength).
+- **Drop somewhere else** (added 2026-09-26): attack the ground (`Ctrl`+click a cell) while holding a vehicle. The
+  Magnetron does not fire. The vehicle flies to that cell, or the nearest free cell to it, and drops there with the
+  same falling damage. If the cell is beyond weapon range (12 cells), the Magnetron first drives into range, as for any
+  attack order. Its attack order ends when the throw starts: it stops attacking, and the vehicle carries on to the cell
+  (whether a Magnetron still driving into range also stops is untested). Stop during the flight drops the vehicle at
+  once. A new attack-ground order during the flight redirects it. A move order does not call it back.
 - **Also drops it (stock):** the Magnetron dies, grabs a different vehicle, or anything else that ends the link
-  in the stock game.
+  in the stock game. That includes force-firing on a tree or another object that is not a cell: the vehicle falls
+  where it is.
 - Force-fire (`Ctrl`) on one of your own vehicles should let you move your own units (untested).
 - **Only your Magnetrons carry.** Computer players' Magnetrons keep the stock pull-and-drop behaviour, so an AI
   never holds a vehicle forever.
@@ -446,13 +453,40 @@ How it works (addresses in this exe, traced 2026-09-26; YRpp names):
   victim (hovering, no Magnetron attached) to Descending with `IsMoving` set. That is the state the stock arrival drop
   leaves, and the stock fall and landing code then runs. Every drop from the hover goes through this step.
 - **Checked before patching:** at start the DLL compares the stock bytes at each site. It skips any site that differs
-  and logs `magnetron carry: N of 6 patches applied` in `yspawn.log`.
+  and logs `magnetron carry: N of 7 patches applied` in `yspawn.log`.
 - **Beam** (added 2026-09-26): the beam is a `WaveClass` (type 3). `Update_Wave` (`0x762AF0`) keeps it only while its
   owner's `Target` (`+0x2B4`) is the beam's target (check at `0x762B9B`), so a move order ended it while the vehicle was
   still held. The DLL also keeps it while a human player's Magnetron has that target as its `LocomotorTarget`
-  (`+0x2AC`). The rest of the update for type 3 is only the beam animation. The log now says `N of 6 patches applied`.
+  (`+0x2AC`). The rest of the update for type 3 is only the beam animation. It therefore stays on the vehicle during
+  an attack-ground throw too.
+- **Attack-ground throw** (added 2026-09-26):
+  - **Stock behaviour:** attack-ground is legal for the Magnetron. `CanFire` (`0x6FC0B0`) and `UnitClass::GetFireError`
+    (`0x740FD0`) have no `IsLocomotor` rule for a cell, and `SelectWeapon` picks the primary `MagneticBeam`. When that
+    bullet lands, it releases the old `LocomotorTarget` (`0x4695EB`), so stock drops the vehicle where it hovers.
+  - **Why the link stays until arrival:** releasing first and then moving the vehicle does not work. Once released in
+    the air, the Jumpjet `Process` (`0x54AF33`) resets a falling unit's destination to its own cell every frame, so it
+    falls in place. The vehicle therefore flies there still linked. The stock arrival drop (`0x54C1B3`, release +
+    Descending) then releases it over the cell.
+  - **Starting the throw:** the DLL clears the Magnetron's `Target` and calls the vehicle locomotor's `Move_To` with the
+    cell centre. `Move_To` (`0x54B1C0`) picks the nearest free cell with `MapClass::NearByLocation`.
+  - **Throw record:** a small table records the vehicle as thrown. While it is recorded, the follow leaves it alone and
+    the arrival hook takes the stock drop. A record counts only while the vehicle's `LocomotorSource` still points at
+    its Magnetron. It is removed on arrival, on Stop, and as soon as either unit's link no longer matches it.
+  - **When it starts:**
+    - The per-frame wrapper throws as soon as the Magnetron's `Target` is a cell within the primary weapon's `Range`.
+      Waiting for the attack mission would be worse: it fires only between `MinimumRange` (3) and `Range`, and from a
+      cell inside `MinimumRange` it first drives off to full range (a stock bug).
+    - A wrapper on the `UnitClass::Fire` vtable slot (`0x7F603C`, stock `0x741340`) also throws instead of firing at a
+      cell. That covers stock range bonuses such as elevation, which the per-frame check does not add. The caller
+      (`0x736F6D`) ignores `Fire`'s result.
 - **Not yet checked in game.** Things to watch for:
   - the hover height and spacing;
   - the follow lag with the default 8-frame interval;
   - behaviour when several Magnetrons carry at once;
-  - dropping onto an occupied cell or a building.
+  - dropping onto an occupied cell or a building;
+  - attack-ground: **checked in game 2026-09-26.** `Ctrl`+click on the ground while holding a vehicle threw it and
+    dropped it on the clicked cell. The log showed one throw and one drop, with `7 of 7 patches applied`. Not yet
+    tried: a cell within 3 cells, one beyond range, and Stop or a second click during the flight;
+  - that the Magnetron goes back to guard after the throw;
+  - throwing onto water or a cliff.
+  - `yspawn.log` logs each throw (`magnetron: throw to cell X,Y, landing cell X,Y`) and each drop.

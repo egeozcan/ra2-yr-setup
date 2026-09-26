@@ -329,7 +329,10 @@ static char GFASTCALL spawn_start(char unused)
  * goes idle (UnitClass::EnterIdleMode), or the victim arrives (Jumpjet cruising state).
  * For a human player's Magnetron those drops are skipped: the victim hovers next to it and follows it around, and
  * the Stop command (S) drops it. Computer players keep the stock behaviour. Death, transports, chrono, a new
- * Magnetron target and the like still drop it through the untouched stock paths. */
+ * Magnetron target and the like still drop it through the untouched stock paths.
+ * Attack-ground (force-fire on a cell) throws the victim instead of firing: it flies to that cell, still linked, and
+ * the stock arrival drop releases it there. Released in the air before that, it would fall where it is: the Jumpjet
+ * Process (0x54AF33) keeps a falling unit's destination on its own cell. */
 #define RELEASE_LOCOMOTOR   0x70FEE0
 #define CALL_RELEASE_SETDEST 0x4D9509  /* FootClass::SetDestination: release when given a destination */
 #define CALL_RELEASE_IDLE   0x7389BF   /* UnitClass::EnterIdleMode */
@@ -340,6 +343,8 @@ static char GFASTCALL spawn_start(char unused)
 #define WAVE_KEEP           0x762B9B   /* WaveClass::Update_Wave: end the beam unless owner->Target == wave->Target */
 #define UNIT_AI_SLOT        0x7F5CCC   /* UnitClass vtable: AI */
 #define UNIT_AI             0x7360C0
+#define UNIT_FIRE_SLOT      0x7F603C   /* UnitClass vtable: Fire(target, weapon index) */
+#define UNIT_FIRE           0x741340
 #define JUMPJET_ILOCO_VT    0x7ECD68   /* JumpjetLocomotionClass ILocomotion vtable */
 #define CURRENT_FRAME       (*(int *)0xA8ED84)
 
@@ -347,10 +352,19 @@ static char GFASTCALL spawn_start(char unused)
 #define O_OWNER       0x21C   /* TechnoClass: HouseClass* */
 #define O_LOCOTARGET  0x2AC   /* TechnoClass: FootClass* the victim */
 #define O_LOCOSOURCE  0x2B0   /* TechnoClass: FootClass* the Magnetron */
+#define O_TARGET      0x2B4   /* TechnoClass: AbstractClass* Target */
 #define O_LOCATION    0x09C   /* AbstractClass: CoordStruct */
 #define O_LOCOMOTOR   0x674   /* FootClass: ILocomotion* */
 #define O_ATTACKEDBYLOCO 0x6AD
 #define H_ISHUMAN     0x1EC   /* HouseClass */
+#define C_MAPCOORDS   0x024   /* CellClass: CellStruct, short X, Y */
+#define W_RANGE       0x0B4   /* WeaponTypeClass: Range in leptons, -512 = unlimited */
+#define ABS_CELL      11      /* AbstractType::Cell */
+/* vtable slots */
+#define VT_WHATAMI    0x02C
+#define VT_SETTARGET  0x3C8
+#define VT_GETWEAPON  0x3F8   /* WeaponStruct*, whose first field is the WeaponTypeClass* */
+#define VT_MOVETO     0x044   /* ILocomotion::Move_To */
 /* JumpjetLocomotionClass, from its ILocomotion pointer (= object + 4) */
 #define J_DEST        0x3C    /* CoordStruct DestinationCoords */
 #define J_ISMOVING    0x48
@@ -359,7 +373,9 @@ static char GFASTCALL spawn_start(char unused)
 typedef struct { int X, Y, Z; } Coord;
 typedef void (GTHISCALL *release_fn)(BYTE *, char);
 typedef void (__stdcall *moveto_fn)(void *, Coord);
+typedef void *(GTHISCALL *fire_fn)(BYTE *, BYTE *, int);
 #define FIELD(p, off, type) (*(type *)((BYTE *)(p) + (off)))
+#define VFUNC(p, off) FIELD(FIELD(p, 0, BYTE *), off, void *)
 
 static int carry_owner(BYTE *mag)
 {
@@ -374,6 +390,103 @@ static BYTE *victim_jumpjet(BYTE *victim)
     return loco && FIELD(loco, 0, DWORD) == JUMPJET_ILOCO_VT ? loco : NULL;
 }
 
+/* Thrown victims, on their way to an attack-ground cell: the follow leaves them alone and they drop on arrival. A
+ * record counts only while its link holds (victim->LocomotorSource == mag), and it is forgotten on arrival, on Stop,
+ * and when either unit's link no longer matches it (carry_update). Only live objects are dereferenced. */
+#define MAX_THROWS 16
+static struct { BYTE *victim, *mag; } throws[MAX_THROWS];
+
+static int throw_slot(BYTE *victim)
+{
+    for (int i = 0; i < MAX_THROWS; i++)
+        if (throws[i].victim == victim)
+            return i;
+    return -1;
+}
+
+static int thrown(BYTE *victim)
+{
+    int i = throw_slot(victim);
+    return victim && i >= 0 && FIELD(victim, O_LOCOSOURCE, BYTE *) == throws[i].mag;
+}
+
+static void throw_forget(int i)
+{
+    throws[i].victim = throws[i].mag = NULL;
+}
+
+static void throw_record(BYTE *victim, BYTE *mag)
+{
+    static int next;
+    int i = throw_slot(victim);
+    if (i < 0)
+        i = throw_slot(NULL);
+    if (i < 0)
+        i = next++ % MAX_THROWS;   /* full: 16 throws in flight at once, reuse the oldest-ish */
+    throws[i].victim = victim;
+    throws[i].mag = mag;
+}
+
+static int is_cell(BYTE *obj)
+{
+    return obj && ((int (GTHISCALL *)(BYTE *))VFUNC(obj, VT_WHATAMI))(obj) == ABS_CELL;
+}
+
+static Coord cell_center(BYTE *cell)
+{
+    short *mc = &FIELD(cell, C_MAPCOORDS, short);
+    return (Coord){ mc[0] * 256 + 128, mc[1] * 256 + 128, 0 };
+}
+
+/* within the primary weapon's Range, without its MinimumRange */
+static int cell_in_range(BYTE *unit, BYTE *cell)
+{
+    BYTE **ws = ((BYTE **(GTHISCALL *)(BYTE *, int))VFUNC(unit, VT_GETWEAPON))(unit, 0);
+    if (!ws || !*ws)
+        return 0;
+    int r = FIELD(*ws, W_RANGE, int);
+    if (r == -512)
+        return 1;
+    Coord c = cell_center(cell), *m = &FIELD(unit, O_LOCATION, Coord);
+    long long dx = c.X - m->X, dy = c.Y - m->Y;
+    return dx * dx + dy * dy <= (long long)r * r;
+}
+
+/* send the held victim to the cell; the Magnetron's attack order ends */
+static void carry_throw(BYTE *mag, BYTE *victim, BYTE *loco, BYTE *cell)
+{
+    Coord c = cell_center(cell);
+    ((void (GTHISCALL *)(BYTE *, void *))VFUNC(mag, VT_SETTARGET))(mag, NULL);
+    /* Move_To heads for the nearest free cell to it and sets IsMoving only when it finds one */
+    char was_moving = FIELD(loco, J_ISMOVING, char);
+    FIELD(loco, J_ISMOVING, char) = 0;
+    ((moveto_fn)VFUNC(loco, VT_MOVETO))(loco, c);
+    Coord *d = &FIELD(loco, J_DEST, Coord), *v = &FIELD(victim, O_LOCATION, Coord);
+    logmsg("magnetron: throw to cell %d,%d, landing cell %d,%d", c.X >> 8, c.Y >> 8, d->X >> 8, d->Y >> 8);
+    if (!FIELD(loco, J_ISMOVING, char)) {   /* none: keep carrying, the follow brings it back */
+        FIELD(loco, J_ISMOVING, char) = was_moving;
+        logmsg("magnetron: no landing cell, still carrying");
+        return;
+    }
+    if (d->X == v->X && d->Y == v->Y) {     /* already over the landing cell: drop it now, like Stop */
+        FIELD(loco, J_ISMOVING, char) = 0;
+        ((release_fn)RELEASE_LOCOMOTOR)(mag, 1);
+        return;
+    }
+    throw_record(victim, mag);
+}
+
+/* a human player's Magnetron with a consistent link, told to attack a cell: throw instead. Nonzero = thrown. */
+static int carry_ground_attack(BYTE *mag, BYTE *target)
+{
+    BYTE *victim = FIELD(mag, O_LOCOTARGET, BYTE *), *loco;
+    if (!victim || FIELD(victim, O_LOCOSOURCE, BYTE *) != mag || !carry_owner(mag) || !(loco = victim_jumpjet(victim))
+        || !is_cell(target))
+        return 0;
+    carry_throw(mag, victim, loco, target);
+    return 1;
+}
+
 /* replaces the calls to ReleaseLocomotor in SetDestination and EnterIdleMode */
 static void GTHISCALL release_unless_carry(BYTE *self, char set_target)
 {
@@ -381,10 +494,16 @@ static void GTHISCALL release_unless_carry(BYTE *self, char set_target)
         ((release_fn)RELEASE_LOCOMOTOR)(self, set_target);
 }
 
-/* victim arrived next to the Magnetron: nonzero = keep it hovering instead of dropping it */
+/* victim arrived where it was heading: nonzero = keep it hovering instead of dropping it. A thrown victim is over
+ * its cell and drops. */
 __attribute__((used)) int carry_keep_hovering(BYTE *victim)
 {
     BYTE *mag = FIELD(victim, O_LOCOSOURCE, BYTE *);
+    if (thrown(victim)) {
+        throw_forget(throw_slot(victim));
+        logmsg("magnetron: thrown vehicle over its cell, dropping");
+        return 0;
+    }
     return mag && carry_owner(mag);
 }
 
@@ -394,6 +513,9 @@ __attribute__((used)) void carry_stop(BYTE *techno)
     /* only a consistent link: the victim must point back at this unit */
     if (victim && FIELD(victim, O_LOCOSOURCE, BYTE *) == techno) {
         logmsg("magnetron: stop, dropping (unit vtable %08lX)", (unsigned long)FIELD(techno, 0, DWORD));
+        int i = throw_slot(victim);
+        if (i >= 0)
+            throw_forget(i);
         ((release_fn)RELEASE_LOCOMOTOR)(techno, 1);
     }
 }
@@ -464,7 +586,20 @@ static void carry_update(BYTE *unit)
         FIELD(loco, J_ISMOVING, char) = 1;
     }
 
+    for (int i = 0; i < MAX_THROWS; i++)   /* throw records whose link is gone */
+        if ((throws[i].mag == unit && victim != throws[i].victim)
+            || (throws[i].victim == unit && FIELD(unit, O_LOCOSOURCE, BYTE *) != throws[i].mag))
+            throw_forget(i);
+
     if (!victim || !carry_owner(unit) || !(loco = victim_jumpjet(victim)))
+        return;
+    /* Attack-ground in range: throw now. The attack mission would fire only between MinimumRange and Range, and first
+     * drives off to full range from a cell inside MinimumRange. Beyond Range it approaches, then this or unit_fire
+     * throws. */
+    BYTE *target = FIELD(unit, O_TARGET, BYTE *);
+    if (is_cell(target) && cell_in_range(unit, target) && carry_ground_attack(unit, target))
+        return;
+    if (thrown(victim))
         return;
     if ((CURRENT_FRAME + ((DWORD)unit >> 4)) % 8)
         return;
@@ -484,6 +619,16 @@ static void GTHISCALL unit_ai(BYTE *self)
 {
     carry_update(self);
     ((void (GTHISCALL *)(BYTE *))UNIT_AI)(self);
+}
+
+/* The stock range check adds bonuses (elevation, ...) to Range, so the attack mission can fire at a cell that
+ * cell_in_range does not count as in range yet. Firing the Magnetron beam at it would drop the victim where it is
+ * (the bullet releases the old LocomotorTarget, 0x4695EB): throw instead. The caller (0x736F6D) ignores the result. */
+static void *GTHISCALL unit_fire(BYTE *self, BYTE *target, int weapon)
+{
+    if (carry_ground_attack(self, target))
+        return NULL;
+    return ((fire_fn)UNIT_FIRE)(self, target, weapon);
 }
 
 /* patch only when the bytes are the expected stock ones */
@@ -537,7 +682,13 @@ static void patch_magnetron(void)
         patch(UNIT_AI_SLOT, (const BYTE *)&fn, 4);
         ok++;
     }
-    logmsg("magnetron carry: %d of 6 patches applied", ok);
+    DWORD fire = UNIT_FIRE;
+    fn = (DWORD)unit_fire;
+    if (patch_checked("unit Fire vtable slot", UNIT_FIRE_SLOT, (const BYTE *)&fire, 4)) {
+        patch(UNIT_FIRE_SLOT, (const BYTE *)&fn, 4);
+        ok++;
+    }
+    logmsg("magnetron carry: %d of 7 patches applied", ok);
 }
 
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */
