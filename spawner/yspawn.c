@@ -389,8 +389,10 @@ __attribute__((used)) int carry_keep_hovering(BYTE *victim)
 
 __attribute__((used)) void carry_stop(BYTE *techno)
 {
-    if (FIELD(techno, O_LOCOTARGET, BYTE *)) {
-        logmsg("magnetron: stop, dropping");
+    BYTE *victim = FIELD(techno, O_LOCOTARGET, BYTE *);
+    /* only a consistent link: the victim must point back at this unit */
+    if (victim && FIELD(victim, O_LOCOSOURCE, BYTE *) == techno) {
+        logmsg("magnetron: stop, dropping (unit vtable %08lX)", (unsigned long)FIELD(techno, 0, DWORD));
         ((release_fn)RELEASE_LOCOMOTOR)(techno, 1);
     }
 }
