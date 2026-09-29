@@ -9,6 +9,8 @@ usage: skirmish.py                    open the window
 Needs the system Python (/usr/bin/python3), which has GTK 4 and libadwaita; the linuxbrew python3
 on PATH has no gi module. The last used settings are kept in ~/.config/ra2-yr-setup/skirmish.json
 and named presets in skirmish-presets.json next to it; spawner/yspawn.ini (used by spawn.py run) is not changed.
+Starting base (like Age of Empires II's Empire Wars): everyone starts with the buildings of the chosen tier already up
+instead of an MCV; startbase.py works out which.
 """
 import configparser, json, os, random, subprocess, sys, threading
 import gi
@@ -19,7 +21,7 @@ from gi.repository import Adw, Gdk, GLib, Graphene, Gtk
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import spawn                        # first: it puts ../mod on sys.path
-import mappreview, mixextract
+import mappreview, mixextract, startbase
 
 APP_ID = "local.ra2yr.SkirmishSetup"
 SAVED = os.path.expanduser("~/.config/ra2-yr-setup/skirmish.json")
@@ -47,7 +49,7 @@ def default_settings():
     s = ini["Settings"]
     out = {"Map": s.get("Map", "Tsunami.mmx"), "Name": s.get("Name", "Commander"), "Country": s.getint("Country", 0),
            "Color": s.getint("Color", 0), "Start": s.getint("Start", RANDOM), "Team": s.getint("Team", RANDOM),
-           "GameSpeed": s.getint("GameSpeed", 0)}
+           "GameSpeed": s.getint("GameSpeed", 0), "StartBase": 0}
     for key, _, lo, _, _ in NUMBERS:
         out[key] = s.getint(key, lo)
     for key, _ in SWITCHES:
@@ -118,6 +120,17 @@ def problems(s, map_info):
     teams = {p["Team"] for p in everyone}
     if len(teams) == 1 and RANDOM not in teams:
         out.append("Everyone is on the same team, so there is nobody to fight.")
+    if s["StartBase"]:
+        tier = startbase.TIERS[s["StartBase"]]
+        try:
+            countries = {startbase.country_name(c) for p in everyone
+                         for c in (range(len(COUNTRIES)) if p["Country"] == RANDOM else [p["Country"]])}
+            need = startbase.tech_level(countries, s["StartBase"])
+        except Exception as e:
+            out.append(f"Could not work out the {tier.lower()} bases from the game's rules: {e}")
+        else:
+            if s["TechLevel"] < need:
+                out.append(f"A {tier.lower()} starting base needs tech level {need} or higher.")
     return out
 
 
@@ -141,6 +154,10 @@ def build_config(s):
     for i, ai in enumerate(s["AI"], 1):
         ini[f"AI{i}"] = {"Country": pick(ai["Country"]), "Color": colors[i], "Difficulty": ai["Difficulty"],
                          "Start": ai["Start"], "Team": ai["Team"]}
+    if s["StartBase"]:
+        ini["Settings"]["Bases"] = "1"   # the bases replace the MCVs
+        countries = dict.fromkeys(startbase.country_name(ini[sec]["Country"]) for sec in ini.sections())
+        ini["StartBase"] = startbase.section(countries, s["StartBase"])
     return ini
 
 
@@ -351,6 +368,12 @@ class Window(Adw.ApplicationWindow):
         speed.set_selected(self.s["GameSpeed"])
         speed.connect("notify::selected", lambda r, _: self.set("GameSpeed", r.get_selected()))
         g.add(speed)
+        base = Adw.ComboRow(title="Starting base", model=Gtk.StringList.new(startbase.TIERS))
+        base.set_selected(self.s["StartBase"])
+        base.set_subtitle(startbase.TIER_TEXT[self.s["StartBase"]])
+        base.connect("notify::selected", lambda r, _: (r.set_subtitle(startbase.TIER_TEXT[r.get_selected()]),
+                                                       self.set("StartBase", r.get_selected())))
+        g.add(base)
         for key, title, lo, hi, step in NUMBERS:
             row = Adw.SpinRow.new_with_range(lo, hi, step)
             row.set_title(title)
@@ -365,6 +388,8 @@ class Window(Adw.ApplicationWindow):
             row = Adw.SwitchRow(title=title, active=self.s[key])
             row.connect("notify::active", lambda r, _, k=key: self.set(k, r.get_active()))
             g.add(row)
+            if key == "Bases":
+                self.bases_row = row
         return g
 
     # ---- state ----
@@ -376,6 +401,10 @@ class Window(Adw.ApplicationWindow):
         return self.maps.get(self.s["Map"])
 
     def refresh(self):
+        # a starting base takes the place of the MCV, so it needs bases on
+        self.bases_row.set_sensitive(not self.s["StartBase"])
+        if self.s["StartBase"] and not self.s["Bases"]:
+            self.bases_row.set_active(True)   # calls refresh again through set()
         info = self.current_map()
         if info:
             self.add_ai_button.set_sensitive(1 + len(self.s["AI"]) < info["max"])

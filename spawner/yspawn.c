@@ -191,6 +191,7 @@ static int ini_team(const char *sec)
     return v >= 0 && v < 4 ? v : -1;
 }
 
+static void start_bases(void);
 static void spawn_units(void);
 
 static char GFASTCALL spawn_start(char unused)
@@ -321,8 +322,10 @@ static char GFASTCALL spawn_start(char unused)
     logmsg("starting scenario");
     char ok = START_SCENARIO(scenario, 0, -1);
     logmsg("StartScenario returned %d", ok);
-    if (ok)
+    if (ok) {
+        start_bases();
         spawn_units();
+    }
     return ok;
 }
 
@@ -754,6 +757,15 @@ static int building_spot(BYTE *type, BYTE *house, int *x, int *y)
     return 0;
 }
 
+/* a new vehicle or building of TYPE for HOUSE on cell x,y (a building's top-left cell); NULL if it could not be put there */
+static BYTE *put_object(BYTE *type, BYTE *house, int x, int y, int facing)
+{
+    BYTE *obj = ((BYTE *(GTHISCALL *)(BYTE *, BYTE *))VFUNC(type, VT_CREATEOBJECT))(type, house);
+    Coord c = { x * 256 + 128, y * 256 + 128, 0 };
+    c.Z = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
+    return obj && ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(obj, VT_UNLIMBO))(obj, &c, facing & 0xFF) ? obj : NULL;
+}
+
 static int mission_number(const char *name)
 {
     static const struct { const char *name; int value; } names[] = {
@@ -788,14 +800,209 @@ static void spawn_units(void)
             logmsg("units: %s: no room for the building near %d,%d", type_id, x, y);
             continue;
         }
-        BYTE *obj = ((BYTE *(GTHISCALL *)(BYTE *, BYTE *))VFUNC(type, VT_CREATEOBJECT))(type, house);
-        Coord c = { x * 256 + 128, y * 256 + 128, 0 };
-        c.Z = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
-        char placed = obj && ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(obj, VT_UNLIMBO))(obj, &c, facing & 0xFF);
-        if (placed && !building)
+        BYTE *obj = put_object(type, house, x, y, facing);
+        if (obj && !building)
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(obj, VT_QUEUEMISSION))(obj, mission_number(mission), 0);
-        logmsg("units: %s %s at %d,%d height %d facing %d %s: %s", type_id, country, x, y, c.Z, facing, mission,
-               placed ? "placed" : "could not be placed");
+        logmsg("units: %s %s at %d,%d facing %d %s: %s", type_id, country, x, y, facing, mission,
+               obj ? "placed" : "could not be placed");
+    }
+}
+
+/* ---- starting bases ----
+ * Optional [StartBase] section in yspawn.ini (skirmish.py writes it), read once the scenario is loaded, before [Units]:
+ * COUNTRY=ID,ID,... gives every house of that country (a HouseTypeClass ID such as Americans) those buildings instead
+ * of its MCV, and Remove=ID,ID,... names the vehicles taken away (the [General] BaseUnit MCVs). The first building,
+ * the Construction Yard, goes where the house starts: its BaseSpawnCell (HouseClass +0x5490; FindBuildLocation 0x5060B0
+ * falls back to it when BaseCenter +0x5494 is empty), which is where the game put its MCV. The others go in order on
+ * the nearest spots around it where the game's own placement check lets them stand, each with a free cell on every
+ * side, so units can leave the factories and harvesters reach the refinery.
+ * A computer player also gets what UnitClass::TryToDeploy does when its MCV becomes a Construction Yard in a skirmish
+ * (0x739855-0x739926); without it the AI never starts producing. Its base plan (HouseClass Base.Nodes) then has a node
+ * for each building it means to have, and the ones it has built carry their top-left cell and Placed; the starting
+ * buildings are marked on it the same way, so it does not build them again, and flagged like the buildings its
+ * factory makes (0x4C9DC5). */
+#define UNIT_ARRAY        ((DynVec *)0x8B4108)
+#define U_TYPE            0x6C4      /* UnitClass: UnitTypeClass* */
+#define B_TYPE            0x520      /* BuildingClass: BuildingTypeClass* */
+#define B_CONSTRUCTIONYARD 0x16B9    /* BuildingTypeClass: bool ConstructionYard (the deploy checks it) */
+#define H_BASESPAWNCELL   0x5490     /* HouseClass: CellStruct */
+#define BTYPE_WIDTH       0x45EC90   /* BuildingTypeClass::GetFoundationWidth() */
+#define BTYPE_HEIGHT      0x45ECA0   /* BuildingTypeClass::GetFoundationHeight(bool with the bib) */
+#define VT_LIMBO          0x0D4      /* ObjectClass::Limbo: off the map */
+#define VT_UNINIT         0x0F8      /* ObjectClass::UnInit: limbo now, delete (and untrack) at the end of the frame */
+#define HOUSE_IS_HUMAN    0x50B730   /* HouseClass::IsControlledByHuman() */
+#define HOUSE_PLAN_BASE   0x505180   /* HouseClass: makes the base plan (Base.Nodes) if it has none */
+#define HOUSE_BASE_READY  0x50C920   /* HouseClass: the last step of the deploy's AI set-up */
+#define H_PRODUCTION      0x1EE      /* HouseClass: bool, AI production has begun */
+#define H_AITRIGGERS      0x1F2      /* HouseClass: bool AITriggersActive */
+#define H_AUTOBASE        0x1F3      /* HouseClass: bool AutoBaseBuilding */
+#define H_NODES           0x5708     /* HouseClass: Base.Nodes items, BaseNodeClass[16 bytes: type index, cell, Placed] */
+#define H_NODECOUNT       0x5714
+#define H_BASE_CENTER     0x5750     /* HouseClass: Base.Center */
+#define B_AI_BUILT        0x6CA      /* BuildingClass: set on what a computer player's factory makes */
+
+typedef struct { int x, y, w, h; } Rect;
+static Rect base_rects[128];
+static int base_count;
+
+static int in_list(const char *csv, const char *id)
+{
+    size_t n = strlen(id);
+    for (const char *p = csv; *p; p += strcspn(p, ",")) {
+        p += strspn(p, ", ");
+        if (!_strnicmp(p, id, n) && (p[n] == ',' || p[n] == ' ' || !p[n]))
+            return 1;
+    }
+    return 0;
+}
+
+/* no starting-base building within a cell of the rectangle */
+static int base_clear(int x, int y, int w, int h)
+{
+    for (int i = 0; i < base_count; i++) {
+        Rect *r = &base_rects[i];
+        if (x - 1 < r->x + r->w && r->x < x + w + 1 && y - 1 < r->y + r->h && r->y < y + h + 1)
+            return 0;
+    }
+    return 1;
+}
+
+/* the top-left cell for a building centred as near as it can be to cx,cy: the closest in the first square ring around
+ * it that has a spot the placement check accepts and base_clear leaves free */
+static int base_spot(BYTE *type, BYTE *house, int cx, int cy, int *x, int *y)
+{
+    int w = ((int (GTHISCALL *)(BYTE *))BTYPE_WIDTH)(type);
+    int h = ((int (GTHISCALL *)(BYTE *, char))BTYPE_HEIGHT)(type, 1);
+    for (int r = 0; r <= 24; r++) {
+        int best = -1;
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                if (abs(dx) != r && abs(dy) != r)
+                    continue;
+                CellXY c = { cx - w / 2 + dx, cy - h / 2 + dy };
+                int d = dx * dx + dy * dy;
+                if ((best < 0 || d < best) && base_clear(c.X, c.Y, w, h)
+                    && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                    best = d;
+                    *x = c.X;
+                    *y = c.Y;
+                }
+            }
+        if (best >= 0) {
+            if (base_count < (int)(sizeof base_rects / sizeof *base_rects))
+                base_rects[base_count++] = (Rect){ *x, *y, w, h };
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* the index in BuildingTypeClass::Array, as base nodes store it */
+static int building_type_index(BYTE *type)
+{
+    DynVec *v = BUILDINGTYPE_ARRAY;
+    for (int i = 0; i < v->Count; i++)
+        if (v->Items[i] == type)
+            return i;
+    return -1;
+}
+
+static CellXY object_cell(BYTE *obj)
+{
+    Coord *c = &FIELD(obj, O_LOCATION, Coord);
+    return (CellXY){ c->X >> 8, c->Y >> 8 };
+}
+
+/* a computer player's first building is its Construction Yard: start its AI as the MCV deploy would, then put the
+ * other buildings on its base plan */
+static void start_ai_base(BYTE *house, BYTE **placed, int n)
+{
+    CellXY cell = object_cell(placed[0]);
+    FIELD(house, H_BASESPAWNCELL, CellXY) = cell;     /* all that 0x50E000 does */
+    ((void (GTHISCALL *)(BYTE *))HOUSE_PLAN_BASE)(house);
+    BYTE *nodes = FIELD(house, H_NODES, BYTE *);
+    int count = FIELD(house, H_NODECOUNT, int);
+    if (count > 0)
+        FIELD(nodes, 4, CellXY) = cell;               /* node 0 is the Construction Yard */
+    FIELD(house, H_BASE_CENTER, CellXY) = cell;
+    FIELD(house, H_PRODUCTION, char) = 1;
+    FIELD(house, H_AITRIGGERS, char) = 1;
+    FIELD(house, H_AUTOBASE, char) = 1;
+    ((void (GTHISCALL *)(BYTE *))HOUSE_BASE_READY)(house);
+    int marked = 0;
+    for (int k = 0; k < n; k++) {
+        FIELD(placed[k], B_AI_BUILT, char) = 1;
+        if (!k)
+            continue;
+        int index = building_type_index(FIELD(placed[k], B_TYPE, BYTE *));
+        for (int j = 1; j < count; j++) {
+            BYTE *node = nodes + 16 * j;
+            if (FIELD(node, 0, int) == index && !FIELD(node, 8, char) && !FIELD(node, 4, DWORD)) {
+                FIELD(node, 4, CellXY) = object_cell(placed[k]);
+                FIELD(node, 8, char) = 1;
+                marked++;
+                break;
+            }
+        }
+    }
+    logmsg("start base: computer player started at %d,%d; %d base plan nodes, %d of %d buildings marked on it",
+           cell.X, cell.Y, count, marked, n - 1);
+}
+
+static void start_bases(void)
+{
+    char remove[256], list[1024];
+    if (!GetPrivateProfileSectionA("StartBase", list, sizeof list, INI))
+        return;
+    ini_str("StartBase", "Remove", "", remove, sizeof remove);
+    DynVec *hv = HOUSE_ARRAY;
+    for (int i = 0; i < hv->Count; i++) {
+        BYTE *house = hv->Items[i], *htype = FIELD(house, H_TYPE, BYTE *);
+        const char *country = htype ? (char *)htype + T_ID : "";
+        ini_str("StartBase", country, "", list, sizeof list);
+        if (!*country || !*list)
+            continue;
+        CellXY start = FIELD(house, H_BASESPAWNCELL, CellXY);
+        logmsg("start base: house %d %s, start cell %d,%d", i, country, start.X, start.Y);
+        if (start.X <= 0 || start.Y <= 0)
+            continue;
+        /* off the map while the base goes down, so the Construction Yard can take their cells */
+        BYTE *mcvs[8];
+        Coord at[8];
+        int m = 0;
+        DynVec *uv = UNIT_ARRAY;
+        for (int k = 0; k < uv->Count && m < 8; k++) {
+            BYTE *unit = uv->Items[k], *utype = FIELD(unit, U_TYPE, BYTE *);
+            if (FIELD(unit, O_OWNER, BYTE *) == house && utype && in_list(remove, (char *)utype + T_ID)) {
+                at[m] = FIELD(unit, O_LOCATION, Coord);
+                ((char (GTHISCALL *)(BYTE *))VFUNC(unit, VT_LIMBO))(unit);
+                mcvs[m++] = unit;
+            }
+        }
+        BYTE *placed[32];
+        int n = 0;
+        for (char *id = strtok(list, ", "); id; id = strtok(NULL, ", ")) {
+            BYTE *type = find_type(BUILDINGTYPE_ARRAY, id), *obj = NULL;
+            int x, y;
+            if (!type)
+                logmsg("start base: %s: no such building", id);
+            else if (!base_spot(type, house, start.X, start.Y, &x, &y))
+                logmsg("start base: %s: no room near %d,%d", id, start.X, start.Y);
+            else
+                logmsg("start base: %s at %d,%d: %s", id, x, y, (obj = put_object(type, house, x, y, 0)) ? "placed" : "could not be placed");
+            if (obj && n < (int)(sizeof placed / sizeof *placed) && (n || FIELD(obj, B_TYPE, BYTE *)[B_CONSTRUCTIONYARD]))
+                placed[n++] = obj;
+            if (!n)
+                break;   /* no Construction Yard: no base */
+        }
+        for (int k = 0; k < m; k++)   /* UnInit deletes it at the end of the frame; Unlimbo puts it back */
+            if (n)
+                ((void (GTHISCALL *)(BYTE *))VFUNC(mcvs[k], VT_UNINIT))(mcvs[k]);
+            else
+                ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(mcvs[k], VT_UNLIMBO))(mcvs[k], &at[k], 0);
+        logmsg("start base: %d vehicles %s", m, n ? "removed" : "put back, as the Construction Yard found no room");
+        if (n && !((char (GTHISCALL *)(BYTE *))HOUSE_IS_HUMAN)(house))
+            start_ai_base(house, placed, n);
     }
 }
 

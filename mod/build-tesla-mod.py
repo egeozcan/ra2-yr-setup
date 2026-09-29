@@ -18,14 +18,14 @@ Only Yuri's Revenge reads these *md files; base Red Alert 2 is unaffected.
 import os, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import csf, mixextract
+import csf, mixextract, bulldozer
 
 GAME = "/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
 ASSETS = ["attnk.vxl", "attnk.hva", "attnktur.vxl", "attnktur.hva", "attkicon.shp"]
 # Cheat Defense art, made by cheatdef_art.py (same list as its FILES)
 DEF_ASSETS = ["ggchdf.shp", "chdfglow.shp", "chdftur.vxl", "chdftur.hva", "chdficon.shp"] + \
     [f"g{c}chdfmk.shp" for c in "taudlng"]
-ASSETS += DEF_ASSETS
+ASSETS += DEF_ASSETS + bulldozer.ASSETS
 MANAGED = ["rulesmd.ini", "artmd.ini", "ra2md.csf", "aimd.ini"] + ASSETS
 UNIT_NAME = "Liberator"
 CAMEO = "ATTKICON"
@@ -227,7 +227,7 @@ def register(lines, list_section, key, type_id):
 
 def patch(text):
     lines = text.split("\r\n")
-    for new_id in (UNIT_ID, DEF_ID):
+    for new_id in (UNIT_ID, DEF_ID, bulldozer.UNIT_ID):
         if any(l.split(";")[0].strip() == f"[{new_id}]" for l in lines):
             raise SystemExit(f"[{new_id}] already present; refusing to patch twice")
 
@@ -235,13 +235,16 @@ def patch(text):
     defense = clone_section(lines, "GTGCAN", DEF_ID, DEF_OVERRIDES, DEF_DROP)
     register(lines, "VehicleTypes", LIST_KEY, UNIT_ID)
     register(lines, "BuildingTypes", DEF_LIST_KEY, DEF_ID)
+    dozer = clone_section(lines, "HTNK", bulldozer.UNIT_ID, bulldozer.OVERRIDES)
+    register(lines, "VehicleTypes", "86", bulldozer.UNIT_ID)
 
     while lines and lines[-1] == "":
         lines.pop()
     lines += [""] + NEW_SECTIONS.strip("\n").split("\n")
     lines += [""] + unit
     lines += [""] + DEF_SECTIONS.strip("\n").split("\n")
-    lines += [""] + defense + ["", ""]
+    lines += [""] + defense
+    lines += [""] + bulldozer.SECTIONS.strip().splitlines() + [""] + dozer + ["", ""]
     return "\r\n".join(lines)
 
 
@@ -261,7 +264,8 @@ def patch_art(text):
     while lines and lines[-1] == "":
         lines.pop()
     lines += ["", f"[{UNIT_ID}]   ; Liberator (mod)"] + body
-    lines += DEF_ART_SECTIONS.rstrip("\n").split("\n") + ["", ""]
+    lines += DEF_ART_SECTIONS.rstrip("\n").split("\n")
+    lines += bulldozer.ART.strip().splitlines() + ["", ""]
     return "\r\n".join(lines)
 
 
@@ -302,6 +306,21 @@ def patch_ai(text):
         lines.pop()
     lines += ["", f"[{AI_TASKFORCE}]", "Name=3 Liberators", f"0=3,{UNIT_ID}", "Group=-1",
               "", f"[{AI_TEAM}]"] + team + ["", ""]
+    # Register a separate Soviet siege team without changing the Allied Liberator team.
+    for new_id in (bulldozer.AI_TASKFORCE, bulldozer.AI_TEAM, bulldozer.AI_TRIGGER):
+        if any(new_id in line.split(";")[0] for line in lines):
+            raise SystemExit(f"AI ID {new_id} already present")
+    dozer_team = clone_section(lines, bulldozer.AI_TEAM_TEMPLATE, bulldozer.AI_TEAM, {
+        "Name": "Soviet Bulldozer Assault", "TaskForce": bulldozer.AI_TASKFORCE,
+        "Script": bulldozer.AI_SCRIPT, "Max": "1",
+    })
+    append_to_list(lines, "TaskForces", bulldozer.AI_TASKFORCE)
+    append_to_list(lines, "TeamTypes", bulldozer.AI_TEAM)
+    s, e = section_lines(lines, "AITriggerTypes")
+    last = max(i for i in range(s + 1, e) if "=" in lines[i].split(";")[0])
+    lines.insert(last + 1, bulldozer.AI_TRIGGER_LINE)
+    lines += [f"[{bulldozer.AI_TASKFORCE}]", "Name=2 Bulldozers + 4 Rhinos",
+              f"0=2,{bulldozer.UNIT_ID}", "1=4,HTNK", "Group=-1", ""] + dozer_team + ["", ""]
     return "\r\n".join(lines)
 
 
@@ -317,11 +336,12 @@ def build(out_dir):
     header, entries = csf.load(tmp)
     csf.set_string(entries, f"Name:{UNIT_ID}", UNIT_NAME)
     csf.set_string(entries, f"Name:{DEF_ID}", DEF_NAME)
+    csf.set_string(entries, f"Name:{bulldozer.UNIT_ID}", bulldozer.UNIT_NAME)
     csf.save(tmp, header, entries)
     for a in ASSETS:
         src = os.path.join(HERE, "assets", a)
         if not os.path.exists(src):
-            raise SystemExit(f"missing {src}; run make_graphics.py / cheatdef_art.py first")
+            raise SystemExit(f"missing {src}; run make_graphics.py / cheatdef_art.py / make_bulldozer.py first")
         shutil.copy(src, os.path.join(out_dir, a))
 
 

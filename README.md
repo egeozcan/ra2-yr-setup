@@ -404,8 +404,10 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   - a players table, with a row for you and one per opponent. Each row has country, colour, team (none or A–D) and
     start position (random or 1 to the map's player count), plus difficulty for opponents;
   - up to 7 opponents, but only as many as the map allows;
-  - speed, credits, starting units and tech level;
+  - speed, starting base, credits, starting units and tech level;
   - the rule switches: bases, short game, superweapons, crates, MCV repacks, build off ally, bridges.
+- **Starting base** (added 2026-09-26): MCV, Tier 1, Tier 2 or Tier 3; see below. Anything but MCV turns the
+  bases switch on and locks it.
 - **Random:** Random country or colour is picked when you press Start. Random colours never repeat a colour
   that is already taken.
 - **Game mode:** always Battle (`GameMode=1`). `mpmodesmd.ini` says it is the only mode that allows AI players.
@@ -414,6 +416,7 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   - too many players for the map;
   - two players with the same colour or the same start position;
   - everyone on the same team;
+  - a starting base whose buildings the tech level would not allow (tier 1 needs 2, tier 2 needs 3, tier 3 needs 8);
   - the game is already running, or it was started less than 20 s ago;
   - Steam is not running;
   - the launcher is not installed. A banner then offers **Install**, which runs `spawn.py install`.
@@ -424,7 +427,8 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   `~/.config/ra2-yr-setup/skirmish-presets.json`. If a preset's map is gone, the current map is kept.
 - **`--dry-run`:** Start only writes `yspawn.ini` and `yspawn.map` into the game directory, and does not launch.
 - **Tested:** the map scan (all 53 archives extract), the settings it writes (the same as the CLI's for the same
-  settings), and the window in dry-run mode. It has not yet started a real match.
+  settings), and the window in dry-run mode. On 2026-09-26 its settings (`build_config`, then `spawn.prepare` and
+  `spawn.launch`, the Start button's path) started an 8-player match with a starting base.
 
 How it works (`spawner/yspawn.c`):
 - The DLL replaces the two calls to the main menu (`0x48CDD3`, `0x48CFAA`) and skips the intro and logo.
@@ -473,6 +477,48 @@ How it works (`spawner/yspawn.c`):
   - **Not yet checked in game:** the build is installed but no match has been played with teams or fixed starts.
 - The Cheat Defense has `SpySat=yes`, so building one reveals the whole map. That is intended and is not
   caused by the launcher.
+
+### Starting base (2026-09-26)
+
+Like Empire Wars in Age of Empires II, with RA2's tiers standing in for its ages. Every player, you and the AIs,
+starts with the chosen tier's buildings already up, in place of the MCV:
+- **Tier 1:** Construction Yard, power, barracks and ore refinery.
+- **Tier 2:** tier 1 plus a war factory and radar.
+- **Tier 3:** tier 2 plus a Battle Lab.
+
+Each refinery brings its usual free miner. Yuri's also brings its slaves.
+
+- **The buildings** come from `spawner/startbase.py`, which reads the modded `rulesmd.ini` from the game
+  directory, or the stock one from `expandmd01.mix`.
+  - The `[AI]` `Build*` lists give each role's candidates. A country gets the first one it may build (`Owner=`,
+    `RequiredHouses=`, `ForbiddenHouses=`) that needs its own side's Construction Yard. So America gets
+    `AMRADR`, the other Allies `GAAIRC`, and Yuri `NAPSIS`.
+  - Prerequisites are followed through.
+  - Power plants are added until `Power=` covers the drain: two for tier 3.
+  - `python3 spawner/startbase.py` prints every country's list.
+- **Skirmish Setup** writes the lists to a `[StartBase]` section of `yspawn.ini`, one line per country in play:
+  `Americans=GACNST,GAPOWR,…`, plus `Remove=AMCV,SMCV,PCV`.
+- **yspawn.dll**, once the scenario has loaded:
+  - takes each house's MCV off the map;
+  - puts the Construction Yard on the house's start cell (`HouseClass+0x5490`, BaseSpawnCell);
+  - puts each other building on the nearest spot that `CanPlaceHere` accepts, with a free cell between buildings;
+  - deletes the MCV, or puts it back if no Construction Yard fits.
+- **For computer players** it also does what `UnitClass::TryToDeploy` does when an AI's MCV deploys in a skirmish
+  (`0x739855`–`0x739926`):
+  - builds the base plan (`0x505180`, `Base.Nodes` at `+0x5708`);
+  - sets `Base.Center` (`+0x5750`);
+  - sets `Production`, `AITriggersActive` and `AutoBaseBuilding` (`+0x1EE`, `+0x1F2`, `+0x1F3`);
+  - calls `0x50C920`.
+
+  Without this the AI never builds anything: the first try left both AIs mining for seven minutes, $100k in the
+  bank. The starting buildings are also marked on the base plan (the node's cell and `Placed`, as the AI marks
+  its own), so the AI does not build them again.
+- **Checked in game (2026-09-26):**
+  - **Lost Lake:** America (idle), a hard Russia and a hard Yuri, tier 3. All 24 buildings went down, and the free
+    miners and slaves appeared. Both AIs expanded and built defences, armies and superweapons, and had overrun
+    the idle base by game frame 15,800.
+  - **Russian Roulette, 8 players, tier 3:** all 64 buildings placed. The sidebar was filled at once.
+  - **An MCV-only baseline on Lost Lake** behaved as before.
 
 ## Mod: Magnetron carry (2026-09-26)
 
@@ -555,3 +601,59 @@ How it works (addresses in this exe, traced 2026-09-26; YRpp names):
   - that the Magnetron goes back to guard after the throw;
   - throwing onto water or a cliff.
   - `yspawn.log` logs each throw (`magnetron: throw to cell X,Y, landing cell X,Y`) and each drop.
+
+## Mod: Soviet Bulldozer (2026-09-29)
+
+The shared installer now also adds **Bulldozer** (`SBDOZR`), a new Soviet tracked siege vehicle
+with its own voxel model, armored cab, hydraulic push arms, broad steel blade and sidebar cameo.
+All four Soviet countries can build it with a **War Factory and Radar** (`NAWEAP,NARADR`).
+It costs **2000**, has **1800 HP**, heavy armor, speed **3**, and no turret.
+It cannot appear in starting armies or crates. Soviet AI can build mixed assault teams of two bulldozers and four Rhinos
+once it has Radar and a War Factory, on easy, medium and hard difficulties.
+
+The blade is a ground-only, **1.5-cell** attack, based on the stock shovel's invisible projectile
+and range-finding settings. Normal damage is 600 every 45 frames; elite damage is 900 every 35.
+Its custom warhead applies **200%** to all infantry and building armor and **5%** to all vehicle
+armor: nominal hits are **1200 versus infantry/buildings and 30 versus tanks** (elite: 1800/45),
+before veterancy and other engine modifiers. It also crushes infantry by driving over them,
+like stock tanks. The attack has no splash, projectile trail or anti-air capability.
+
+- Definitions: `mod/bulldozer.py`; installer: `mod/build-tesla-mod.py` (keeps both earlier mods).
+- Generate art: `mod/.venv/bin/python mod/make_bulldozer.py`.
+- Install: `python3 mod/build-tesla-mod.py install` with the game closed.
+- Validate: `mod/.venv/bin/python -W ignore::ResourceWarning -m unittest discover -s mod -p 'test_bulldozer.py' -v`.
+- Art files: `sbdozr.vxl`, `sbdozr.hva`, `sbdzicon.shp`; previews: `mod/previews/bulldozer-*.png`.
+- The existing `uninstall` command removes **all three mods**, including the Bulldozer.
+
+Offline checks passed for stock-rule preservation, Soviet build restrictions, referenced assets,
+CSF name, type registration, CRLF output, and damage calculations using actual stock target armor.
+The generated voxel was decoded and compared to its source arrays; the cameo was decoded at 60×48.
+Pre-install shared configuration is saved locally under `backups/before-bulldozer-*`.
+
+In-game smoke check: the engine successfully placed three `SBDOZR` vehicles alongside a stock
+Rhino, and the custom blade/cab model rendered at multiple facings. Evidence is in
+`logs/bulldozer-validation/ingame.png` and `yspawn.log`. The test session was closed afterward.
+Live combat damage, close-range pathfinding against large buildings, and sidebar production
+still need gameplay verification; the damage figures above are checked from the generated rules.
+
+Bulldozer cameo update (2026-09-29): replaced the procedural icon with a painted portrait
+matching the stock Soviet vehicle cameos: low front three-quarter view, worn grey steel and
+brick-red armor, dusty ground and a pale blue sky. Source art is `mod/cameo-art/bulldozer.png`;
+the built-in image-generation prompt is saved in `mod/cameo-art/bulldozer-prompt.md`.
+`make_bulldozer.py` now uses that portrait, downscales to 60×48, maps to `cameo.pal`, and adds
+the existing stock frame and BULLDOZER label. The decoded SHP was inspected alongside five
+stock cameos, and installed as `sbdzicon.shp`. Vehicle geometry and gameplay are unchanged.
+
+Bulldozer AI update (2026-09-29): added one mixed team of two bulldozers and four Rhinos per Soviet house to `aimd.ini`,
+with a Radar ownership trigger, tech level 5, and all three difficulties enabled. The trigger
+uses Soviet side 2 and any Soviet country. It has weights 200/50/300 (initial/minimum/maximum).
+The stock General Attack Buildings script gathers the mixed team and sends it against structures;
+the team template is the stock Grizzly building-assault team, with neutral House and Max=1.
+Existing stock AI and the Allied Liberator team are preserved. Five offline integration tests
+pass, including AI registrations, side/difficulty restrictions, script/task-force references,
+and preservation of every stock AI entry. Only `aimd.ini` was installed for this update.
+AI production and assaults have not yet been observed in a live match; use a new skirmish.
+
+The mixed composition replaces the earlier bulldozer-only team under the same AI IDs.
+Rhinos and bulldozers are recruited into the same task force and share its assault script.
+This is a shared team order, not custom per-unit targeting or an escort-distance guarantee.
