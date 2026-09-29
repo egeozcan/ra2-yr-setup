@@ -826,10 +826,13 @@ is needed. `spawner/combat-ai.h` adds the engine behavior to the custom launcher
   Tanks. Later teams add Prism Tanks, Magnetrons and Masterminds. Stock task forces
   remain intact; separate Brutal variants replace their hard-difficulty triggers.
   Brutal team-selection delay drops from 2000 to 900 frames.
+  Armor teams target enemy vehicles first, then defenses and other buildings.
 - **Siege:** Allied bombardment uses 4 Prism Tanks, 6 Grizzlies and 3 IFVs; Soviet
   bombardment uses 4 V3 launchers, 6 Rhinos and 3 Flak Tracks. This fixes the stock
   Soviet hard task force requesting unbuildable `V3ROCKET` missiles. Siege scripts
-  attack defenses/buildings directly without action 53's enemy-base gathering.
+  target base defenses first, then factories and other buildings, without
+  action 53's enemy-base gathering. Vanilla attack actions exhaust a target
+  category before moving to the next, so later categories act as fallbacks.
   In the custom launcher, Prism Tanks, V3s, Carriers, Dreadnoughts and Boomers cancel
   forward movement once the engine considers their selected weapon in range,
   keeping their attack target. The Boomer selects its missile weapon for land

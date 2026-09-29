@@ -13,8 +13,10 @@ NAVAL_SCRIPT = '0F1BF003-G'
 AIR_SCRIPT = '0F1BF004-G'
 NAVAL_HUNT_SCRIPT = '0F1BF005-G'
 SCRIPTS = {
-    ASSAULT_SCRIPT: ('Brutal Assembled Assault', ('54,0', '0,7', '49,0', '0,2', '0,1')),
-    SIEGE_SCRIPT: ('Brutal Stand-off Bombardment', ('0,7', '49,0', '0,2', '0,1')),
+    # Vanilla action 0 keeps pursuing its quarry until none remain. Put the
+    # intended primary target first; later actions are fallbacks, not a loop.
+    ASSAULT_SCRIPT: ('Brutal Assembled Assault', ('54,0', '0,5', '49,0', '0,7', '0,2', '0,1')),
+    SIEGE_SCRIPT: ('Brutal Stand-off Bombardment', ('0,7', '49,0', '0,6', '0,2', '0,1')),
     NAVAL_SCRIPT: ('Brutal Shore Bombardment', ('0,2', '49,0', '0,1')),
     AIR_SCRIPT: ('Brutal Building Air Strike', ('0,2', '49,0', '0,1')),
     NAVAL_HUNT_SCRIPT: ('Brutal Naval Hunters', ('0,6', '49,0', '0,1')),

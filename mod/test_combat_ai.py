@@ -68,6 +68,21 @@ class CombatAITests(unittest.TestCase):
                   if self.ai[t]['Name'] == 'Brutal 0CA1683C-G')
         self.assertEqual(self.members(v3)['V3'], 4)
 
+    def test_armor_and_siege_prioritize_different_targets(self):
+        expected = {
+            combat_ai.ASSAULT_SCRIPT: ['54,0', '0,5', '49,0', '0,7', '0,2', '0,1'],
+            combat_ai.SIEGE_SCRIPT: ['0,7', '49,0', '0,6', '0,2', '0,1'],
+        }
+        for script_id, actions in expected.items():
+            actual = [value for key, value in self.ai[script_id].items() if key.isdigit()]
+            self.assertEqual(actual, actions)
+        for old, (_, script_id) in combat_ai.REPLACEMENTS.items():
+            if script_id not in expected:
+                continue
+            team = next(t for t in self.ai['TeamTypes'].values()
+                        if self.ai[t]['Name'] == 'Brutal ' + old)
+            self.assertEqual(self.ai[team]['Script'], script_id)
+
     def test_navy_bombards_require_own_shipyard(self):
         fleets = [f for f in self.new.values() if f[0].startswith('Brutal Navy Bombard')]
         self.assertEqual(len(fleets), 3)
