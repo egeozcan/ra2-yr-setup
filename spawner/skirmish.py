@@ -349,7 +349,7 @@ class Window(Adw.ApplicationWindow):
                      dropdown(choice_model(COUNTRIES, True), p["Country"] + 1, upd("Country")),
                      dropdown(choice_model([c for c, _ in COLORS], True), p["Color"] + 1, upd("Color"),
                               color_factory()),
-                     dropdown(Gtk.StringList.new(TEAMS), p["Team"] + 1, upd("Team")),
+                     pills([(t, i - 1) for i, t in enumerate(TEAMS)], p["Team"], upd("Team", 0)),
                      dropdown(choice_model([str(n) for n in range(1, starts + 1)], True), p["Start"] + 1,
                               upd("Start"))]
             if human:
