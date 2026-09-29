@@ -836,10 +836,11 @@ is needed. `spawner/combat-ai.h` adds the engine behavior to the custom launcher
   targets. This prevents further advance; it does not add retreat/kiting logic.
 - **Navy:** larger hunter fleets plus independent coastal bombardment teams:
   2 Carriers + 2 Destroyers + 2 Aegis Cruisers; 2 Dreadnoughts + 3 Sea Scorpions +
-  2 Attack Subs; or 3 Boomers. These bombardment triggers require the owner's tech
-  building, without requiring an enemy shipyard. The launcher requests a first
+  2 Attack Subs; or 3 Boomers. These bombardment triggers require the owner's
+  shipyard, without requiring an enemy shipyard. The launcher requests a first
   shipyard after a war factory and radar exist, only if native placement finds a
-  valid coastal site and normal prerequisites, power and cash permit it.
+  valid coastal site and normal prerequisites, power and cash permit it. Brutal
+  naval-hunter variants also wait for their own shipyard before forming.
 - **Tech capture:** the existing two-team oil capture limit remains, with increased
   neutral-oil priority. All factions also get separate engineer teams for neutral
   airports, hospitals, outposts, machine shops and power plants. Each type has one
@@ -851,7 +852,7 @@ is needed. `spawner/combat-ai.h` adds the engine behavior to the custom launcher
   with at least $8000 cash and sufficient spare power. Normal construction pays
   for and places the building, and requests stop at two. Four-aircraft building
   strikes require exactly one airbase; eight-aircraft strikes require at least two
-  (eight docks). Korea uses Black Eagles; Americans use their own airbase type.
+  (eight docks) **owned by the AI**. Korea uses Black Eagles; Americans use their own airbase type.
   Existing aircraft may need to finish their teams before an eight-plane team fills.
 
 All INI changes work in ordinary Steam skirmishes. The movement, coastal shipyard
@@ -860,8 +861,11 @@ and extra-factory/airbase hooks require the **custom Skirmish Setup launcher**.
 To measure whether the larger teams actually assemble, set `TeamTelemetry=1` under
 `[Settings]` in a custom-launcher `yspawn.ini`. The launcher writes
 `yspawn-teams.csv` beside the game executable, sampling each Brutal AI house every
-150 frames. Summary rows count all teams and large teams; team rows show task-force
-composition as `UNIT:present/wanted`, current script line (`-1` while no script is
+150 frames. Set `TeamTelemetry=2` to include smaller teams when investigating
+production competition. Summary rows count teams and factories, shipyards and
+airbases, and show the
+current vehicle order; team rows show task-force composition as
+`UNIT:present/wanted`, current script line (`-1` while no script is
 active), and cash. The sampler only reads team state and is disabled by default.
 Run `python3 spawner/team_report.py /path/to/yspawn-teams.csv` for per-team peaks
 and first observed script activity. A team's disappearance from snapshots does not
@@ -877,6 +881,16 @@ and executed. Allied Brutal teams reached only 6/13 and 6/17 before that match e
 This indicates a further optimization opportunity in vehicle-production priority
 and limiting competing team requests; the CSV does not establish which engine rule
 caused the shortage.
+
+Follow-up verbose telemetry showed many stock and new teams competing for one war
+factory. Controlled 900-, 1500- and 2000-frame Brutal team intervals each filled
+different teams; the longer intervals improved Soviet armor formation in those
+matches but delayed Allied teams, so the installed 900-frame interval is retained.
+The engine's AI trigger condition `1` means **enemy owns**, not **AI owns**. The
+new naval bombardment and air-strike triggers now use condition `0`; Brutal
+naval hunters and bombardment wait for the AI's shipyard. This avoids reserving
+ships before a yard exists and selecting aircraft teams based on an opponent's
+docks.
 
 Reinstall both parts with the game closed:
 

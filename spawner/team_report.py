@@ -26,7 +26,7 @@ def report(path):
               f" at frame {peak['frame']}; full {full}; script active {launched};"
               f" last seen {last['frame']}")
         print(f"  peak composition: {peak['composition']}")
-    print(f"{len(teams)} large team instances observed")
+    print(f"{len(teams)} team instances observed")
 
 
 if __name__ == "__main__":

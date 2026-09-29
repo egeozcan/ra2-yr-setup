@@ -16,23 +16,26 @@
 #define FORCE_ENTRIES 0xA4
 #define TEAM_SCRIPT 0x28
 #define SCRIPT_LINE 0x2C
+#define HOUSE_UNIT_ORDER 0x5650
 
 static FILE *team_telemetry_file;
+static int team_telemetry_level;
 static int team_telemetry_next[32];
 
 static void team_telemetry_init(void)
 {
-    if (!ini_int("Settings", "TeamTelemetry", 0))
+    team_telemetry_level = ini_int("Settings", "TeamTelemetry", 0);
+    if (!team_telemetry_level)
         return;
     team_telemetry_file = fopen("yspawn-teams.csv", "w");
     if (!team_telemetry_file) {
         logmsg("team telemetry: could not open yspawn-teams.csv");
         return;
     }
-    fputs("frame,house,kind,teams,large_teams,team_id,created_frame,age,wanted,present,missing,full,under,forced,script_line,cash,composition\n",
+    fputs("frame,house,kind,teams,large_teams,team_id,created_frame,age,wanted,present,missing,full,under,forced,script_line,cash,composition,war_factories,shipyards,airbases,unit_order\n",
           team_telemetry_file);
     fflush(team_telemetry_file);
-    logmsg("team telemetry: enabled (150-frame snapshots to yspawn-teams.csv)");
+    logmsg("team telemetry: level %d enabled (150-frame snapshots to yspawn-teams.csv)", team_telemetry_level);
 }
 
 static void team_telemetry_sample(BYTE *house)
@@ -79,16 +82,25 @@ static void team_telemetry_sample(BYTE *house)
                 break;
             }
         }
-        if (wanted < 8)
+        if (!wanted || (wanted < 8 && team_telemetry_level < 2))
             continue;
-        large++;
+        large += wanted >= 8;
         BYTE *script = FIELD(team, TEAM_SCRIPT, BYTE *);
-        fprintf(team_telemetry_file, "%d,%d,team,,,%.*s,%u,%d,%d,%d,%d,%d,%d,%d,%d,%d,%s\n",
+        fprintf(team_telemetry_file, "%d,%d,team,,,%.*s,%u,%d,%d,%d,%d,%d,%d,%d,%d,%d,%s,,,,\n",
                 frame, idx, 24, (char *)type + T_ID, FIELD(team, TEAM_CREATED, unsigned),
                 frame - FIELD(team, TEAM_CREATED, int), wanted, present, wanted - present,
                 team[TEAM_FULL] != 0, team[TEAM_UNDER] != 0, team[TEAM_FORCED] != 0,
                 script ? FIELD(script, SCRIPT_LINE, int) : -1, cash, composition);
     }
-    fprintf(team_telemetry_file, "%d,%d,summary,%d,%d,,,,,,,,,,,%d,\n", frame, idx, teams, large, cash);
+    int order = FIELD(house, HOUSE_UNIT_ORDER, int);
+    DynVec *types = UNITTYPE_ARRAY;
+    const char *order_id = order >= 0 && order < types->Count && types->Items[order]
+        ? (char *)types->Items[order] + T_ID : "-";
+    fprintf(team_telemetry_file, "%d,%d,summary,%d,%d,,,,,,,,,,,%d,,%d,%d,%d,%.24s\n",
+            frame, idx, teams, large, cash,
+            combat_building_count(house, "GAWEAP,NAWEAP,YAWEAP"),
+            combat_building_count(house, "GAYARD,NAYARD,YAYARD"),
+            combat_building_count(house, "GAAIRC,AMRADR"),
+            order_id);
     fflush(team_telemetry_file);
 }

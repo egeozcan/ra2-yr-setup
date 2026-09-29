@@ -68,22 +68,31 @@ class CombatAITests(unittest.TestCase):
                   if self.ai[t]['Name'] == 'Brutal 0CA1683C-G')
         self.assertEqual(self.members(v3)['V3'], 4)
 
-    def test_navy_bombards_without_enemy_shipyard_condition(self):
+    def test_navy_bombards_require_own_shipyard(self):
         fleets = [f for f in self.new.values() if f[0].startswith('Brutal Navy Bombard')]
         self.assertEqual(len(fleets), 3)
         for fields in fleets:
-            self.assertEqual(fields[4], '1')  # owner tech building, stock encoding
-            self.assertIn(fields[5], ('GATECH', 'NATECH', 'NAPSIS'))
+            self.assertEqual(fields[4], '0')  # AIOwns, not EnemyOwns
+            self.assertIn(fields[5], ('GAYARD', 'NAYARD', 'YAYARD'))
             units = self.members(fields[1])
             self.assertGreaterEqual(sum(units.values()), 3)
             for unit in units:
                 self.assertEqual(self.rules[unit]['Naval'], 'yes')
             self.assertTrue(set(units) & {'CARRIER', 'DRED', 'BSUB'})
 
+        for old, yard in combat_ai.NAVAL_YARDS.items():
+            new_team = next(t for t in self.ai['TeamTypes'].values()
+                            if self.ai[t]['Name'] == 'Brutal ' + old)
+            cloned = [f for f in self.new.values() if f[1] == new_team]
+            self.assertTrue(cloned, old)
+            for fields in cloned:
+                self.assertEqual(fields[4:6], ['0', yard])
+
     def test_air_strikes_fit_docks_and_korea_uses_black_eagles(self):
         strikes = [f for f in self.new.values() if '-plane Strike' in f[0]]
         self.assertEqual(len(strikes), 10)
         for fields in strikes:
+            self.assertEqual(fields[4], '0')  # own docks, not the enemy's
             country = fields[2]
             self.assertEqual(fields[5], 'AMRADR' if country == 'Americans' else 'GAAIRC')
             units = self.members(fields[1])

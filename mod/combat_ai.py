@@ -42,6 +42,14 @@ REPLACEMENTS = {
     '05FC5C6C-G': (('4,BSUB',), NAVAL_SCRIPT),
     '08B909EC-G': (('4,BSUB',), NAVAL_SCRIPT),
 }
+# Stock naval hunters can trigger from enemy state before their owner has a yard.
+# Keep the Easy/Normal triggers intact and gate only the cloned Brutal variants.
+NAVAL_YARDS = {
+    '0CA1E67C-G': 'GAYARD',  # Allied hunters
+    '0CA18BAC-G': 'NAYARD',  # Soviet hunters
+    '06C5992C-G': 'YAYARD',  # Yuri hunters
+    '0EC2038C-G': 'NAYARD',  # Soviet bombardment
+}
 
 
 def comparator(count, operator=3):
@@ -50,7 +58,7 @@ def comparator(count, operator=3):
 
 
 def trigger(identifier, name, team, side, building, count=1, weight=120,
-            owner='<all>', condition=1, operator=3):
+            owner='<all>', condition=0, operator=3):
     return (f'{identifier}={name},{team},{owner},1,{condition},{building},'
             f'{comparator(count, operator)},{weight:.6f},10.000000,{weight:.6f},'
             f'1,0,{side},0,<none>,0,0,1')
@@ -112,6 +120,8 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
             hard[0] = 'Brutal ' + hard[0]
             hard[1] = replacements.get(hard[1], hard[1])
             hard[14] = replacements.get(hard[14], hard[14])
+            if fields[1] in NAVAL_YARDS:
+                hard[4:6] = ['0', NAVAL_YARDS[fields[1]]]
             if hard[14] in air_templates:
                 hard[14] = '<none>'
             hard[15:] = ['0', '0', '1']
@@ -130,15 +140,16 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
         identifier = f'{PREFIX}{0x300 + len(new_triggers):03X}-G'
         new_triggers.append(trigger(identifier, name, team, side, building, **kwargs))
 
-    # The Allied bombard team lacks an active stock skirmish trigger. The Yuri
-    # ones require an enemy shipyard; bombard land bases independently of it.
-    for side, template, members, lab in (
-        (1, '0CAC330C-G', ('2,CARRIER', '2,DEST', '2,AEGIS'), 'GATECH'),
-        (2, '0EC2038C-G', ('2,DRED', '3,HYD', '2,SUB'), 'NATECH'),
-        (3, '06C5992C-G', ('3,BSUB',), 'NAPSIS'),
+    # Request bombardment only after the owner has a yard. Condition 1 is
+    # EnemyOwns, so using it with a tech building can reserve ships before
+    # the AI has any way to produce them.
+    for side, template, members, yard in (
+        (1, '0CAC330C-G', ('2,CARRIER', '2,DEST', '2,AEGIS'), 'GAYARD'),
+        (2, '0EC2038C-G', ('2,DRED', '3,HYD', '2,SUB'), 'NAYARD'),
+        (3, '06C5992C-G', ('3,BSUB',), 'YAYARD'),
     ):
         team = add_team(template, f'Brutal Navy Bombard {side}', members, NAVAL_SCRIPT)
-        add_trigger(f'Brutal Navy Bombard {side}', team, side, lab, weight=220)
+        add_trigger(f'Brutal Navy Bombard {side}', team, side, yard, weight=220)
 
     # Two airbases mean eight docks. Four-plane teams remain available while
     # expanding, but cannot keep starting and reserving pads after the second.
