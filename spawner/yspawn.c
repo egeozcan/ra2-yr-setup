@@ -172,6 +172,7 @@ static void ini_str(const char *sec, const char *key, const char *def, char *out
 
 /* ---- the replacement for the main menu ---- */
 static int started;
+static int human_in_peace, peace_ready;
 
 /* Start positions and teams go where the skirmish menu puts them; the game's own code then uses them:
  * ScenarioClass::AssignHouses (0x687F10) copies them into each house (HouseClass +0x16058 start,
@@ -202,6 +203,12 @@ static char GFASTCALL spawn_start(char unused)
         return 0;
     }
     started = 1;
+    if (human_in_peace && !peace_ready) {
+        logmsg("human in peace: required hooks unavailable; refusing to start");
+        MessageBoxA(NULL, "Human in peace could not be enabled for this game executable. See yspawn.log.",
+                    "Skirmish Setup", MB_OK | MB_ICONERROR);
+        return 0;
+    }
 
     char scenario[260], name[20];
     ini_str("Settings", "Scenario", "yspawn.map", scenario, sizeof scenario);
@@ -1007,6 +1014,7 @@ static void start_bases(void)
 }
 
 #include "oil-defenses.h"
+#include "human-peace.h"
 
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */
 
@@ -1028,6 +1036,9 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
     patch(AI_GANG_UP, (const BYTE[]){ 0xC3 }, 1);
     patch_magnetron();
     patch_oil_defenses();
+    human_in_peace = ini_int("Settings", "HumanInPeace", 0) != 0;
+    if (human_in_peace)
+        peace_ready = patch_human_peace();
     logmsg("patched");
     return TRUE;
 }

@@ -36,7 +36,8 @@ DIFFICULTIES = ["Hard", "Medium", "Easy"]          # yspawn.ini: 0 hard, 1 mediu
 TEAMS = ["None", "A", "B", "C", "D"]               # yspawn.ini Team: -1 none, 0..3 = A..D
 SPEEDS = ["Fastest", "Faster", "Fast", "Normal", "Slow", "Slower", "Slowest"]   # GameSpeed 0..6
 SWITCHES = [("Bases", "Start with a base (MCV)"), ("ShortGame", "Short game"),
-            ("Superweapons", "Superweapons"), ("Crates", "Crates"), ("MCVRedeploy", "MCV repacks"),
+            ("Superweapons", "Superweapons"), ("HumanInPeace", "Human in peace"),
+            ("Crates", "Crates"), ("MCVRedeploy", "MCV repacks"),
             ("BuildOffAlly", "Build off ally's base"), ("BridgeDestroy", "Destroyable bridges")]
 NUMBERS = [("Credits", "Starting credits", 1000, 100000, 1000),
            ("UnitCount", "Starting units", 0, 10, 1), ("TechLevel", "Tech level", 1, 10, 1)]
@@ -53,7 +54,7 @@ def default_settings():
     for key, _, lo, _, _ in NUMBERS:
         out[key] = s.getint(key, lo)
     for key, _ in SWITCHES:
-        out[key] = bool(s.getint(key, 1))
+        out[key] = bool(s.getint(key, 0 if key == "HumanInPeace" else 1))
     out["AI"] = [{"Country": ini[sec].getint("Country", 8), "Color": ini[sec].getint("Color", 1),
                   "Difficulty": ini[sec].getint("Difficulty", 2), "Start": ini[sec].getint("Start", RANDOM),
                   "Team": ini[sec].getint("Team", RANDOM)}
@@ -386,6 +387,8 @@ class Window(Adw.ApplicationWindow):
         g = Adw.PreferencesGroup(title="Rules")
         for key, title in SWITCHES:
             row = Adw.SwitchRow(title=title, active=self.s[key])
+            if key == "HumanInPeace":
+                row.set_subtitle("AI leaves you alone, including superweapons, on any team.")
             row.connect("notify::active", lambda r, _, k=key: self.set(k, r.get_active()))
             g.add(row)
             if key == "Bases":

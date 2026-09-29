@@ -405,7 +405,23 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
     start position (random or 1 to the map's player count), plus difficulty for opponents;
   - up to 7 opponents, but only as many as the map allows;
   - speed, starting base, credits, starting units and tech level;
-  - the rule switches: bases, short game, superweapons, crates, MCV repacks, build off ally, bridges.
+  - the rule switches: bases, short game, superweapons, human in peace, crates, MCV repacks, build off ally, bridges.
+- **Human in peace** (added 2026-09-29): under **Rules**, AI ignores your units and buildings regardless of
+  teams. Target selection, firing, entry destinations, capture and mind control exclude the human. Your
+  objects ignore damage, including collateral explosions, crushing, radiation and lightning; repairs still
+  work. AIs keep fighting other hostile AIs, and your commands and superweapons still work. AI superweapon
+  launches within 32 cells on either axis of a human object are suppressed to protect nearby bases from
+  splash damage and storm scatter. Delayed Psychic Dominator capture also skips human objects. With only
+  the human left as an opponent, AI superweapon targeting stops. Actual teams and alliances are unchanged.
+  The option defaults off, is saved with settings and presets, and writes `HumanInPeace=1` to the match INI.
+  Install the updated DLL with `python3 spawner/spawn.py install` while the game is closed. All 34 engine
+  guards must match the executable before any peace guard is installed; a mismatch refuses the match and
+  reports the problem in `yspawn.log`.
+  `spawner/test_human_peace.py` checks settings and executes the compiled 32-bit guards against the installed
+  executable in Unicorn. Engine checks need `unicorn`, `pefile`, `capstone` and a DLL compiled without `-s`
+  (use `-O2 -fno-inline` and output `spawner/yspawn-test.dll`, or set `PEACE_TEST_DLL` to its path).
+  Run `python3 -m unittest discover -s spawner -p test_human_peace.py -v`. This is engine emulation;
+  a full live match has not yet been verified with this option.
 - **Starting base** (added 2026-09-26): MCV, Tier 1, Tier 2 or Tier 3; see below. Anything but MCV turns the
   bases switch on and locks it.
 - **Random:** Random country or colour is picked when you press Start. Random colours never repeat a colour
