@@ -342,7 +342,8 @@ of the Grand Cannon (`GTGCAN`) with these changes:
     lacks `windowed=false`, so `install` copies the `[gamemd]` settings into it.
   - `apply-working.sh` restores the backed-up `ddraw.ini`, so run `install` again after using it.
 - `python3 spawner/spawn.py run [MAP]` starts a match with the settings in `spawner/yspawn.ini`: map, country,
-  colour, credits, speed and AI opponents. `MAP` is any `.mmx`/`.yro` file in the game directory. The launch
+  colour, credits, speed and AI opponents. `MAP` is a `.mmx`/`.yro` path relative to the game directory,
+  including archives under `Maps/`. The launch
   uses the same gamescope, SteamLinuxRuntime_4 and Proton path as Steam, and Steam must be running.
   When a match ends, the game exits instead of showing the menu.
 - `python3 spawner/spawn.py uninstall` removes `gamemd-spawn.exe`, `yspawn.dll/.ini/.map/.log`.
@@ -395,7 +396,7 @@ of the Grand Cannon (`GTGCAN`) with these changes:
 It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK bindings.
 - **Start it:** `/usr/bin/python3 spawner/skirmish.py`, or **Skirmish Setup** in the application menu.
   `--install-desktop` writes the menu entry, `~/.local/share/applications/ra2yr-skirmish-setup.desktop`.
-- **Maps:** a searchable list of every map in the game directory, with its in-game name, player count and
+- **Maps:** a searchable list of archives in the game directory and its `Maps/` subfolders, with their in-game name, player count and
   preview picture. The names come from the game's string table and the pictures from the map's `[PreviewPack]`
   (decoded by `spawner/mappreview.py`). The start positions are drawn over the preview as numbered circles.
   A position someone has chosen is filled with that player's colour.
@@ -780,3 +781,31 @@ airborne and given extra health so it survived the existing defenses, prompted
 ordinary production and placement of a Flak Cannon beside the Soviet oil. The
 test matches were closed and the previous game-directory launcher configuration
 and log restored; only the updated DLL is retained from these tests.
+
+## Multiplayer map pack (2026-09-29)
+
+Installed 2,845 multiplayer maps from `Red Alert 2 maps pack 2024.rar`, skipping
+campaigns, duplicate maps, missing terrain and invalid multiplayer starts.
+The maps are new `.yro` archives under `<GAME>/Maps/2024/`; no stock game files,
+mod files or global strings were replaced. In Skirmish Setup, search for `2024`.
+Its Battle filter shows the 2,820 added maps that declare `standard` mode.
+
+Keep large packs out of the game root. Initially placing all archives there
+caused a black screen during startup: the main thread spent its time in Wine's
+case-insensitive directory lookup before reaching the skirmish routine. Moving
+only the new archives into `Maps/2024/` resolved this. The launcher now discovers
+archives under `Maps/`, then extracts just the selected scenario into `yspawn.map`.
+Old saved selections and presets resolve to the moved files automatically.
+Close and reopen an already-running Skirmish Setup after this launcher update.
+These subfolder maps are selected through Skirmish Setup, rather than Steam's
+built-in skirmish menu.
+
+Live checks reached gameplay on `admin` with the user's eight-player settings
+and on `Acid Rain` with two players. Both test games were closed afterward,
+and the user's game configuration was restored byte-for-byte. Original game
+and mod file hashes remain unchanged. Five launcher regression checks passed:
+`cd spawner && /usr/bin/python3 -W ignore::ResourceWarning -m unittest test_maps test_human_peace.SettingsTests -v`.
+Local evidence is in `logs/maps-black-screen/`; the installation manifest is
+`logs/maps-pack-2024/installed.json` (its filenames describe the original root
+installation; the current location adds `Maps/2024/`). Some source maps have
+unreadable previews, which the existing UI handles by showing no thumbnail.

@@ -66,6 +66,7 @@ def normalize(saved):
     """Settings as the window expects them: defaults filled in, and a copy so nothing is shared with `saved`."""
     s = default_settings()
     s.update(json.loads(json.dumps(saved)))
+    s["Map"] = spawn.resolve_map(s["Map"])
     for p in [s] + s["AI"]:   # settings saved before start positions and teams existed
         p.setdefault("Start", RANDOM)
         p.setdefault("Team", RANDOM)

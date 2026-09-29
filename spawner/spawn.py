@@ -86,9 +86,20 @@ def _ini_sections(text):
     return out
 
 
+def resolve_map(archive):
+    """Keep saved selections working after the 2024 pack moved out of the game root."""
+    if os.path.isfile(os.path.join(GAME, archive)):
+        return archive
+    relocated = os.path.join("Maps", "2024", archive)
+    if archive == os.path.basename(archive) and os.path.isfile(os.path.join(GAME, relocated)):
+        return relocated
+    return archive
+
+
 def map_info(archive):
     """Read the .pkt packet inside a .mmx/.yro archive. The map inside is named by the packet
     ([MultiMaps] 1=AMAZON01 in amazon.mmx), not always after the archive."""
+    archive = resolve_map(archive)
     data = open(os.path.join(GAME, archive), "rb").read()
     base = os.path.splitext(os.path.basename(archive))[0]
     info = {"file": archive, "map": base, "label": "", "min": 2, "max": 8, "modes": ["standard"], "data": data}
@@ -120,20 +131,27 @@ def strings():
 
 
 def list_maps():
-    """Every skirmish map in the game directory, with its display name, sorted by name."""
+    """Skirmish archives in the game root and Maps subfolders, sorted by display name.
+
+    Large packs belong under Maps: the engine eagerly scans root archives at startup.
+    prepare() extracts just the selected map to yspawn.map before launching.
+    """
     try:
         names = strings()
     except Exception:
         names = {}
     maps = []
-    for f in sorted(os.listdir(GAME), key=str.lower):
+    files = os.listdir(GAME)
+    for directory, _, children in os.walk(os.path.join(GAME, "Maps")):
+        files.extend(os.path.relpath(os.path.join(directory, f), GAME) for f in children)
+    for f in sorted(files, key=str.lower):
         if os.path.splitext(f)[1].lower() in (".mmx", ".yro"):
             try:
                 info = map_info(f)
             except Exception:
                 continue
             del info["data"]
-            info["name"] = names.get(info["label"].lower()) or os.path.splitext(f)[0]
+            info["name"] = names.get(info["label"].lower()) or os.path.splitext(os.path.basename(f))[0]
             maps.append(info)
     return sorted(maps, key=lambda m: m["name"].lower())
 
