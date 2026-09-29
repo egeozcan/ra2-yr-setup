@@ -400,6 +400,9 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   preview picture. The names come from the game's string table and the pictures from the map's `[PreviewPack]`
   (decoded by `spawner/mappreview.py`). The start positions are drawn over the preview as numbered circles.
   A position someone has chosen is filled with that player's colour.
+  Search by name (or archive filename) and use **Max players** to show maps with a specific capacity, from 2 to 8;
+  **Any** shows all capacities. The filters work together, and **Random map** chooses from the matching maps
+  that fit your current players. Loading a preset clears both filters so its map is visible.
 - **Settings:**
   - your name;
   - a players table, with a row for you and one per opponent. Each row has country, colour, team (none or A–D) and

@@ -245,9 +245,16 @@ class Window(Adw.ApplicationWindow):
         self.steam_banner = Adw.Banner(title="Steam is not running. The game needs it; start Steam first.")
 
         # sidebar: map list
-        self.search = Gtk.SearchEntry(placeholder_text="Search maps", margin_start=12, margin_end=12,
+        self.search = Gtk.SearchEntry(placeholder_text="Search by name", margin_start=12, margin_end=12,
                                       margin_top=6, margin_bottom=6)
         self.search.connect("search-changed", lambda *_: self.map_list.invalidate_filter())
+        self.player_count = dropdown(choice_model(["Any"] + [str(n) for n in range(2, 9)], False), 0,
+                                     lambda _: self.map_list.invalidate_filter())
+        self.player_count.set_tooltip_text("Filter by maximum player count")
+        player_filter = Gtk.Box(spacing=12, margin_start=12, margin_end=12, margin_bottom=6)
+        player_filter.append(Gtk.Label(label="Ma_x players", use_underline=True, xalign=0, hexpand=True,
+                                       mnemonic_widget=self.player_count))
+        player_filter.append(self.player_count)
         self.map_list = Gtk.ListBox(css_classes=["navigation-sidebar"])
         self.map_list.set_filter_func(self.map_visible)
         self.map_list.connect("row-selected", self.on_map_selected)
@@ -257,6 +264,7 @@ class Window(Adw.ApplicationWindow):
         random_map.connect("clicked", self.on_random_map)
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar.append(self.search)
+        sidebar.append(player_filter)
         sidebar.append(side_scroll)
         sidebar.append(random_map)
 
@@ -458,8 +466,10 @@ class Window(Adw.ApplicationWindow):
         self.map_list.get_selected_row().grab_focus()
 
     def map_visible(self, row):
-        m, text = row.map, self.search.get_text().lower()
-        return "standard" in m["modes"] and (not text or text in m["name"].lower() or text in m["file"].lower())
+        m, text = row.map, self.search.get_text().strip().casefold()
+        count = self.player_count.get_selected()
+        return ("standard" in m["modes"] and (count == 0 or m["max"] == count + 1)
+                and (not text or text in m["name"].casefold() or text in m["file"].casefold()))
 
     def select_map(self, file):
         for row in self.map_rows:
@@ -620,6 +630,7 @@ class Window(Adw.ApplicationWindow):
             self.s["Map"] = self.map_list.get_selected_row().map["file"]
         self.build_settings_groups()
         if self.maps:   # otherwise fill_maps selects self.s["Map"] when the maps arrive
+            self.player_count.set_selected(0)
             self.search.set_text("")
             row = next(r for r in self.map_rows if r.map["file"] == self.s["Map"])
             if row is self.map_list.get_selected_row():
