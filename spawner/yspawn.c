@@ -1006,6 +1006,8 @@ static void start_bases(void)
     }
 }
 
+#include "oil-defenses.h"
+
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
@@ -1025,6 +1027,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
      * allied against you. Returning at once makes "no team" mean everyone for themselves. */
     patch(AI_GANG_UP, (const BYTE[]){ 0xC3 }, 1);
     patch_magnetron();
+    patch_oil_defenses();
     logmsg("patched");
     return TRUE;
 }

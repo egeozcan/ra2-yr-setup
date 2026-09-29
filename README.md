@@ -657,3 +657,110 @@ AI production and assaults have not yet been observed in a live match; use a new
 The mixed composition replaces the earlier bulldozer-only team under the same AI IDs.
 Rhinos and bulldozers are recruited into the same task force and share its assault script.
 This is a shared team order, not custom per-unit targeting or an escort-distance guarantee.
+
+## Brutal AI: oil derrick capture and defense (2026-09-29)
+
+The mod installer now adds oil-focused teams for all three factions on **Brutal**
+only. The stock oil teams, other AI teams, and lower difficulties are preserved.
+Changes live in `mod/oil_ai.py` and are appended to `aimd.ini` by
+`mod/build-tesla-mod.py`; a normal mod reinstall retains them.
+
+- **Capture:** an additional engineer team with up to two active instances per
+  AI house. Neutral oil has initial trigger weight 350 and minimum 150, compared
+  with the stock oil trigger's initial/maximum 70. A separate weight-180 trigger
+  requests the same team when an enemy owns oil, sharing that two-team limit.
+  Engineers target the nearest neutral/enemy derrick. They require only a barracks,
+  avoid threats, and have no general attack fallback.
+- **Hold:** owning at least one derrick requests one infantry guard team. Its
+  script moves to the nearest friendly derrick, area-guards for 30 script time
+  units, then repeats. Members cannot be recruited away by other AI teams.
+- **Patrol:** owning oil also requests one vehicle team once a war factory can
+  supply it. It alternates between the nearest and farthest friendly derricks,
+  area-guarding at each stop. With one derrick, both destinations are the same.
+
+| Faction | Infantry guard | Vehicle patrol |
+|---|---|---|
+| Allied | 3 GIs + 2 Guardian GIs | 2 Grizzlies + 2 IFVs |
+| Soviet | 4 Conscripts + 2 Tesla Troopers | 2 Rhinos + 2 Flak Tracks |
+| Yuri | 4 Initiates + 2 Brutes | 2 Lasher Tanks + 2 Gatling Tanks |
+
+Capture and defense use separate teams: armed units in an engineer's action-46
+capture script would fire on the derrick. Guards use action 58 to move to friendly
+buildings, followed by the same area-guard/loop actions used in stock refinery
+patrols. They are ordinary AI teams, so the stock base-defense quota does not
+exclude them. Friendly destinations may include an ally's derricks; the production
+condition specifically requires the AI house to own oil.
+
+The vanilla trigger condition IDs and easy/normal/hard field order are verified
+against [YRpp's engine definitions](https://github.com/Phobos-developers/YRpp/blob/master/GeneralDefinitions.h)
+and [trigger serialization](https://github.com/Phobos-developers/YRpp/blob/master/AITriggerTypeClass.h).
+Script building arguments use the zero-based BuildingTypes array index: stock
+CAOILD is entry 72, index 71. Tests check this against the actual installed archives.
+
+Validation: `python3 -m unittest discover -s mod -p 'test_*.py' -v` passes all 11
+offline integration checks, including stock preservation, Brutal restrictions,
+ownership conditions, faction buildability, registrations, script references and
+CRLF output. Only `aimd.ini` was installed, with its previous copy backed up under
+`backups/oil-ai-*/aimd.ini`. To roll back, close the game and restore that copy;
+the installer source must also be reverted to keep a later reinstall from reapplying it.
+
+Start a **new skirmish** to load the change. Live capture timing, defense response,
+and balance have not been measured. Vanilla land pathfinding still limits access
+to derricks on isolated islands; this update does not add engineer transports or
+guarantee a separate garrison at every derrick.
+
+### Defensive buildings at threatened oil (2026-09-29)
+
+The **custom skirmish launcher** additionally lets Brutal AI fortify owned oil
+derricks when armed enemies are within 12 cells. This is engine code in
+`spawner/oil-defenses.h`, loaded by `yspawn.dll`; a normal Steam launch gets the
+INI capture/guard teams above, but does not get this building-placement extension.
+
+| Faction | First ground defense | Further ground defense, if buildable | Anti-air |
+|---|---|---|---|
+| Allied | Pillbox | Prism Tower | Patriot Missile |
+| Soviet | Sentry Gun | Tesla Coil | Flak Cannon |
+| Yuri | Gatling Cannon | Psychic Tower | Gatling Cannon |
+
+- Requests require a working AI base with a Construction Yard and ore refinery.
+  They apply only to Brutal computer players in skirmish, and only to their own
+  derricks. Neutral, enemy and allied oil does not become their construction site.
+- The AI selects the threatened derrick with the greatest nearby enemy pressure.
+  It requests up to two ground defenses and an anti-air defense when aircraft
+  approach. A Gatling Cannon counts for both roles. The cap is **three defensive
+  buildings within six cells per derrick** for these requests, counting existing
+  stock defenses too. Ordinary base construction can add further buildings.
+- Existing construction orders finish first. Additional requests are spaced at
+  least 450 game frames apart, require the normal prerequisites and enough power,
+  and leave at least 1500 cash after the stock building cost. The ordinary factory
+  produces the building with its normal cost and build time; no buildings are
+  granted for free.
+- Buildings go on valid terrain two to five cells from the oil, within the
+  six-cell coverage radius, with a clear cell beside the derrick's foundation.
+  Owned oil anchors this AI placement even outside the main base's build radius.
+  If ownership changes or the space becomes blocked during production, the
+  completed defense falls back to normal base placement.
+- Destroyed defenses can be replaced while enemies remain nearby. Quiet derricks
+  do not request new fortifications. The production and placement hooks check the
+  expected stock 1.001 machine instructions before applying together.
+
+Update or reinstall with `python3 spawner/spawn.py install` while the game is
+closed. Start a new match from Skirmish Setup to load the updated DLL.
+The previous DLL and game-directory test configuration are backed up in
+`backups/oil-defenses-*/`; restoring that DLL with the game closed rolls back this
+extension without removing the INI capture/guard teams.
+
+Validation: `python3 -m unittest discover -s spawner -p 'test_*.py' -v` checks the
+native decision code's difficulty exclusions, threat response, defense limits,
+budget/power checks and distance boundaries, and verifies hook instruction
+boundaries against the installed executable. The DLL compiles without warnings.
+A controlled live match confirmed ordinary AI production and placement of both
+ground defense types for all three factions; live object inspection confirmed
+their ownership, positions and the game's AI-built flag. Evidence is saved in
+`logs/oil-defenses-research/` (local, not committed).
+Further live checks confirmed no extension requests for a quiet Brutal derrick
+or threatened Normal/Easy derricks. A sleeping Kirov test fixture, explicitly set
+airborne and given extra health so it survived the existing defenses, prompted
+ordinary production and placement of a Flak Cannon beside the Soviet oil. The
+test matches were closed and the previous game-directory launcher configuration
+and log restored; only the updated DLL is retained from these tests.

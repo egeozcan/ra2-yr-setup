@@ -9,7 +9,7 @@ Loose files in the game directory override the copies packed in the MIX archives
   rulesmd.ini  - stock rules (expandmd01.mix) + the unit, its weapons and warhead
   artmd.ini    - stock art (ra2md.mix/localmd.mix) + the unit's art entry
   ra2md.csf    - stock strings (langmd.mix) + its name "Liberator"
-  aimd.ini     - stock AI (ra2md.mix/localmd.mix) + a team so Allied AI builds and attacks with it
+  aimd.ini     - stock AI + Liberator/Bulldozer teams and Brutal oil capture/defense
   attnk*.vxl/.hva, attkicon.shp - model and cameo from mod/assets (made by make_graphics.py)
   ggchdf.shp, g?chdfmk.shp, chdfglow.shp, chdftur.vxl/.hva, chdficon.shp - Cheat Defense art
                  from mod/assets (made by cheatdef_art.py)
@@ -18,7 +18,7 @@ Only Yuri's Revenge reads these *md files; base Red Alert 2 is unaffected.
 import os, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import csf, mixextract, bulldozer
+import csf, mixextract, bulldozer, oil_ai
 
 GAME = "/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
 ASSETS = ["attnk.vxl", "attnk.hva", "attnktur.vxl", "attnktur.hva", "attkicon.shp"]
@@ -321,7 +321,53 @@ def patch_ai(text):
     lines.insert(last + 1, bulldozer.AI_TRIGGER_LINE)
     lines += [f"[{bulldozer.AI_TASKFORCE}]", "Name=2 Bulldozers + 4 Rhinos",
               f"0=2,{bulldozer.UNIT_ID}", "1=4,HTNK", "Group=-1", ""] + dozer_team + ["", ""]
+    add_oil_ai(lines)
     return "\r\n".join(lines)
+
+
+def add_oil_ai(lines):
+    """Append Brutal-only oil teams without editing any stock trigger or team."""
+    if any('0F1BC' in line.split(';')[0] for line in lines):
+        raise SystemExit('Oil AI IDs already present')
+    for script_id, (name, actions) in oil_ai.SCRIPTS.items():
+        append_to_list(lines, 'ScriptTypes', script_id)
+        lines += [f'[{script_id}]', f'Name={name}']
+        lines += [f'{i}={action}' for i, action in enumerate(actions)] + ['']
+
+    for side, faction, template, engineer, infantry, vehicles in oil_ai.FACTIONS:
+        roles = (
+            ('Capture', (f'1,{engineer}',), oil_ai.CAPTURE_SCRIPT, '2'),
+            ('Infantry Guard', infantry, oil_ai.NEAR_GUARD_SCRIPT, '1'),
+            ('Vehicle Patrol', vehicles, oil_ai.PATROL_SCRIPT, '1'),
+        )
+        for role, (label, members, script, limit) in enumerate(roles):
+            taskforce_id, team_id = oil_ai.ids(side, role)
+            name = f'Brutal {faction} Oil {label}'
+            team = clone_section(lines, template, team_id, {
+                'Name': name, 'TaskForce': taskforce_id, 'Script': script,
+                'House': '<none>', 'Max': limit, 'Priority': '60',
+                'Autocreate': 'yes', 'Full': 'no', 'Reinforce': 'no',
+                'Suicide': 'no', 'Aggressive': 'no' if role == 0 else 'yes',
+                'AvoidThreats': 'yes' if role == 0 else 'no',
+                'AreTeamMembersRecruitable': 'no', 'LooseRecruit': 'no',
+                'IsBaseDefense': 'no', 'OnlyTargetHouseEnemy': 'no',
+            })
+            append_to_list(lines, 'TaskForces', taskforce_id)
+            append_to_list(lines, 'TeamTypes', team_id)
+            lines += [f'[{taskforce_id}]', f'Name={name}']
+            lines += [f'{i}={member}' for i, member in enumerate(members)]
+            lines += ['Group=-1', ''] + team + ['', '']
+
+        capture, guard, patrol = (oil_ai.ids(side, role)[1] for role in range(3))
+        triggers = [
+            oil_ai.trigger(side, 0, f'Brutal {faction} Neutral Oil', capture, 7, (350, 150, 500)),
+            oil_ai.trigger(side, 1, f'Brutal {faction} Reclaim Oil', capture, 1, (180, 80, 300)),
+            oil_ai.trigger(side, 2, f'Brutal {faction} Hold Oil', guard, 0, (240, 100, 350)),
+            oil_ai.trigger(side, 3, f'Brutal {faction} Patrol Oil', patrol, 0, (200, 100, 300)),
+        ]
+        s, e = section_lines(lines, 'AITriggerTypes')
+        last = max(i for i in range(s + 1, e) if '=' in lines[i].split(';')[0])
+        lines[last + 1:last + 1] = triggers
 
 
 def build(out_dir):
