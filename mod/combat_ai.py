@@ -12,6 +12,9 @@ SIEGE_SCRIPT = '0F1BF002-G'
 NAVAL_SCRIPT = '0F1BF003-G'
 AIR_SCRIPT = '0F1BF004-G'
 NAVAL_HUNT_SCRIPT = '0F1BF005-G'
+COUNTER_ARMOR_SCRIPT = '0F1BF006-G'
+COUNTER_AIR_SCRIPT = '0F1BF007-G'
+COUNTER_INFANTRY_SCRIPT = '0F1BF008-G'
 SCRIPTS = {
     # Vanilla action 0 keeps pursuing its quarry until none remain. Put the
     # intended primary target first; later actions are fallbacks, not a loop.
@@ -20,6 +23,36 @@ SCRIPTS = {
     NAVAL_SCRIPT: ('Brutal Shore Bombardment', ('0,2', '49,0', '0,1')),
     AIR_SCRIPT: ('Brutal Building Air Strike', ('0,2', '49,0', '0,1')),
     NAVAL_HUNT_SCRIPT: ('Brutal Naval Hunters', ('0,6', '49,0', '0,1')),
+    COUNTER_ARMOR_SCRIPT: ('Brutal Armor Counter', ('54,0', '0,5', '49,0', '0,2')),
+    COUNTER_AIR_SCRIPT: ('Brutal Air Counter Guard', ('54,0', '11,11')),
+    COUNTER_INFANTRY_SCRIPT: ('Brutal Infantry Counter', ('54,0', '0,4', '49,0', '0,2')),
+}
+
+# Each enemy-own condition measures one type, so related types share a Max=1
+# counter team. This prevents several sightings from reserving duplicate teams.
+COUNTER_THREATS = {
+    'armor': (('MTNK', 5), ('HTNK', 5), ('LTNK', 5), ('APOC', 2),
+              ('BFRT', 2), ('MIND', 2), ('ROBO', 4), ('TELE', 4)),
+    'air': (('ORCA', 3), ('BEAG', 3), ('ZEP', 1), ('DISK', 2), ('JUMPJET', 6)),
+    'infantry': (('E1', 8), ('E2', 8), ('INIT', 8), ('GGI', 6),
+                 ('SHK', 5), ('BRUTE', 5), ('FLAKT', 8)),
+}
+COUNTER_TEAMS = {
+    1: ('0CABE7DC-G', {
+        'armor': (('6,MTNK', '4,GGI'), COUNTER_ARMOR_SCRIPT),
+        'air': (('6,FV',), COUNTER_AIR_SCRIPT),
+        'infantry': (('4,MTNK', '4,FV'), COUNTER_INFANTRY_SCRIPT),
+    }),
+    2: ('0CA1D38C-G', {
+        'armor': (('6,HTNK', '4,SHK'), COUNTER_ARMOR_SCRIPT),
+        'air': (('6,HTK',), COUNTER_AIR_SCRIPT),
+        'infantry': (('4,HTNK', '4,HTK'), COUNTER_INFANTRY_SCRIPT),
+    }),
+    3: ('05FFBD7C-G', {
+        'armor': (('6,LTNK', '4,BRUTE'), COUNTER_ARMOR_SCRIPT),
+        'air': (('6,YTNK',), COUNTER_AIR_SCRIPT),
+        'infantry': (('4,LTNK', '4,YTNK'), COUNTER_INFANTRY_SCRIPT),
+    }),
 }
 
 # stock template: (composition, script). No missiles/spawned aircraft in forces.
@@ -70,16 +103,23 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
     """Register stronger variants and reroute only the Brutal trigger fields."""
     if any(PREFIX in line.split(';')[0] for line in lines):
         raise SystemExit('Combat AI IDs already present')
-    for identifier, (name, actions) in SCRIPTS.items():
+    def add_script(identifier):
+        name, actions = SCRIPTS[identifier]
         append_to_list(lines, 'ScriptTypes', identifier)
         lines.extend([f'[{identifier}]', f'Name={name}'])
         lines.extend(f'{i}={action}' for i, action in enumerate(actions))
         lines.append('')
 
+    counter_scripts = (COUNTER_ARMOR_SCRIPT, COUNTER_AIR_SCRIPT, COUNTER_INFANTRY_SCRIPT)
+    for identifier in SCRIPTS:
+        if identifier not in counter_scripts:
+            add_script(identifier)
+
     serial = 0
     new_triggers = []
 
-    def add_team(template, name, members, script, limit='1', capture=False):
+    def add_team(template, name, members, script, limit='1', capture=False,
+                 counter=False, defense=False):
         nonlocal serial
         force_id = f'{PREFIX}{0x100 + serial:03X}-G'
         team_id = f'{PREFIX}{0x200 + serial:03X}-G'
@@ -88,9 +128,11 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
         append_to_list(lines, 'TeamTypes', team_id)
         body = clone_section(lines, template, team_id, {
             'Name': name, 'TaskForce': force_id, 'Script': script, 'House': '<none>',
-            'Max': limit, 'Priority': '60' if capture else '20', 'Autocreate': 'yes',
+            'Max': limit, 'Priority': '60' if capture else '40' if counter else '20',
+            'Autocreate': 'yes',
             'Recruiter': 'no', 'AreTeamMembersRecruitable': 'no', 'LooseRecruit': 'no',
-            'Full': 'no', 'Reinforce': 'no', 'Suicide': 'no', 'IsBaseDefense': 'no',
+            'Full': 'no', 'Reinforce': 'no', 'Suicide': 'no',
+            'IsBaseDefense': 'yes' if defense else 'no',
             'Aggressive': 'no' if capture else 'yes',
             'AvoidThreats': 'yes' if capture else 'no',
         })
@@ -182,6 +224,18 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
                             (f'1,{engineer}',), script, capture=True)
             add_trigger(f'Brutal {side} Capture {building}', team, side, building,
                         condition=7, weight=120)
+
+    # Counters activate only when the current enemy fields a sizeable force.
+    # Reuse the same team for each threat in a role; Max=1 bounds production.
+    for script in counter_scripts:
+        add_script(script)
+    for side, (template, roles) in COUNTER_TEAMS.items():
+        for role, (members, script) in roles.items():
+            team = add_team(template, f'Brutal {side} Counter {role}', members,
+                            script, counter=True, defense=role == 'air')
+            for enemy, minimum in COUNTER_THREATS[role]:
+                add_trigger(f'Brutal {side} Counter {role} vs {enemy}', team,
+                            side, enemy, condition=1, count=minimum, weight=180)
 
     s, e = section_lines(lines, 'AITriggerTypes')
     last = max(i for i in range(s + 1, e) if '=' in lines[i].split(';')[0])

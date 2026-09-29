@@ -15,27 +15,25 @@ HERE = Path(__file__).resolve().parent
 
 
 class PolicyTests(unittest.TestCase):
-    def test_expansion_budget_timing_limits_and_variety(self):
+    def test_expansion_follows_backlog_and_preserves_budget_limits(self):
         source = r'''
         #include <assert.h>
         #include "combat-ai-policy.h"
         int main(void) {
-            assert(combat_expand(2700, 10, 2, 8000, 100, 2000, 50, 1, 1));
-            assert(!combat_expand(2699, 10, 2, 8000, 100, 2000, 50, 1, 1));
-            assert(!combat_expand(2700, 9, 2, 8000, 100, 2000, 50, 1, 1));
-            assert(!combat_expand(2700, 10, 1, 8000, 100, 2000, 50, 1, 1));
-            assert(!combat_expand(2700, 10, 2, 7999, 100, 2000, 50, 1, 1));
-            assert(!combat_expand(2700, 10, 2, 8000, 99, 2000, 50, 1, 1));
-            assert(!combat_expand(2700, 10, 2, 8000, 100, 2000, 50, 2, 1));
-            assert(!combat_expand(2700, 10, 2, 8000, 100, 2000, 50, 0, 1));
-            assert(!combat_expand(2700, 10, 2, 8000, 100, 2000, 50, 1, 0));
-            unsigned seen = 0;
-            for (unsigned seed = 1; seed <= 100; seed++) {
-                unsigned choice = combat_choices(seed, 1);
-                assert(choice == combat_choices(seed, 1));
-                seen |= 1u << choice;
-            }
-            assert(seen == 15); // none, factory, airport, both all occur
+            assert(!combat_need_factory(7));
+            assert(combat_need_factory(8));
+            assert(!combat_need_airbase(0, 4));
+            assert(combat_need_airbase(4, 0));
+            assert(combat_need_airbase(1, 4));
+            assert(combat_expand(1800, 8, 2, 6500, 100, 2000, 50, 1, 1));
+            assert(!combat_expand(1799, 8, 2, 6500, 100, 2000, 50, 1, 1));
+            assert(!combat_expand(1800, 7, 2, 6500, 100, 2000, 50, 1, 1));
+            assert(!combat_expand(1800, 8, 1, 6500, 100, 2000, 50, 1, 1));
+            assert(!combat_expand(1800, 8, 2, 6499, 100, 2000, 50, 1, 1));
+            assert(!combat_expand(1800, 8, 2, 6500, 99, 2000, 50, 1, 1));
+            assert(!combat_expand(1800, 8, 2, 6500, 100, 2000, 50, 2, 1));
+            assert(!combat_expand(1800, 8, 2, 6500, 100, 2000, 50, 0, 1));
+            assert(!combat_expand(1800, 8, 2, 6500, 100, 2000, 50, 1, 0));
             assert(combat_siege_mission(1));
             assert(combat_siege_mission(2));
             assert(combat_siege_mission(15));
@@ -201,8 +199,6 @@ class EngineTests(unittest.TestCase):
         self.put(self.ai + 0x53A8, 300)
         self.put(self.ai + 0x2F0, 10)
         self.put(0xA8ED84, 3000)
-        # Choose both expansions; this deterministic value comes from policy.
-        self.put(0xA8ED94, 1)
         ids = ('GAYARD', 'GAWEAP', 'GAAIRC', 'AMRADR', 'GAPOWR')
         pointers = []
         for i, id in enumerate(ids):
@@ -229,6 +225,29 @@ class EngineTests(unittest.TestCase):
         self.put(self.symbols['_oil_build_original'], 0x31009020)
         return pointers, buildings
 
+    def demand_fixture(self, ground=0, planes=0, owned_planes=0):
+        mt, orca = 0x10170000, 0x10172000
+        for address, name in ((mt, 'MTNK'), (orca, 'ORCA')):
+            self.uc.mem_write(address + 0x24, name.encode() + b'\0')
+        self.vector(0xA83CE0, [mt], 0x10174000)
+        team, team_type, force = 0x10176000, 0x10178000, 0x1017A000
+        self.put(team + 0x2C, self.ai)
+        self.put(team + 0x24, team_type)
+        self.put(team_type + 0xE4, force)
+        self.put(force + 0x9C, 2)
+        for j, (type_ptr, count) in enumerate(((mt, ground), (orca, planes))):
+            self.put(force + 0xA4 + j*8, count)
+            self.put(force + 0xA8 + j*8, type_ptr)
+        self.vector(0x8B40E8, [team], 0x1017C000)
+        aircraft = []
+        for i in range(owned_planes):
+            plane = self.object(0x100E0000 + i*0x2000, self.ai)
+            self.uc.mem_write(plane + 0x74, b'\x01')
+            self.uc.mem_write(plane + 0x90, b'\x01')
+            self.put(plane + 0x6C4, orca)
+            aircraft.append(plane)
+        self.vector(0xA8E390, aircraft, 0x1017D000)
+
     def test_shipyard_request_uses_native_placement_and_real_production(self):
         pointers, _ = self.expansion_fixture()
         self.assertEqual(self.call(0x4FE3E0, this=self.ai, clean=0), 123)
@@ -250,16 +269,10 @@ class EngineTests(unittest.TestCase):
 
     def test_second_factory_and_airbase_use_normal_queue_and_stop_at_two(self):
         pointers, buildings = self.expansion_fixture()
-        # Find a seed choosing both, with the same defined unsigned arithmetic.
-        for seed in range(1, 100):
-            n = seed ^ (2 * 0x9E3779B9 & 0xFFFFFFFF)
-            n ^= n >> 16
-            n = n * 0x85EBCA6B & 0xFFFFFFFF
-            n ^= n >> 13
-            if n & 3 == 3:
-                self.put(0xA8ED94, seed)
-                break
+        self.demand_fixture(ground=10)
         for frame, owned_type, expected_index in ((3000, 0, 1), (4000, 1, 2), (5000, 2, None)):
+            if owned_type == 1:
+                self.demand_fixture(ground=10, owned_planes=4)
             b = self.object(0x100A0000 + len(buildings) * 0x2000, self.ai)
             self.uc.mem_write(b + 0x74, b'\x01')
             self.uc.mem_write(b + 0x90, b'\x01')
@@ -271,6 +284,21 @@ class EngineTests(unittest.TestCase):
             self.call(0x4FE3E0, this=self.ai)
             self.assertEqual(self.get(self.ai + 0x564C),
                              0xFFFFFFFF if expected_index is None else expected_index)
+
+    def test_extra_factory_waits_for_unfilled_vehicle_team(self):
+        pointers, buildings = self.expansion_fixture()
+        b = self.object(0x100A0000, self.ai)
+        self.uc.mem_write(b + 0x74, b'\x01')
+        self.uc.mem_write(b + 0x90, b'\x01')
+        self.put(b + 0x520, pointers[0])
+        buildings.append(b)
+        self.vector(0xA8EB40, buildings, 0x10161000)
+        for frame, backlog, expected in ((3000, 0, None), (4000, 7, None), (5000, 8, 1)):
+            self.demand_fixture(ground=backlog)
+            self.put(0xA8ED84, frame)
+            self.call(0x4FE3E0, this=self.ai)
+            self.assertEqual(self.get(self.ai + 0x564C),
+                             0xFFFFFFFF if expected is None else expected)
 
 
 if __name__ == '__main__':

@@ -117,6 +117,39 @@ class CombatAITests(unittest.TestCase):
             self.assertEqual((count, op), (1, 2) if units[unit] == 4 else (2, 3))
             self.assertLessEqual(units[unit], count * int(self.rules[fields[5]]['NumberOfDocks']))
 
+    def test_counters_follow_enemy_force_and_share_one_team_per_role(self):
+        threats = combat_ai.COUNTER_THREATS
+        all_units = (set(self.rules['VehicleTypes'].values())
+                     | set(self.rules['InfantryTypes'].values())
+                     | set(self.rules['AircraftTypes'].values()))
+        expected_count = sum(len(threats[role]) for _, roles in combat_ai.COUNTER_TEAMS.values()
+                             for role in roles)
+        counters = [f for f in self.new.values() if ' Counter ' in f[0]]
+        self.assertEqual(len(counters), expected_count)
+        for side, (_, roles) in combat_ai.COUNTER_TEAMS.items():
+            for role, (members, script_id) in roles.items():
+                matching = [f for f in counters
+                            if f[0].startswith(f'Brutal {side} Counter {role} vs ')]
+                self.assertEqual(len(matching), len(threats[role]))
+                self.assertEqual({f[5] for f in matching}, {u for u, _ in threats[role]})
+                self.assertEqual(len({f[1] for f in matching}), 1)
+                team = self.ai[matching[0][1]]
+                self.assertEqual(team['Script'], script_id)
+                self.assertEqual(team['Max'], '1')
+                self.assertEqual(team['Priority'], '40')
+                self.assertEqual(team['IsBaseDefense'], 'yes' if role == 'air' else 'no')
+                self.assertEqual(self.members(matching[0][1]),
+                                 {u: int(n) for n, u in (x.split(',') for x in members)})
+                for unit in self.members(matching[0][1]):
+                    self.assertIn(unit, all_units)
+                    self.assertGreaterEqual(int(self.rules[unit]['TechLevel']), 0)
+                for fields in matching:
+                    self.assertEqual(fields[4], '1')  # EnemyOwns
+                    self.assertEqual(fields[12], str(side))
+                    count, operator = struct.unpack('<ii', bytes.fromhex(fields[6])[:8])
+                    self.assertEqual((count, operator), (dict(threats[role])[fields[5]], 3))
+        self.assertEqual(self.ai[combat_ai.COUNTER_AIR_SCRIPT]['1'], '11,11')
+
     def test_tech_captures_use_correct_indices_and_unarmed_teams(self):
         captures = [f for f in self.new.values() if ' Capture ' in f[0]]
         self.assertEqual(len(captures), 15)

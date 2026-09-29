@@ -849,11 +849,20 @@ is needed. `spawner/combat-ai.h` adds the engine behavior to the custom launcher
   airports, hospitals, outposts, machine shops and power plants. Each type has one
   team slot; scripts target the nearest building of the correct type. Engineers
   avoid threats; existing oil guards and fortifications remain.
-- **Production and air strikes:** each match independently chooses approximately
-  half of Brutal houses for a second war factory, and half of Allied houses for a
-  second airbase. Requests begin after frame 2700, ten buildings and two refineries,
-  with at least $8000 cash and sufficient spare power. Normal construction pays
-  for and places the building, and requests stop at two. Four-aircraft building
+- **Counters:** Brutal AI checks the current enemy's unit counts and requests
+  one counter team per role when it sees a sizeable armor, aircraft or infantry
+  force. Allied, Soviet and Yuri counters use their own buildable units. Armor
+  counters hunt vehicles; infantry counters hunt infantry; anti-air teams guard
+  the AI's base. Multiple enemy unit types can activate each role, but the shared
+  team limit prevents duplicate counter teams. These triggers also work in
+  ordinary Steam skirmishes.
+- **Production and air strikes:** the custom launcher requests a second war
+  factory when active teams are missing at least eight ground vehicles. It
+  requests a second Allied airbase when four strike planes are already owned or
+  the owned-plus-pending total exceeds one base's four docks. Requests begin
+  after frame 1800, eight buildings and two refineries, with at least $6500 cash,
+  $3000 left after the building cost and sufficient spare power. Normal
+  construction pays for and places the building; requests stop at two. Four-aircraft building
   strikes require exactly one airbase; eight-aircraft strikes require at least two
   (eight docks) **owned by the AI**. Korea uses Black Eagles; Americans use their own airbase type.
   Existing aircraft may need to finish their teams before an eight-plane team fills.
@@ -902,10 +911,10 @@ python3 mod/build-tesla-mod.py install
 python3 spawner/spawn.py install
 ```
 
-Validation: 17 mod integration tests and 25 launcher tests pass. The new engine
+Validation: 19 mod integration tests and 26 launcher tests pass. The engine
 checks execute the compiled 32-bit unit-AI wrapper and building-production hook in
 Unicorn, including range handling, difficulty exclusions, shipyard placement,
-cash limits, second-factory/airbase requests and the two-building cap. Existing
+cash limits, demand-driven second-factory/airbase requests and the two-building cap. Existing
 Magnetron, Human in peace, map and oil-defense checks also pass. For engine checks,
 compile `spawner/yspawn-test.dll` with `-O2 -fno-inline` and without `-s`, and use a
 Python environment with `unicorn`, `pefile`, `capstone` and system GTK bindings.

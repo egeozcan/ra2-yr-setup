@@ -1,21 +1,23 @@
 #ifndef COMBAT_AI_POLICY_H
 #define COMBAT_AI_POLICY_H
 
-/* Extra production is a per-match choice, independent of the game RNG stream. */
-static unsigned combat_choices(unsigned seed, unsigned house)
+/* Extra production follows queued units rather than a per-match coin flip. */
+static int combat_need_factory(int missing_vehicles)
 {
-    unsigned n = seed ^ ((house + 1u) * 0x9E3779B9u);
-    n ^= n >> 16;
-    n *= 0x85EBCA6Bu;
-    n ^= n >> 13;
-    return n & 3u; /* bit 0 war factory; bit 1 Allied airbase */
+    return missing_vehicles >= 8;
+}
+
+static int combat_need_airbase(int owned_planes, int missing_planes)
+{
+    /* One base has four docks. A single unbuilt four-plane team fits there. */
+    return owned_planes >= 4 || owned_planes + missing_planes > 4;
 }
 
 static int combat_expand(int frame, int buildings, int refineries, int cash,
-                          int power, int cost, int drain, int count, int selected)
+                          int power, int cost, int drain, int count, int needed)
 {
-    return selected && frame >= 2700 && buildings >= 10 && refineries >= 2
-        && count == 1 && cash >= 8000 && cash - cost >= 3000 && power >= drain + 50;
+    return needed && frame >= 1800 && buildings >= 8 && refineries >= 2
+        && count == 1 && cash >= 6500 && cash - cost >= 3000 && power >= drain + 50;
 }
 
 static int combat_siege_mission(int mission)
