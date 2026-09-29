@@ -218,7 +218,8 @@ static int GFASTCALL oil_build_update(BYTE *house, void *unused)
         CellXY at = object_cell(best_oil);
         logmsg("oil defense: house %d queued %s for oil at %d,%d", idx,
             (char *)best_type + T_ID, at.X, at.Y);
-    }
+    } else
+        combat_queue_expansion(house);
     return oil_build_original(house);
 }
 

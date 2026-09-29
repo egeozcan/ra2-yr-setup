@@ -630,10 +630,18 @@ static void carry_update(BYTE *unit)
         FIELD(loco, J_ISMOVING, char) = 0;
 }
 
+static void combat_siege_update(BYTE *unit);
+static int combat_siege_candidate(BYTE *unit);
+static int combat_unit_exists(BYTE *unit);
+
 static void GTHISCALL unit_ai(BYTE *self)
 {
     carry_update(self);
+    int siege_tick = (CURRENT_FRAME & 7) == 0 && combat_siege_candidate(self);
     ((void (GTHISCALL *)(BYTE *))UNIT_AI)(self);
+    /* Unit::AI can remove a dying object. Check membership before reading it. */
+    if (siege_tick && combat_unit_exists(self))
+        combat_siege_update(self);
 }
 
 /* The stock range check adds bonuses (elevation, ...) to Range, so the attack mission can fire at a cell that
@@ -1013,7 +1021,9 @@ static void start_bases(void)
     }
 }
 
+static void combat_queue_expansion(BYTE *house);
 #include "oil-defenses.h"
+#include "combat-ai.h"
 #include "human-peace.h"
 
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */

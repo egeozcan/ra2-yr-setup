@@ -681,12 +681,13 @@ This is a shared team order, not custom per-unit targeting or an escort-distance
 ## Brutal AI: oil derrick capture and defense (2026-09-29)
 
 The mod installer now adds oil-focused teams for all three factions on **Brutal**
-only. The stock oil teams, other AI teams, and lower difficulties are preserved.
+only. The stock oil teams and lower difficulties are preserved. The combat update
+below additionally reroutes selected Brutal attack triggers.
 Changes live in `mod/oil_ai.py` and are appended to `aimd.ini` by
 `mod/build-tesla-mod.py`; a normal mod reinstall retains them.
 
 - **Capture:** an additional engineer team with up to two active instances per
-  AI house. Neutral oil has initial trigger weight 350 and minimum 150, compared
+  AI house. Neutral oil now has initial trigger weight 900 and minimum 500, compared
   with the stock oil trigger's initial/maximum 70. A separate weight-180 trigger
   requests the same team when an enemy owns oil, sharing that two-team limit.
   Engineers target the nearest neutral/enemy derrick. They require only a barracks,
@@ -812,3 +813,72 @@ Local evidence is in `logs/maps-black-screen/`; the installation manifest is
 `logs/maps-pack-2024/installed.json` (its filenames describe the original root
 installation; the current location adds `Maps/2024/`). Some source maps have
 unreadable previews, which the existing UI handles by showing no thumbnail.
+
+## Larger Brutal armies, siege, navy and production (2026-09-29)
+
+These changes apply to **Brutal skirmish AI**. Easy and Normal retain their
+original trigger enable flags, compositions and team delays. Definitions live in
+`mod/combat_ai.py`, applied by the existing mod builder. No Ares/Phobos installation
+is needed. `spawner/combat-ai.h` adds the engine behavior to the custom launcher.
+
+- **Assaults:** the usual armor and reinforcement teams now contain 11–18 units.
+  Examples: 10 Grizzlies + 3 IFVs; 10 Rhinos + 3 Flak Tracks; 8 Lashers + 3 Gatling
+  Tanks. Later teams add Prism Tanks, Magnetrons and Masterminds. Stock task forces
+  remain intact; separate Brutal variants replace their hard-difficulty triggers.
+  Brutal team-selection delay drops from 2000 to 900 frames.
+- **Siege:** Allied bombardment uses 4 Prism Tanks, 6 Grizzlies and 3 IFVs; Soviet
+  bombardment uses 4 V3 launchers, 6 Rhinos and 3 Flak Tracks. This fixes the stock
+  Soviet hard task force requesting unbuildable `V3ROCKET` missiles. Siege scripts
+  attack defenses/buildings directly without action 53's enemy-base gathering.
+  In the custom launcher, Prism Tanks, V3s, Carriers, Dreadnoughts and Boomers cancel
+  forward movement once the engine considers their selected weapon in range,
+  keeping their attack target. The Boomer selects its missile weapon for land
+  targets. This prevents further advance; it does not add retreat/kiting logic.
+- **Navy:** larger hunter fleets plus independent coastal bombardment teams:
+  2 Carriers + 2 Destroyers + 2 Aegis Cruisers; 2 Dreadnoughts + 3 Sea Scorpions +
+  2 Attack Subs; or 3 Boomers. These bombardment triggers require the owner's tech
+  building, without requiring an enemy shipyard. The launcher requests a first
+  shipyard after a war factory and radar exist, only if native placement finds a
+  valid coastal site and normal prerequisites, power and cash permit it.
+- **Tech capture:** the existing two-team oil capture limit remains, with increased
+  neutral-oil priority. All factions also get separate engineer teams for neutral
+  airports, hospitals, outposts, machine shops and power plants. Each type has one
+  team slot; scripts target the nearest building of the correct type. Engineers
+  avoid threats; existing oil guards and fortifications remain.
+- **Production and air strikes:** each match independently chooses approximately
+  half of Brutal houses for a second war factory, and half of Allied houses for a
+  second airbase. Requests begin after frame 2700, ten buildings and two refineries,
+  with at least $8000 cash and sufficient spare power. Normal construction pays
+  for and places the building, and requests stop at two. Four-aircraft building
+  strikes require exactly one airbase; eight-aircraft strikes require at least two
+  (eight docks). Korea uses Black Eagles; Americans use their own airbase type.
+  Existing aircraft may need to finish their teams before an eight-plane team fills.
+
+All INI changes work in ordinary Steam skirmishes. The movement, coastal shipyard
+and extra-factory/airbase hooks require the **custom Skirmish Setup launcher**.
+Reinstall both parts with the game closed:
+
+```sh
+python3 mod/build-tesla-mod.py install
+python3 spawner/spawn.py install
+```
+
+Validation: 17 mod integration tests and 25 launcher tests pass. The new engine
+checks execute the compiled 32-bit unit-AI wrapper and building-production hook in
+Unicorn, including range handling, difficulty exclusions, shipyard placement,
+cash limits, second-factory/airbase requests and the two-building cap. Existing
+Magnetron, Human in peace, map and oil-defense checks also pass. For engine checks,
+compile `spawner/yspawn-test.dll` with `-O2 -fno-inline` and without `-s`, and use a
+Python environment with `unicorn`, `pefile`, `capstone` and system GTK bindings.
+
+```sh
+python3 -W ignore::ResourceWarning -m unittest discover -s mod -p 'test_*.py' -v
+python3 -W ignore::ResourceWarning -m unittest discover -s spawner -p 'test_*.py' -v
+```
+
+The installed `rulesmd.ini`, `aimd.ini` and `yspawn.dll` are backed up under
+`backups/combat-ai-*/`; restoring those three files with the game closed rolls
+back this update. Revert the corresponding source edits before reinstalling to
+keep it rolled back. Start a **new skirmish** to load the changes. Live attack
+cohesion, capture timing, coastal access and balance have not yet been measured.
+Land/water pathfinding and attack targeting still use the stock engine.

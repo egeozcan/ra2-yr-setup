@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import csf
 import bulldozer
+import combat_ai
 
 spec = importlib.util.spec_from_file_location('builder', Path(__file__).with_name('build-tesla-mod.py'))
 builder = importlib.util.module_from_spec(spec)
@@ -37,6 +38,8 @@ class BulldozerBuildTests(unittest.TestCase):
         stock = ini(builder.stock('expandmd01.mix', 'rulesmd.ini'))
         for name, section in stock.items():
             for key, value in section.items():
+                if (name, key) == ('General', 'TeamDelays'):
+                    value = '900,2500,3500'
                 self.assertEqual(self.rules[name][key], value, (name, key))
         self.assertIn('ATTNK', self.rules['VehicleTypes'].values())
         self.assertIn('CHEATDEF', self.rules['BuildingTypes'].values())
@@ -77,6 +80,8 @@ class BulldozerBuildTests(unittest.TestCase):
         stock = ini(builder.stock('ra2md.mix', 'localmd.mix/aimd.ini'))
         for name, section in stock.items():
             for key, value in section.items():
+                if name == 'AITriggerTypes':
+                    value = combat_ai.stock_trigger_value(value)
                 self.assertEqual(ai[name][key], value, (name, key))
         self.assertIn(builder.AI_TEAM, ai['TeamTypes'].values())
         self.assertEqual(ai[builder.AI_TASKFORCE]['0'], '3,ATTNK')

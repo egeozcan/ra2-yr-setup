@@ -3,6 +3,7 @@ import struct
 import unittest
 
 import oil_ai
+import combat_ai
 from test_bulldozer import builder, ini
 
 
@@ -22,6 +23,8 @@ class OilAITests(unittest.TestCase):
     def test_existing_ai_and_lower_difficulties_preserved(self):
         for section, entries in self.stock.items():
             for key, value in entries.items():
+                if section == 'AITriggerTypes':
+                    value = combat_ai.stock_trigger_value(value)
                 self.assertEqual(self.ai[section][key], value, (section, key))
         self.assertEqual(len(self.triggers), 12)
         for fields in self.triggers.values():
