@@ -856,6 +856,28 @@ is needed. `spawner/combat-ai.h` adds the engine behavior to the custom launcher
 
 All INI changes work in ordinary Steam skirmishes. The movement, coastal shipyard
 and extra-factory/airbase hooks require the **custom Skirmish Setup launcher**.
+
+To measure whether the larger teams actually assemble, set `TeamTelemetry=1` under
+`[Settings]` in a custom-launcher `yspawn.ini`. The launcher writes
+`yspawn-teams.csv` beside the game executable, sampling each Brutal AI house every
+150 frames. Summary rows count all teams and large teams; team rows show task-force
+composition as `UNIT:present/wanted`, current script line (`-1` while no script is
+active), and cash. The sampler only reads team state and is disabled by default.
+Run `python3 spawner/team_report.py /path/to/yspawn-teams.csv` for per-team peaks
+and first observed script activity. A team's disappearance from snapshots does not
+by itself prove it launched: it may have been destroyed or canceled.
+
+Two controlled fast skirmishes with tier-3 starting bases and two opposing Brutal AIs
+showed that large teams are requested but vehicle production can lag. On Tsunami,
+an eight-unit Soviet infantry team filled and reached script line 0; an Allied
+eight-ship team stayed empty while its shipyard was still being requested. On
+Country Swing, a 13-unit Soviet V3/Rhino/Flak Track team stayed at 0/13 for roughly
+4,700 frames before disappearing, while stock infantry teams of 8, 12 and 15 filled
+and executed. Allied Brutal teams reached only 6/13 and 6/17 before that match ended.
+This indicates a further optimization opportunity in vehicle-production priority
+and limiting competing team requests; the CSV does not establish which engine rule
+caused the shortage.
+
 Reinstall both parts with the game closed:
 
 ```sh
