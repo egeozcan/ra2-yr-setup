@@ -2,11 +2,11 @@
 """Run unattended AI-vs-AI skirmishes and collect yspawn-bench.csv results.
 
 usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--speed N] [--seed N]
-           each AI is COUNTRY[:START[:DIRECTOR[:DIFFICULTY]]], e.g. 8:0:1 9:1:0 (DIRECTOR 1 = new logic,
+           each AI is COUNTRY[:START[:DIRECTOR[:DIFFICULTY[:TEAM]]]], e.g. 8:0:1 9:1:0 (DIRECTOR 1 = new logic,
            0 = stock Brutal, >1 = DirectorFlags bitmask)
        bench.py restore          put back the game directory's own yspawn.ini/.log/.map after runs
        bench.py summary DIR...   print one line per match directory
-       bench.py suite OUTDIR [FILTER]   director (new) vs baseline Brutal over SUITE, starts swapped
+       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER]   director vs stock Brutal match sets
 
 The idle human uses Human in peace, so it never takes part and never loses. The game directory's
 yspawn.ini, yspawn.log and yspawn.map are saved first and restored afterwards.
@@ -38,10 +38,20 @@ def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
                            Bases="1", MCVRedeploy="1", BuildOffAlly="1", GameMode="1", Benchmark="1",
                            FrameLimit=str(frames), Seed=str(seed))
     if extra:
+        units = extra.pop("Units", None)   # [Units] lines: TYPE,COUNTRY,X,Y,FACING,MISSION
         ini["Settings"].update(extra)
-    for i, (country, start, director, difficulty) in enumerate(ais, 1):
+        if units:
+            ini["Units"] = {str(i): u for i, u in enumerate(units, 1)}
+    if extra and extra.get("StartBase"):   # 1-3: every player starts with that tier's buildings
+        import startbase
+        tier = int(ini["Settings"].pop("StartBase"))
+        countries = dict.fromkeys(startbase.country_name(c) for c in [4] + [a[0] for a in ais])
+        ini["StartBase"] = startbase.section(countries, tier)
+    for i, ai in enumerate(ais, 1):
+        country, start, director, difficulty = ai[:4]
+        team = ai[4] if len(ai) > 4 else -1
         ini[f"AI{i}"] = dict(Country=str(country), Color=str(i - 1), Difficulty=str(difficulty),
-                             Start=str(start), Team="-1", Director=str(int(director != 0)))
+                             Start=str(start), Team=str(team), Director=str(int(director != 0)))
         if director > 1:   # a DirectorFlags bitmask (director-policy.h DIR_F_*)
             ini[f"AI{i}"]["DirectorFlags"] = str(director)
     return ini
@@ -49,8 +59,8 @@ def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
 
 def parse_ai(text):
     parts = [int(p) for p in text.split(":")]
-    parts += [-1, 1, 0][len(parts) - 1:]
-    return tuple(parts[:4])
+    parts += [-1, 1, 0, -1][len(parts) - 1:]
+    return tuple(parts[:5])
 
 
 def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, timeout=3600, extra=None):
@@ -171,6 +181,64 @@ SUITE = [
 ]
 
 
+# Held out from tuning: other maps, starting bases, more players. (map, human start, AIs, extra)
+# AIs are (country, start, director, difficulty[, team]).
+T3 = {"StartBase": "3"}
+HELDOUT = [
+    ("DeepFrze.yro", 3, [(8, 0, 1, 0), (0, 1, 0, 0)], None),
+    ("DeepFrze.yro", 3, [(0, 0, 0, 0), (8, 1, 1, 0)], None),
+    ("Pacific.mmx", 3, [(9, 0, 1, 0), (2, 1, 0, 0)], None),
+    ("Pacific.mmx", 3, [(9, 0, 0, 0), (2, 1, 1, 0)], None),
+    ("Rockets.mmx", 3, [(1, 0, 1, 0), (6, 1, 0, 0)], T3),
+    ("Rockets.mmx", 3, [(1, 0, 0, 0), (6, 1, 1, 0)], T3),
+    ("Valley.mmx", 3, [(3, 0, 1, 0), (9, 1, 0, 0)], T3),
+    ("Valley.mmx", 3, [(3, 0, 0, 0), (9, 1, 1, 0)], T3),
+    ("Kaliforn.mmx", 5, [(8, 0, 1, 0), (0, 1, 0, 0), (9, 2, 1, 0), (5, 3, 0, 0)], None),
+    ("GoldSt.mmx", 5, [(0, 0, 0, 0), (8, 1, 1, 0), (5, 2, 0, 0), (9, 3, 1, 0)], T3),
+    ("Death.mmx", 7, [(8, 0, 1, 0), (0, 1, 0, 0), (9, 2, 1, 0), (2, 3, 0, 0), (7, 4, 1, 0), (1, 5, 0, 0)], None),
+    ("Maps/2024/2024 - 4Waterway.yro", 3, [(0, 0, 1, 0), (8, 1, 0, 0)], None),
+    ("Maps/2024/2024 - 4Waterway.yro", 3, [(0, 0, 0, 0), (8, 1, 1, 0)], None),
+]
+# One director against two stock Brutals on the same team, and 2+2 free-for-alls.
+HARD = [
+    ("Lostlake.mmx", 3, [(8, 0, 1, 0, -1), (0, 1, 0, 0, 1), (9, 2, 0, 0, 1)], None),
+    ("Arena.mmx", 3, [(0, 0, 1, 0, -1), (8, 1, 0, 0, 1), (8, 2, 0, 0, 1)], None),
+    ("Hills.mmx", 3, [(9, 0, 1, 0, -1), (0, 1, 0, 0, 1), (8, 2, 0, 0, 1)], None),
+    ("Tower.mmx", 3, [(8, 0, 1, 0, -1), (0, 1, 0, 0, 1), (9, 2, 0, 0, 1)], T3),
+    ("EB4.mmx", 3, [(0, 0, 1, 0, -1), (9, 1, 0, 0, 1), (8, 2, 0, 0, 1)], T3),
+    ("Kaliforn.mmx", 5, [(8, 0, 1, 0), (0, 1, 0, 0), (9, 2, 1, 0), (5, 3, 0, 0)], T3),
+    ("Death.mmx", 7, [(0, 0, 1, 0), (8, 1, 0, 0), (9, 2, 1, 0), (5, 3, 0, 0)], None),
+]
+# Second held-out set, drawn after tuning on HELDOUT's losses: maps used nowhere else.
+HELDOUT2 = [
+    ("Carville.mmx", 3, [(8, 0, 1, 0), (0, 1, 0, 0)], None),
+    ("Carville.mmx", 3, [(8, 0, 0, 0), (0, 1, 1, 0)], None),
+    ("Disaster.mmx", 3, [(9, 0, 1, 0), (8, 1, 0, 0)], T3),
+    ("Disaster.mmx", 3, [(9, 0, 0, 0), (8, 1, 1, 0)], T3),
+    ("EB1.mmx", 3, [(2, 0, 1, 0), (9, 1, 0, 0)], None),
+    ("EB1.mmx", 3, [(2, 0, 0, 0), (9, 1, 1, 0)], None),
+    ("EB5.mmx", 3, [(5, 0, 1, 0), (4, 1, 0, 0)], {"StartBase": "2"}),
+    ("EB5.mmx", 3, [(5, 0, 0, 0), (4, 1, 1, 0)], {"StartBase": "2"}),
+    ("Round.mmx", 3, [(7, 0, 1, 0), (1, 1, 0, 0)], None),
+    ("Round.mmx", 3, [(7, 0, 0, 0), (1, 1, 1, 0)], None),
+    ("Shrapnel.mmx", 3, [(0, 0, 1, 0), (9, 1, 0, 0)], T3),
+    ("Shrapnel.mmx", 3, [(0, 0, 0, 0), (9, 1, 1, 0)], T3),
+    ("Potomac.mmx", 5, [(8, 0, 1, 0), (0, 1, 0, 0), (9, 2, 0, 0), (3, 3, 0, 0)], None),
+    ("PowdrKeg.mmx", 7, [(0, 0, 1, 0), (8, 1, 0, 0), (9, 2, 0, 0), (6, 3, 0, 0), (2, 4, 0, 0), (1, 5, 0, 0)], None),
+]
+SUITES = {"tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD}
+
+
+def suite_list(outdir, matches, frames=60000):
+    lines = []
+    for i, (m, human, ais, extra) in enumerate(matches):
+        line = run(os.path.join(outdir, f"{i:02d}-{os.path.splitext(os.path.basename(m))[0].replace(' ', '_')}"),
+                   m, ais, human, frames, extra=extra)
+        print(line, flush=True)
+        lines.append(line)
+    return lines
+
+
 def suite(outdir, filt=None, frames=60000):
     lines = []
     for i, (m, human, dc, bc, ds, bs) in enumerate(SUITE):
@@ -194,7 +262,11 @@ if __name__ == "__main__":
         restore()
         raise SystemExit
     if args[0] == "suite":
-        suite(args[1], args[2] if len(args) > 2 else None)
+        name = args[2] if len(args) > 2 else "tune"
+        if SUITES.get(name):
+            suite_list(args[1], SUITES[name])
+        else:
+            suite(args[1], None if name == "tune" else name)
         raise SystemExit
     if args[0] == "summary":
         for d in args[1:]:

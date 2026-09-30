@@ -5,7 +5,11 @@
 
 enum { DIR_GATHER, DIR_ATTACK, DIR_DEFEND, DIR_RETREAT };
 /* [AIn] DirectorFlags bits, for ablation runs; all are on by default. */
-enum { DIR_F_PRODUCTION = 1, DIR_F_ARMY = 2, DIR_F_TAKEOVER = 4, DIR_F_FOCUS = 8, DIR_F_ECONOMY = 16 };
+enum { DIR_F_PRODUCTION = 1, DIR_F_ARMY = 2, DIR_F_TAKEOVER = 4, DIR_F_FOCUS = 8, DIR_F_ECONOMY = 16,
+       DIR_F_ANSWER = 32, DIR_F_DEFENSES_FIRST = 64, DIR_F_COHESION = 128, DIR_F_ENGINEERS = 256,
+       DIR_F_EXPANSION = 512, DIR_F_ALL = 1023,
+       /* defenses-first objectives lost 3 of 4 director-vs-director ablation matches: off */
+       DIR_F_DEFAULT = DIR_F_ALL & ~DIR_F_DEFENSES_FIRST };
 enum { ROLE_MAIN, ROLE_AA, ROLE_SIEGE, ROLE_SUPPORT, ROLE_COUNT };
 
 /* Launch once the army can beat what the enemy fields (its mobile army plus half its static
@@ -21,10 +25,15 @@ static int dir_should_launch(int army_value, int army_count, int enemy_army_valu
     return army_value >= floor && (long long)army_value * 10 >= opposition * 12;
 }
 
-/* Fall back when the attack has been bled and the local fight is lost. */
-static int dir_should_retreat(int army_value, int launch_value, int local_enemy_value)
+/* Fall back when the fight at the front is being lost after real losses, or when the attack
+ * has been bled out and still meets resistance. Clean-up against no resistance continues. */
+static int dir_should_retreat(int army_value, int launch_value, int local_ours, int local_enemy)
 {
-    return army_value * 100 < launch_value * 40 && local_enemy_value * 10 > army_value * 12;
+    if (local_enemy == 0)
+        return 0;
+    if (army_value * 100 < launch_value * 30)
+        return 1;
+    return army_value * 100 < launch_value * 70 && local_enemy * 10 > local_ours * 13;
 }
 
 /* Base defense: a real raid, not a lone scout. */
@@ -84,11 +93,12 @@ static int dir_wanted_factories(int cash, int frame, int refineries)
     return cash >= 5000 ? 2 : 1;
 }
 
-/* More refineries once money runs short: each brings a harvester and a shorter ore run. */
-static int dir_want_refinery(int frame, int refineries, int harvesters, int cash)
+/* More refineries once money runs short: each brings a harvester and a shorter ore run. Not while
+ * harvesters stand idle: their ore is exhausted or cut off, and another refinery would not help. */
+static int dir_want_refinery(int frame, int refineries, int harvesters, int idle_harvesters, int cash)
 {
     int wanted = frame < 6000 ? 0 : frame < 15000 ? 3 : frame < 30000 ? 4 : 5;
-    return refineries < wanted && harvesters >= refineries && cash < 12000;
+    return refineries < wanted && harvesters >= refineries && idle_harvesters == 0 && cash < 12000;
 }
 
 /* Keep producing while money lasts; keep a reserve for buildings. */

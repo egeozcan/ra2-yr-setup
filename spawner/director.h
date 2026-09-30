@@ -30,23 +30,36 @@
 #define MISSION_AREA_GUARD 11
 #define T_FOCUS 0x218                  /* TechnoClass::Focus: Area_Guard guards around it when it is a cell */
 #define MAX_POOL 160
+#define MAP_ZONE 0x56D230          /* MapClass::GetMovementZoneType(cell, MovementZone, bridge) */
+#define T_PASSENGERS 0x114         /* TechnoClass::Passengers.NumPassengers */
 #define MAX_ENEMY 1024
 
 typedef int (GTHISCALL *dir_prod_fn)(BYTE *);
+static const char *dir_mcvs = "AMCV,SMCV,PCV";
+static const char *dir_transports[3] = { "LCRF", "SAPC", "YHVR" };   /* amphibious ferries */
 static dir_prod_fn dir_unit_original, dir_inf_original;
 
 typedef struct {
     BYTE *house;
     int state, next_think, launch_value, launch_frame, last_log;
-    int army_value, army_count, enemy_army, local_enemy, threat_value;
+    int army_value, army_count, enemy_army, target_army, local_enemy, local_ours, threat_value;
     int enemy_air, enemy_inf, enemy_armor, enemy_def;
     int unit_request, unit_request_frame;
-    int blocked, best_dist, progress_frame;   /* ground army cannot reach the enemy: island map */
+    int blocked, best_dist, progress_frame, state_frame;   /* ground army cannot reach the enemy: island map */
     int reached;                              /* this attack got within 15 cells of an objective */
     BYTE *unreachable[8];                     /* objectives the army made no progress toward */
     int unreachable_count;
     CellXY base, rally, threat_at, objective_at, centroid, front;
-    BYTE *objective, *enemy;
+    BYTE *objective, *enemy, *rally_enemy;
+    BYTE *repair_hut, *repair_engineer;       /* bridge repair job */
+    int repair_frame, repair_mode, want_engineer;   /* mode 0 bridge, 1 capture */
+    int idle_harvesters, next_economy;
+    int want_mcv, next_site;                  /* expansion: build an MCV and deploy it by fresh ore */
+    CellXY site;
+    int island, next_island, ferry_state, ferry_frame, home_zone;   /* enemy only reachable by water: ferry troops */
+    BYTE *ferry;
+    CellXY landing, dock;
+    int rally_frame;
 } DirState;
 static DirState dir_state[32];
 
@@ -208,7 +221,8 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
             BYTE *type = find_type(types, id);
             if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
-                && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3))
+                && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
+                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 4))   /* slow: a few, not the army */
                 return type;
         }
         p += n + (p[n] == ',');
@@ -242,7 +256,7 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
             have[dir_role_of(side, (char *)type + T_ID)] += dir_cost(type);
     }
     for (int r = 0; r < ROLE_COUNT; r++) {
-        pick[r] = dir_first_buildable(house, UNITTYPE_ARRAY, d->blocked && r == ROLE_MAIN
+        pick[r] = dir_first_buildable(house, UNITTYPE_ARRAY, (d->blocked || d->island) && r == ROLE_MAIN
                                       ? dir_blocked_main[side] : dir_vehicle_roles[side][r], 2500);
         available[r] = pick[r] != NULL;
     }
@@ -272,6 +286,24 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
         current = -1;
     }
+    if (current == -1 && d->want_mcv) {
+        BYTE *type = dir_first_buildable(house, UNITTYPE_ARRAY, dir_mcvs, 0);
+        int index = type ? dir_type_index(UNITTYPE_ARRAY, type) : -1;
+        if (index >= 0) {
+            FIELD(house, H_PRODUCING_UNIT, int) = current = d->unit_request = index;
+            d->unit_request_frame = CURRENT_FRAME;
+            d->want_mcv = 0;
+        }
+    }
+    int side = FIELD(house, OIL_H_SIDE, int);
+    if (current == -1 && d->island && !d->ferry && side >= 0 && side <= 2) {
+        BYTE *type = dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side], 1000);
+        int index = type ? dir_type_index(UNITTYPE_ARRAY, type) : -1;
+        if (index >= 0) {
+            FIELD(house, H_PRODUCING_UNIT, int) = current = d->unit_request = index;
+            d->unit_request_frame = CURRENT_FRAME;
+        }
+    }
     if (current == -1)
         dir_choose_vehicle(house, d);
     return result;
@@ -282,12 +314,16 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
     (void)unused;
     int result = dir_inf_original(house);
     if (!dir_active(house) || !(director_enabled(house) & DIR_F_PRODUCTION) || FIELD(house, H_PRODUCING_INF, int) != -1
-        || FIELD(house, H_OWNED_INFANTRY, int) >= 30)
+        || (FIELD(house, H_OWNED_INFANTRY, int) >= 30 && !(dir_get(house) && dir_get(house)->want_engineer)))
         return result;
     int side = FIELD(house, OIL_H_SIDE, int);
     if (side < 0 || side > 2)
         return result;
-    BYTE *type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, dir_infantry[side], 4000);
+    DirState *d = dir_get(house);
+    static const char *engineers[3] = { "ENGINEER", "SENGINEER", "YENGINEER" };
+    BYTE *type = d && d->want_engineer ? dir_first_buildable(house, INFANTRYTYPE_ARRAY, engineers[side], 0) : NULL;
+    if (!type)
+        type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, dir_infantry[side], 4000);
     int index = type ? dir_type_index(INFANTRYTYPE_ARRAY, type) : -1;
     if (index >= 0)
         FIELD(house, H_PRODUCING_INF, int) = index;
@@ -299,15 +335,43 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
 typedef struct {
     BYTE *obj;
     CellXY at;
-    int value, armed, building, air, infantry, focus;
+    int value, armed, building, air, infantry, focus, capturable, range;
 } DirEnemy;
 static DirEnemy dir_enemies[MAX_ENEMY];
 static int dir_enemy_count;
 
+static int dir_weapon_cells(BYTE *unit)
+{
+    BYTE **w = ((BYTE **(GTHISCALL *)(BYTE *, int))VFUNC(unit, VT_GETWEAPON))(unit, 0);
+    int range = w && *w ? FIELD(*w, W_RANGE, int) : 0;
+    return range < 0 ? 20 : range / 256;
+}
+
+/* Our structures, collected once per scan: base threats are enemies close to one of them, not
+ * anything within a radius of the base centre (which reaches across rivers and lakes). */
+static CellXY dir_own_buildings[256];
+static int dir_own_building_count;
+
+static int dir_near_own_building(BYTE *house, CellXY at, int r)
+{
+    (void)house;
+    for (int i = 0; i < dir_own_building_count; i++)
+        if (dir_dist2(dir_own_buildings[i], at) <= r * r)
+            return 1;
+    return 0;
+}
+
 static void dir_scan_enemies(BYTE *house, DirState *d)
 {
+    dir_own_building_count = 0;
+    DynVec *bv = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < bv->Count && dir_own_building_count < 256; i++) {
+        BYTE *b = bv->Items[i];
+        if (oil_live(b) && FIELD(b, O_OWNER, BYTE *) == house)
+            dir_own_buildings[dir_own_building_count++] = object_cell(b);
+    }
     dir_enemy_count = 0;
-    d->enemy_army = d->enemy_air = d->enemy_inf = d->enemy_armor = d->enemy_def = 0;
+    d->enemy_army = d->enemy_air = d->enemy_inf = d->enemy_armor = d->enemy_def = d->target_army = 0;
     d->threat_value = 0;
     int tx = 0, ty = 0, tn = 0;
     DynVec *v = OIL_TECHNO_ARRAY;
@@ -324,7 +388,10 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
         e->at = object_cell(o);
         e->value = dir_cost(type);
         e->armed = dir_armed(o);
+        e->range = e->armed ? dir_weapon_cells(o) : 0;
         e->building = what == 6;
+        /* tech buildings are worth more captured: derricks pay forever, the others give units/repair */
+        e->capturable = e->building && in_list("CAOILD,CAAIRP,CATHOSP,CAOUTP,CAMACH,CAPOWR", (char *)type + T_ID);
         e->infantry = what == 15;
         e->focus = 0;
         Coord c = FIELD(o, O_LOCATION, Coord);
@@ -333,17 +400,20 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
         if (!e->armed)
             continue;
         if (e->building) {
-            d->enemy_def += e->value;
+            if (FIELD(o, O_OWNER, BYTE *) == d->enemy)   /* the target's defenses, for launch and siege share */
+                d->enemy_def += e->value;
             continue;
         }
         d->enemy_army += e->value;
+        if (FIELD(o, O_OWNER, BYTE *) == d->enemy)
+            d->target_army += e->value;
         if (e->air)
             d->enemy_air += e->value;
         else if (e->infantry)
             d->enemy_inf += e->value;
         else
             d->enemy_armor += e->value;
-        if (!e->air && dir_dist2(e->at, d->base) <= 22 * 22) {
+        if (!e->air && dir_near_own_building(house, e->at, 10)) {
             d->threat_value += e->value;
             tx += e->at.X;
             ty += e->at.Y;
@@ -362,6 +432,12 @@ static CellXY dir_house_center(BYTE *house)
     return c;
 }
 
+/* A player still in the game: structures, or units such as an undeployed MCV. */
+static int dir_house_alive(BYTE *h)
+{
+    return FIELD(h, H_OWNED_BUILDINGS, int) || FIELD(h, H_OWNED_UNITS, int) || FIELD(h, H_OWNED_INFANTRY, int);
+}
+
 /* The nearest hostile player house to our base. */
 static BYTE *dir_pick_enemy(BYTE *house, CellXY base)
 {
@@ -370,7 +446,7 @@ static BYTE *dir_pick_enemy(BYTE *house, CellXY base)
     int best_d = 0x7FFFFFFF;
     for (int i = 0; i < v->Count; i++) {
         BYTE *h = v->Items[i];
-        if (!dir_hostile(house, h) || !FIELD(h, H_OWNED_BUILDINGS, int))
+        if (!dir_hostile(house, h) || !dir_house_alive(h))
             continue;
         int dd = dir_dist2(base, dir_house_center(h));
         if (dd < best_d) {
@@ -385,17 +461,24 @@ static BYTE *dir_pick_enemy(BYTE *house, CellXY base)
 static BYTE *dir_pick_objective(DirState *d, CellXY from)
 {
     BYTE *best = NULL;
-    int best_score = 0x7FFFFFFF;
+    int best_score = 0x7FFFFFFF, buildings = 0;
+    for (int i = 0; i < dir_enemy_count; i++)
+        buildings += dir_enemies[i].building && !dir_enemies[i].capturable
+                     && FIELD(dir_enemies[i].obj, O_OWNER, BYTE *) == d->enemy;
     for (int i = 0; i < dir_enemy_count; i++) {
         DirEnemy *e = &dir_enemies[i];
-        if (!e->building || FIELD(e->obj, O_OWNER, BYTE *) != d->enemy)
+        /* structures first; with none left, whatever keeps the player alive (an MCV, a last unit) */
+        if ((buildings && (!e->building || e->capturable)) || e->air || FIELD(e->obj, O_OWNER, BYTE *) != d->enemy)
             continue;
         int skip = 0;
         for (int k = 0; k < d->unreachable_count; k++)
             skip |= d->unreachable[k] == e->obj;
         if (skip)
             continue;
-        int score = dir_dist2(from, e->at);
+        /* defenses at the edge first: an army that walks past them to a building deeper in
+         * gets shot all the way there */
+        int score = e->armed || !(director_enabled(d->house) & DIR_F_DEFENSES_FIRST) ? dir_dist2(from, e->at)
+                                                                                : dir_dist2(from, e->at) * 3 / 2 + 8 * 8;
         if (score < best_score) {
             best_score = score;
             best = e->obj;
@@ -414,12 +497,6 @@ static int dir_can_fire_at(BYTE *unit, BYTE *target)
     return err != 5 && err != 6;   /* ILLEGAL, CANT */
 }
 
-static int dir_weapon_cells(BYTE *unit)
-{
-    BYTE **w = ((BYTE **(GTHISCALL *)(BYTE *, int))VFUNC(unit, VT_GETWEAPON))(unit, 0);
-    int range = w && *w ? FIELD(*w, W_RANGE, int) : 0;
-    return range < 0 ? 20 : range / 256;
-}
 
 /* Orders the director gave, so a unit is not re-ordered (and re-pathed) every tick. */
 #define DIR_ORDERS 4096
@@ -461,6 +538,8 @@ static void dir_order(BYTE *unit, int mission, BYTE *target, BYTE *cell)
 }
 
 /* Attack-move: fight whatever is worth fighting near the unit, else keep heading for the goal. */
+static int dir_flags;   /* the commanding house's DirectorFlags, set by dir_army */
+
 static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
 {
     CellXY at = object_cell(unit);
@@ -471,14 +550,18 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
         for (int i = 0; i < dir_enemy_count; i++) {
             DirEnemy *e = &dir_enemies[i];
             int dd = dir_dist2(at, e->at);
-            if (dd > reach * reach)
+            /* in our reach, or already able to shoot us: never walk through fire without answering */
+            int answer = (dir_flags & DIR_F_ANSWER) && e->range + 1 > reach ? e->range + 1 : reach;
+            if (dd > answer * answer || (dd > reach * reach && !e->armed))
                 continue;
-            if (e->obj == current)
+            if (e->obj == current && !e->capturable)
                 keep = e;
             int priority = e->armed ? (e->building ? 70 : 100) : (e->building ? 25 : 45);
             int strength = FIELD(dir_type(e->obj), OT_STRENGTH, int);
             int hurt = strength > 0 ? 40 - 40 * FIELD(e->obj, O_HEALTH, int) / strength : 0;
             int score = priority + hurt + (e->focus < 5 ? e->focus * 8 : -40) - dd / 4;
+            if (e->capturable)
+                continue;   /* an engineer will take it; don't shoot what we want to own */
             if (score > best_score && dir_can_fire_at(unit, e->obj)) {
                 best_score = score;
                 best = e;
@@ -518,6 +601,7 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
 
 static void dir_army(BYTE *house, DirState *d)
 {
+    dir_flags = director_enabled(house);
     BYTE *pool[MAX_POOL];
     int n = 0, value = 0, sx = 0, sy = 0;
     DynVec *v = OIL_TECHNO_ARRAY;
@@ -525,8 +609,13 @@ static void dir_army(BYTE *house, DirState *d)
         BYTE *o = v->Items[i];
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !dir_poolable(o, dir_whatami(o)))
             continue;
-        if (d->blocked && !dir_crosses(o))
-            continue;   /* on an island map only hover/air units attack; the rest guard the base */
+        if ((d->blocked || d->island) && !dir_crosses(o)) {
+            /* on an island map only hover/air units and troops already ferried across attack */
+            CellXY c = object_cell(o);
+            if (d->threat_value < 1500
+                && ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &c, 0, 0) == d->home_zone)
+                continue;   /* ...but everyone defends the base */
+        }
         pool[n++] = o;
         value += dir_cost(dir_type(o));
         CellXY c = object_cell(o);
@@ -552,19 +641,27 @@ static void dir_army(BYTE *house, DirState *d)
         }
     }
 
-    /* local fight around the army */
-    d->local_enemy = 0;
+    /* The fight at the front: armed enemies (defenses included) against our units there. The
+     * centroid would lag behind fresh units waiting at home and hide a losing battle. */
+    d->local_enemy = d->local_ours = 0;
     for (int i = 0; i < dir_enemy_count; i++)
-        if (dir_enemies[i].armed && dir_dist2(dir_enemies[i].at, d->centroid) <= 14 * 14)
+        if (dir_enemies[i].armed && dir_dist2(dir_enemies[i].at, d->front) <= 12 * 12)
             d->local_enemy += dir_enemies[i].value;
+    for (int i = 0; i < n; i++)
+        if (dir_dist2(object_cell(pool[i]), d->front) <= 12 * 12)
+            d->local_ours += dir_cost(dir_type(pool[i]));
 
     int previous = d->state;
-    if (dir_base_threat(d->threat_value, d->army_value, d->state))
-        d->state = DIR_DEFEND;
-    else if (d->state == DIR_DEFEND)
+    /* Minimum dwell times: flipping between defend and gather sends the army back and forth
+     * through chokes and bridges, where it jams. */
+    int dwell = CURRENT_FRAME - d->state_frame;
+    if (dir_base_threat(d->threat_value, d->army_value, d->state)) {
+        if (d->state != DIR_DEFEND && (d->state != DIR_GATHER || dwell >= 300 || d->threat_value > 4000))
+            d->state = DIR_DEFEND;
+    } else if (d->state == DIR_DEFEND && dwell >= 450)
         d->state = DIR_GATHER;
     if (d->state == DIR_GATHER) {
-        if (d->enemy && dir_should_launch(d->army_value, n, d->enemy_army, d->enemy_def, CURRENT_FRAME)) {
+        if (d->enemy && dir_should_launch(d->army_value, n, d->target_army + (d->enemy_army - d->target_army) / 3, d->enemy_def, CURRENT_FRAME)) {
             d->state = DIR_ATTACK;
             d->launch_value = d->army_value;
             d->launch_frame = d->progress_frame = CURRENT_FRAME;
@@ -584,7 +681,7 @@ static void dir_army(BYTE *house, DirState *d)
         }
         if (dd <= 15 * 15)
             d->reached = 1;
-        if (fighting || (long long)dd * 10 < (long long)d->best_dist * 9) {
+        if (fighting || (d->repair_hut && !d->repair_mode) || (long long)dd * 10 < (long long)d->best_dist * 9) {
             d->best_dist = dd < d->best_dist ? dd : d->best_dist;
             d->progress_frame = CURRENT_FRAME;
         } else if (CURRENT_FRAME - d->progress_frame > 1500 && dd > 8 * 8) {
@@ -605,12 +702,14 @@ static void dir_army(BYTE *house, DirState *d)
                 d->state = DIR_RETREAT;
             }
         }
-        if (!d->enemy || n == 0 || dir_should_retreat(d->army_value, d->launch_value, d->local_enemy))
+        if (!d->enemy || n == 0 || dir_should_retreat(d->army_value, d->launch_value, d->local_ours, d->local_enemy))
             d->state = DIR_RETREAT;
     } else if (d->state == DIR_RETREAT) {
-        if (!n || dir_dist2(d->centroid, d->rally) <= 10 * 10)
-            d->state = DIR_GATHER;
+        if (!n || dir_dist2(d->centroid, d->rally) <= 10 * 10 || dwell > 1200)
+            d->state = DIR_GATHER;   /* stragglers must not keep the whole army in retreat */
     }
+    if (d->state != previous)
+        d->state_frame = CURRENT_FRAME;
     if (d->state != previous || CURRENT_FRAME - d->last_log > 1500) {
         d->last_log = CURRENT_FRAME;
         logmsg("director: house %d frame %d state %d army %d/%d enemy army %d threat %d local %d",
@@ -618,7 +717,7 @@ static void dir_army(BYTE *house, DirState *d)
                d->threat_value, d->local_enemy);
     }
 
-    if (CURRENT_FRAME - d->last_log == 0 && n) {   /* sample a few units with each state line */
+    if (bench_file && CURRENT_FRAME - d->last_log == 0 && n) {   /* benchmark: sample a few units */
         for (int i = 0; i < n && i < 4; i++) {
             CellXY c = object_cell(pool[i]);
             BYTE *focus = FIELD(pool[i], T_FOCUS, BYTE *);
@@ -660,7 +759,36 @@ static void dir_army(BYTE *house, DirState *d)
         } else
             goal = d->objective_at;
     }
+    /* Cohesion: the marching group's median distance to the objective. Units well ahead of it
+     * hold their ground until the rest catch up, instead of arriving one by one. */
+    int hold = -1;
+    if (d->state == DIR_ATTACK && d->objective && n >= 4 && (director_enabled(house) & DIR_F_COHESION)) {
+        int dist[MAX_POOL], m = 0;
+        for (int i = 0; i < n; i++) {
+            CellXY c = object_cell(pool[i]);
+            int dd = dir_dist2(c, d->objective_at);
+            if (dir_dist2(c, d->front) <= 30 * 30)   /* the marching group, not units waiting at home */
+                dist[m++] = dd;
+        }
+        for (int i = 1; i < m; i++)
+            for (int j = i; j > 0 && dist[j - 1] > dist[j]; j--) {
+                int t = dist[j];
+                dist[j] = dist[j - 1];
+                dist[j - 1] = t;
+            }
+        if (m >= 4) {
+            int median = 0;
+            while (median * median < dist[m / 2])
+                median++;
+            hold = median > 14 ? (median - 8) * (median - 8) : -1;   /* close in: everyone fights */
+        }
+    }
     for (int i = 0; i < n; i++) {
+        CellXY c = object_cell(pool[i]);
+        if (hold > 0 && !FIELD(pool[i], O_TARGET, BYTE *) && dir_dist2(c, d->objective_at) < hold) {
+            dir_command(pool[i], c, NULL, engage);   /* area-guard where it stands */
+            continue;
+        }
         /* In an attack, fresh units far behind wait at the rally for the next wave. */
         if (d->state == DIR_ATTACK && d->launch_frame != CURRENT_FRAME
             && dir_dist2(object_cell(pool[i]), d->centroid) > 30 * 30
@@ -669,6 +797,422 @@ static void dir_army(BYTE *house, DirState *d)
             continue;
         }
         dir_command(pool[i], goal, d->state == DIR_ATTACK ? d->objective : NULL, engage);
+    }
+}
+
+/* ---- economy ---- */
+static int dir_idle_harvesters(BYTE *house);
+static void dir_economy(BYTE *house, DirState *d)
+{
+    int side = FIELD(house, OIL_H_SIDE, int);
+    if (side < 0 || side > 2 || !(director_enabled(house) & DIR_F_ECONOMY) || !oil_eligible(house))
+        return;
+    /* The first war factory as soon as a refinery stands: stock base plans (Allied especially) put
+     * it behind airfields and walls, leaving the army nothing to come from for minutes. */
+    static const char *factories[3] = { "GAWEAP", "NAWEAP", "YAWEAP" };
+    if (FIELD(house, OIL_H_PRODUCING, int) == -1 && !combat_building_count(house, factories[side])) {
+        BYTE *type = find_type(BUILDINGTYPE_ARRAY, factories[side]);
+        if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
+            && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+            logmsg("director: house %d queued its first war factory at frame %d", FIELD(house, 0x30, int), CURRENT_FRAME);
+        }
+    }
+    if (CURRENT_FRAME >= d->next_economy) {
+        d->next_economy = CURRENT_FRAME + 450;
+        d->idle_harvesters = dir_idle_harvesters(house);
+    }
+    /* checked every tick: the build queue is rarely free, and stock picks fill it at once */
+    if (FIELD(house, OIL_H_PRODUCING, int) != -1
+        || !dir_want_refinery(CURRENT_FRAME, FIELD(house, OIL_H_REFINERIES, int), FIELD(house, H_HARVESTERS, int),
+                              d->idle_harvesters, FIELD(house, OIL_H_CASH, int)))
+        return;
+    static const char *refineries[] = { "GAREFN", "NAREFN", "YAREFN" };
+    BYTE *type = find_type(BUILDINGTYPE_ARRAY, refineries[side]);
+    if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
+        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+        FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+        logmsg("director: house %d queued %s (refineries %d, harvesters %d, cash %d)", FIELD(house, 0x30, int),
+               refineries[side], FIELD(house, OIL_H_REFINERIES, int), FIELD(house, H_HARVESTERS, int),
+               FIELD(house, OIL_H_CASH, int));
+    }
+}
+
+static int dir_idle_harvesters(BYTE *house)
+{
+    int idle = 0;
+    DynVec *v = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *o = v->Items[i], *type;
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 1 || !(type = dir_type(o))
+            || !in_list("HARV,CMIN,SMIN", (char *)type + T_ID))
+            continue;
+        int m = FIELD(o, COMBAT_MISSION, int);
+        idle += m != 10 && m != 7 && m != 12 && m != 16 && m != 2;   /* harvest, enter, return, unload, move */
+    }
+    return idle;
+}
+
+/* ---- bridges ----
+ * A destroyed bridge cuts armies and harvesters off. Stock AI never repairs one; the director sends
+ * an engineer into the nearest reachable repair hut whose bridge is down, the check the engineer's
+ * own enter cursor uses. */
+#define BT_BRIDGE_HUT 0x16B6              /* BuildingTypeClass::BridgeRepairHut */
+#define MAP_BRIDGE_DOWN 0x587410          /* MapClass::IsLinkedBridgeDestroyed(CellStruct *hut cell) */
+#define MISSION_ENTER 7
+#define MISSION_CAPTURE 8
+
+static int dir_bridge_down(BYTE *hut)
+{
+    CellXY c = object_cell(hut);
+    return ((char (GTHISCALL *)(void *, CellXY *))MAP_BRIDGE_DOWN)(MAP_INSTANCE, &c) != 0;
+}
+
+static int dir_is_engineer(BYTE *obj)
+{
+    BYTE *type = dir_type(obj);
+    return type && in_list("ENGINEER,SENGINEER,YENGINEER", (char *)type + T_ID);
+}
+
+static int dir_object_listed(DynVec *v, BYTE *obj)
+{
+    for (int i = 0; i < v->Count; i++)
+        if (v->Items[i] == obj)
+            return 1;
+    return 0;
+}
+
+/* Engineer jobs, one at a time: repair the nearest broken bridge within reach, otherwise capture an
+ * enemy tech building (oil derrick first) near our army or base once no armed enemy guards it. */
+static void dir_engineers(BYTE *house, DirState *d)
+{
+    BYTE *job = d->repair_hut;
+    int alive = job && dir_object_listed(OIL_BUILDING_ARRAY, job) && oil_live(job);
+    int done = !alive || (d->repair_mode == 0 ? !dir_bridge_down(job) : FIELD(job, O_OWNER, BYTE *) == house
+                                                                    || !dir_hostile(house, FIELD(job, O_OWNER, BYTE *)));
+    if (job && (done || CURRENT_FRAME - d->repair_frame > 4000)) {
+        if (alive && done)
+            logmsg("director: house %d engineer job done (%s)", FIELD(house, 0x30, int),
+                   d->repair_mode ? "captured" : "bridge repaired");
+        d->repair_hut = d->repair_engineer = NULL;
+    }
+    d->want_engineer = 0;
+    if (d->repair_hut && d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer)
+        && oil_live(d->repair_engineer))
+        return;
+    CellXY base = d->base;
+    int zone = d->home_zone;   /* huts on our side of the water */
+    (void)base;
+    BYTE *target = NULL;
+    int best = 45 * 45, mode = 0;
+    DynVec *v = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *b = v->Items[i], *type = FIELD(b, B_TYPE, BYTE *);
+        if (!oil_live(b) || !type || !type[BT_BRIDGE_HUT] || !dir_bridge_down(b))
+            continue;
+        CellXY c = object_cell(b);
+        int dd = dir_dist2(c, d->base), df = dir_dist2(c, d->front);
+        dd = df < dd ? df : dd;
+        if (dd >= best || ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &c, 0, 0) != zone)
+            continue;
+        best = dd;
+        target = b;
+    }
+    if (!target) {
+        best = 18 * 18;
+        for (int i = 0; i < dir_enemy_count; i++) {
+            DirEnemy *e = &dir_enemies[i];
+            if (!e->capturable)
+                continue;
+            int dd = dir_dist2(e->at, d->base), df = dir_dist2(e->at, d->front);
+            dd = df < dd ? df : dd;
+            int oil = !_stricmp((char *)dir_type(e->obj) + T_ID, "CAOILD");
+            if (!oil)
+                dd += 6 * 6;
+            if (dd >= best)
+                continue;
+            int guarded = 0;
+            for (int k = 0; k < dir_enemy_count && !guarded; k++)
+                guarded = dir_enemies[k].armed && !dir_enemies[k].capturable
+                          && dir_dist2(dir_enemies[k].at, e->at) <= 7 * 7;
+            CellXY c = e->at;
+            if (guarded || ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &c, 0, 0) != zone)
+                continue;
+            best = dd;
+            target = e->obj;
+            mode = 1;
+        }
+    }
+    if (!target)
+        return;
+    BYTE *engineer = NULL;
+    v = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < v->Count && !engineer; i++) {
+        BYTE *o = v->Items[i];
+        if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 15 && dir_is_engineer(o)
+            && !FIELD(o, F_TEAM, BYTE *))
+            engineer = o;
+    }
+    if (!engineer) {
+        d->want_engineer = 1;
+        return;
+    }
+    d->repair_hut = target;
+    d->repair_engineer = engineer;
+    d->repair_frame = CURRENT_FRAME;
+    d->repair_mode = mode;
+    dir_order(engineer, mode ? MISSION_CAPTURE : MISSION_ENTER, target, NULL);
+    CellXY c = object_cell(target);
+    logmsg("director: house %d sends an engineer to %s %.24s at %d,%d", FIELD(house, 0x30, int),
+           mode ? "capture" : "repair the bridge at", (char *)dir_type(target) + T_ID, c.X, c.Y);
+}
+
+#define MAP_NEARBY 0x56DC20      /* MapClass::NearByLocation, 15 arguments (ret 0x3C) */
+typedef CellXY *(GTHISCALL *nearby_fn)(void *, CellXY *, CellXY *, int, int, int, char, int, int, char, char,
+                                        char, char, CellXY *, char, char);
+
+/* Rally a third of the way toward the enemy (at most 14 cells out), on a clear 5x5 patch of land,
+ * no bridge, reachable from the base. A straight-line point can land on a bridge or at a choke,
+ * and an army gathering there jams it. */
+static CellXY dir_pick_rally(DirState *d)
+{
+    if (!d->enemy)
+        return d->base;
+    CellXY e = dir_house_center(d->enemy);
+    int dx = e.X - d->base.X, dy = e.Y - d->base.Y, len = 1;
+    while (len * len < dx * dx + dy * dy)
+        len++;
+    CellXY base = d->base, fallback = base;
+    int zone = ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &base, 0, 0);
+    /* Out of the base: units idling on building sites block construction. */
+    for (int step = 12; step <= 24 && step < len; step += 4) {
+        CellXY want = { (short)(d->base.X + dx * step / len), (short)(d->base.Y + dy * step / len) }, out = { 0, 0 };
+        if (step == 12)
+            fallback = want;
+        /* SpeedType Track, MovementZone Normal, 5x5 clear, no overlay, no bridge */
+        ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, zone, 0, 0, 5, 5, 1, 0, 0, 0, &want, 0, 0);
+        if (out.X <= 0 || out.Y <= 0 || dir_dist2(out, want) > 10 * 10)
+            continue;
+        CellXY c = { (short)(out.X + 2), (short)(out.Y + 2) };   /* the patch's centre */
+        if (dir_dist2(c, d->base) >= 9 * 9 && !dir_near_own_building(NULL, c, 6))
+            return c;
+    }
+    return fallback;
+}
+
+/* ---- expansion ----
+ * When harvesters stand idle (ore gone or cut off), look for reachable ore away from our refineries
+ * and enemy structures, build an MCV and deploy it there. An AI construction yard re-centres the
+ * base plan on itself (UnitClass deploy, 0x7398CE-0x739926), so new refineries follow the ore. */
+#define CELL_ORE_VALUE 0x485020            /* CellClass::GetContainedTiberiumValue */
+
+static int dir_ore_near(CellXY c, int r)
+{
+    int sum = 0;
+    for (int dy = -r; dy <= r; dy += 2)
+        for (int dx = -r; dx <= r; dx += 2) {
+            BYTE *cell = dir_cell((CellXY){ (short)(c.X + dx), (short)(c.Y + dy) });
+            if (cell)
+                sum += ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(cell);
+        }
+    return sum;
+}
+
+static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
+{
+    CellXY base = d->base;
+    int zone = ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &base, 0, 0);
+    int best = 0;
+    DynVec *bv = OIL_BUILDING_ARRAY;
+    for (int y = 4; y < 400; y += 4)
+        for (int x = 4; x < 400; x += 4) {
+            CellXY c = { (short)x, (short)y };
+            if (!dir_cell(c))
+                continue;
+            int ore = dir_ore_near(c, 6);
+            if (ore < 2500)
+                continue;
+            int dist = dir_dist2(c, d->base), ok = dist >= 16 * 16 && dist <= 70 * 70;
+            for (int i = 0; ok && i < bv->Count; i++) {
+                BYTE *b = bv->Items[i], *owner = FIELD(b, O_OWNER, BYTE *);
+                if (!oil_live(b))
+                    continue;
+                CellXY bc = object_cell(b);
+                if (owner == house && FIELD(FIELD(b, B_TYPE, BYTE *), 0x16BB, char))   /* BuildingTypeClass::Refinery: ours nearby */
+                    ok = dir_dist2(bc, c) >= 14 * 14;
+                else if (dir_hostile(house, owner))
+                    ok = dir_dist2(bc, c) >= 28 * 28;
+            }
+            for (int i = 0; ok && i < dir_enemy_count; i++)
+                ok = !dir_enemies[i].armed || dir_dist2(dir_enemies[i].at, c) >= 14 * 14;
+            if (!ok || ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &c, 0, 0) != zone)
+                continue;
+            int dd = 0;
+            while (dd * dd < dist)
+                dd++;
+            int score = ore / 10 - dd * 30;
+            if (score > best) {
+                best = score;
+                *site = c;
+            }
+        }
+    if (!best)
+        return 0;
+    /* a clear 4x4 spot for the construction yard beside the ore */
+    CellXY out = { 0, 0 }, want = *site;
+    ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, zone, 0, 0, 4, 4, 1, 0, 0, 0, &want, 0, 0);
+    if (out.X <= 0 || dir_dist2(out, want) > 10 * 10)
+        return 0;
+    *site = (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
+    return 1;
+}
+
+static void dir_expansion(BYTE *house, DirState *d)
+{
+    int yards = combat_building_count(house, "GACNST,NACNST,YACNST");
+    BYTE *mcv = NULL;
+    DynVec *v = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < v->Count && !mcv; i++) {
+        BYTE *o = v->Items[i];
+        if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 1
+            && in_list(dir_mcvs, (char *)dir_type(o) + T_ID))
+            mcv = o;
+    }
+    /* Drive an MCV we built to the site and deploy. Without a yard the stock AI redeploys it at home. */
+    if (mcv && yards && d->site.X > 0) {
+        d->want_mcv = 0;
+        CellXY at = object_cell(mcv);
+        BYTE *cell = dir_cell(d->site);
+        if (dir_dist2(at, d->site) <= 2 * 2) {
+            if (!dir_recent_order(mcv, (BYTE *)1, 120)) {
+                dir_order(mcv, 16, NULL, NULL);   /* Unload = deploy */
+                logmsg("director: house %d deploying expansion MCV at %d,%d", FIELD(house, 0x30, int), at.X, at.Y);
+            }
+        } else if (cell && !dir_recent_order(mcv, cell, 450))
+            dir_order(mcv, MISSION_MOVE, NULL, cell);
+        return;
+    }
+    if (CURRENT_FRAME < d->next_site)
+        return;
+    d->next_site = CURRENT_FRAME + 900;
+    d->want_mcv = 0;
+    if (!(director_enabled(house) & DIR_F_EXPANSION) || !yards || yards >= 3 || mcv || CURRENT_FRAME < 9000
+        || d->idle_harvesters < 1 || FIELD(house, OIL_H_CASH, int) < 4000 || d->state == DIR_DEFEND
+        || !dir_find_site(house, d, &d->site))
+        return;
+    d->want_mcv = 1;
+    logmsg("director: house %d wants an expansion at %d,%d (idle harvesters %d)", FIELD(house, 0x30, int),
+           d->site.X, d->site.Y, d->idle_harvesters);
+    /* the MCV needs a service depot (Yuri: grinder) */
+    static const char *depots[3] = { "GADEPT", "NADEPT", "YAGRND" };
+    int side = FIELD(house, OIL_H_SIDE, int);
+    if (side >= 0 && side <= 2 && !combat_building_count(house, depots[side]) && FIELD(house, OIL_H_PRODUCING, int) == -1) {
+        BYTE *type = find_type(BUILDINGTYPE_ARRAY, depots[side]);
+        if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+            logmsg("director: house %d queued %s for the expansion MCV", FIELD(house, 0x30, int), depots[side]);
+        }
+    }
+}
+
+/* ---- ferry ----
+ * The enemy base lies in another movement zone: land units cannot walk there. One amphibious
+ * transport at a time loads ground units at home, drives to a landing spot in the enemy's zone and
+ * unloads; landed units rejoin the army there. */
+
+static int dir_zone(CellXY c)
+{
+    return ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &c, 0, 0);
+}
+
+/* Land-connected unless no zone sampled around one base matches one sampled around the other. */
+static int dir_connected(CellXY a, CellXY b)
+{
+    static const signed char ring[16][2] = { {5,0},{4,2},{3,3},{2,4},{0,5},{-2,4},{-3,3},{-4,2},
+                                            {-5,0},{-4,-2},{-3,-3},{-2,-4},{0,-5},{2,-4},{3,-3},{4,-2} };
+    int za[17], zb[17];
+    za[16] = dir_zone(a);
+    zb[16] = dir_zone(b);
+    for (int i = 0; i < 16; i++) {
+        za[i] = dir_zone((CellXY){ (short)(a.X + ring[i][0]), (short)(a.Y + ring[i][1]) });
+        zb[i] = dir_zone((CellXY){ (short)(b.X + ring[i][0]), (short)(b.Y + ring[i][1]) });
+    }
+    for (int i = 0; i < 17; i++)
+        for (int j = 0; j < 17; j++)
+            if (za[i] >= 0 && za[i] == zb[j])
+                return 1;
+    return 0;
+}
+
+static void dir_ferry(BYTE *house, DirState *d)
+{
+    int side = FIELD(house, OIL_H_SIDE, int);
+    if (!d->island || side < 0 || side > 2)
+        return;
+    if (d->ferry && (!dir_object_listed(OIL_TECHNO_ARRAY, d->ferry) || !oil_live(d->ferry)
+                     || FIELD(d->ferry, O_OWNER, BYTE *) != house))
+        d->ferry = NULL;
+    if (!d->ferry) {
+        DynVec *v = OIL_TECHNO_ARRAY;
+        for (int i = 0; i < v->Count && !d->ferry; i++) {
+            BYTE *o = v->Items[i];
+            if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 1
+                && !_stricmp((char *)dir_type(o) + T_ID, dir_transports[side]))
+                d->ferry = o;
+        }
+        d->ferry_state = 0;
+        d->ferry_frame = CURRENT_FRAME;
+        if (!d->ferry)
+            return;
+        d->dock = object_cell(d->ferry);
+    }
+    BYTE *t = d->ferry;
+    CellXY at = object_cell(t);
+    int passengers = FIELD(t, T_PASSENGERS, int);
+    if (d->ferry_state == 0) {   /* load: call the nearest idle ground units on this side */
+        if (passengers >= 6 || (passengers && CURRENT_FRAME - d->ferry_frame > 1200)) {
+            CellXY e = dir_house_center(d->enemy), out = { 0, 0 };
+            int zone = dir_zone(e);
+            ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &e, 1, zone, 0, 0, 2, 2, 1, 0, 0, 0, &d->base, 0, 0);
+            if (out.X <= 0)
+                return;
+            d->landing = out;
+            d->ferry_state = 1;
+            d->ferry_frame = CURRENT_FRAME;
+            logmsg("director: house %d ferry sails with %d aboard to %d,%d", FIELD(house, 0x30, int), passengers,
+                   out.X, out.Y);
+            dir_order(t, MISSION_MOVE, NULL, dir_cell(out));
+            return;
+        }
+        int called = 0;
+        DynVec *v = OIL_TECHNO_ARRAY;
+        for (int i = 0; i < v->Count && called < 8 - passengers; i++) {
+            BYTE *o = v->Items[i];
+            if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_crosses(o) || !dir_poolable(o, dir_whatami(o)))
+                continue;
+            CellXY c = object_cell(o);
+            if (dir_zone(c) != d->home_zone || dir_dist2(c, at) > 30 * 30)
+                continue;
+            called++;
+            if (!dir_recent_order(o, t, 600))
+                dir_order(o, MISSION_ENTER, t, NULL);
+        }
+    } else if (d->ferry_state == 1) {   /* sail, then unload beside the enemy */
+        if (dir_dist2(at, d->landing) <= 4 * 4 || CURRENT_FRAME - d->ferry_frame > 4000) {
+            dir_order(t, 16, NULL, NULL);
+            d->ferry_state = 2;
+            d->ferry_frame = CURRENT_FRAME;
+        } else if (!dir_recent_order(t, dir_cell(d->landing), 450))
+            dir_order(t, MISSION_MOVE, NULL, dir_cell(d->landing));
+    } else if (d->ferry_state == 2) {   /* wait until empty, then go home for the next load */
+        if (!passengers || CURRENT_FRAME - d->ferry_frame > 900) {
+            d->ferry_state = 3;
+            dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
+        } else if (!dir_recent_order(t, (BYTE *)2, 150))
+            dir_order(t, 16, NULL, NULL);
+    } else if (dir_dist2(at, d->dock) <= 5 * 5 || CURRENT_FRAME - d->ferry_frame > 6000) {
+        d->ferry_state = 0;
+        d->ferry_frame = CURRENT_FRAME;
     }
 }
 
@@ -681,23 +1225,43 @@ static void dir_update(BYTE *house)
         return;
     d->next_think = CURRENT_FRAME + 15;
     d->base = dir_house_center(house);
-    if (!d->enemy || !dir_hostile(house, d->enemy) || !FIELD(d->enemy, H_OWNED_BUILDINGS, int)) {
+    if (!d->enemy || !dir_hostile(house, d->enemy) || !dir_house_alive(d->enemy)) {
         d->enemy = dir_pick_enemy(house, d->base);
         d->unreachable_count = 0;
     }
-    if (d->enemy) {
-        /* Rally a third of the way toward the enemy, at most 18 cells out. */
-        CellXY e = dir_house_center(d->enemy);
-        int dx = e.X - d->base.X, dy = e.Y - d->base.Y;
-        int len = 1;
-        while (len * len < dx * dx + dy * dy)
-            len++;
-        int step = len / 3 < 18 ? len / 3 : 18;
-        d->rally = (CellXY){ (short)(d->base.X + dx * step / len), (short)(d->base.Y + dy * step / len) };
-    } else
-        d->rally = d->base;
+    if (d->enemy != d->rally_enemy || CURRENT_FRAME >= d->rally_frame) {
+        d->rally_enemy = d->enemy;
+        d->rally_frame = CURRENT_FRAME + 3000;
+        d->rally = dir_pick_rally(d);
+        d->home_zone = dir_zone(d->rally);   /* the rally is clear land, unlike a built-over base centre */
+    }
+    /* Cut off by water, from the start or because a bridge fell (the engine re-zones the map then).
+     * Re-checked often: a repaired bridge brings the ground war back. */
+    if (CURRENT_FRAME >= d->next_island) {
+        d->next_island = CURRENT_FRAME + 600;
+        int island = d->enemy && !dir_connected(d->base, dir_house_center(d->enemy));
+        if (island != d->island)
+            logmsg("director: house %d frame %d: enemy base %s", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   island ? "cut off by water: ferrying troops, building hover/air units" : "reachable by land again");
+        d->island = island;
+    }
     dir_scan_enemies(house, d);
     dir_army(house, d);
+    if (CURRENT_FRAME % 150 < 15 && (director_enabled(house) & DIR_F_ENGINEERS))
+        dir_engineers(house, d);
+    dir_economy(house, d);
+    dir_expansion(house, d);
+    dir_ferry(house, d);
+    /* Allies need a Robot Control Center before Robot Tanks can cross water. */
+    if ((d->blocked || d->island) && FIELD(house, OIL_H_SIDE, int) == 0 && FIELD(house, OIL_H_PRODUCING, int) == -1
+        && !combat_building_count(house, "GAROBO")) {
+        BYTE *type = find_type(BUILDINGTYPE_ARRAY, "GAROBO");
+        if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
+            && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)) {
+            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+            logmsg("director: house %d queued GAROBO for Robot Tanks", FIELD(house, 0x30, int));
+        }
+    }
 }
 
 static void patch_director(void)

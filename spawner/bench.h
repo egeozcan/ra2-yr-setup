@@ -20,12 +20,13 @@
 #define H_COST_AIRCRAFT 0x160B0
 #define H_ALLIES 0x5788
 
+#include "director-policy.h"
 static FILE *bench_file;
 static void bench_row_extra(BYTE *house);
 static int bench_limit, bench_next, bench_over, bench_players, bench_reveal, bench_camera = -1;
 static void bench_camera_update(void);
 static DWORD bench_start_ms;
-static int director_slot[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static int director_slot[8] = { DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT };
 static int director_house[32], director_mapped;
 
 static void bench_init(void)
@@ -33,7 +34,7 @@ static void bench_init(void)
     for (int i = 1; i < 8; i++) {
         char sec[8];
         snprintf(sec, sizeof sec, "AI%d", i);
-        director_slot[i] = ini_int(sec, "Director", 1) ? ini_int(sec, "DirectorFlags", 0xFF) : 0;
+        director_slot[i] = ini_int(sec, "Director", 1) ? ini_int(sec, "DirectorFlags", DIR_F_DEFAULT) : 0;
     }
     if (!ini_int("Settings", "Benchmark", 0))
         return;

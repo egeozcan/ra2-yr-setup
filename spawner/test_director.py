@@ -28,10 +28,12 @@ class PolicyTests(unittest.TestCase):
             assert(dir_should_launch(8000, 10, 0, 0, 13000));
             assert(!dir_should_launch(30000, 60, 90000, 0, 13000));   /* no count override */
             assert(dir_should_launch(60000, 10, 90000, 0, 13000));
-            /* retreat: bled below 40% and outgunned locally */
-            assert(dir_should_retreat(3000, 10000, 4000));
-            assert(!dir_should_retreat(4000, 10000, 9000));
-            assert(!dir_should_retreat(3000, 10000, 3600));
+            /* retreat: losing at the front after losses, or bled out against resistance */
+            assert(!dir_should_retreat(1000, 10000, 1000, 0));
+            assert(dir_should_retreat(2900, 10000, 2900, 100));
+            assert(dir_should_retreat(6900, 10000, 3000, 4000));
+            assert(!dir_should_retreat(7000, 10000, 3000, 4000));
+            assert(!dir_should_retreat(6900, 10000, 4000, 5000));
             /* defend: ignore scouts; while attacking only big raids recall the army */
             assert(!dir_base_threat(1499, 0, DIR_GATHER));
             assert(dir_base_threat(1500, 10000, DIR_GATHER));
@@ -61,6 +63,10 @@ class PolicyTests(unittest.TestCase):
             assert(dir_wanted_factories(25000, 5000, 1) == 3);
             assert(dir_wanted_factories(25000, 5000, 2) == 4);
             assert(dir_can_spend(3500, 1000, 2500) && !dir_can_spend(3499, 1000, 2500));
+            assert(dir_want_refinery(16000, 3, 3, 0, 5000));
+            assert(!dir_want_refinery(16000, 3, 3, 1, 5000));   /* idle harvesters: ore gone or cut off */
+            assert(!dir_want_refinery(16000, 4, 4, 0, 5000) && !dir_want_refinery(5000, 1, 1, 0, 5000));
+            assert(!dir_want_refinery(16000, 3, 3, 0, 12000));
         }
         '''
         with tempfile.TemporaryDirectory() as tmp:

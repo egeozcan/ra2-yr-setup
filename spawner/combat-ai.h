@@ -146,26 +146,12 @@ static void combat_queue_expansion(BYTE *house)
     combat_expansions[idx].next_scan = CURRENT_FRAME + 900;
     static const char *factories[] = { "GAWEAP", "NAWEAP", "YAWEAP" };
     static const char *yards[] = { "GAYARD", "NAYARD", "YAYARD" };
-    static const char *refineries[] = { "GAREFN", "NAREFN", "YAREFN" };
-    const char *candidates[] = { yards[side], factories[side], "GAAIRC", "AMRADR", refineries[side] };
+    const char *candidates[] = { yards[side], factories[side], "GAAIRC", "AMRADR" };
     int ground_pending, plane_pending;
     combat_pending(house, &ground_pending, &plane_pending);
     int owned_planes = side == 0 ? combat_owned_planes(house) : 0;
     int cash = FIELD(house, OIL_H_CASH, int);
     int power = FIELD(house, OIL_H_POWER, int) - FIELD(house, OIL_H_DRAIN, int);
-    /* Director: once the opening cash is spent, income is the limit. A refinery comes first. */
-    if ((director_enabled(house) & DIR_F_ECONOMY)
-        && dir_want_refinery(CURRENT_FRAME, FIELD(house, OIL_H_REFINERIES, int), FIELD(house, H_HARVESTERS, int),
-                             FIELD(house, OIL_H_CASH, int))) {
-        BYTE *type = find_type(BUILDINGTYPE_ARRAY, refineries[side]);
-        if (type && FIELD(house, OIL_H_CASH, int) >= ((int (GTHISCALL *)(BYTE *))VFUNC(type, 0xAC))(type)
-            && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
-            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
-            logmsg("director: house %d queued %s (refineries %d, harvesters %d, cash %d)", idx, refineries[side],
-                   FIELD(house, OIL_H_REFINERIES, int), FIELD(house, H_HARVESTERS, int), FIELD(house, OIL_H_CASH, int));
-            return;
-        }
-    }
     for (int role = 0; role < 4; role++) {
         if (role >= 2 && side != 0)
             continue;
