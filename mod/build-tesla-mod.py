@@ -49,7 +49,7 @@ UNIT_OVERRIDES = {
     "Primary": "ATankBolt",
     "ElitePrimary": "ATankBoltE",
     "Strength": "1500",                  # 300
-    "Speed": "4",                        # 6; half the earlier 9 (Speed is an integer)
+    "Speed": "2",                        # 6; halved twice from the earlier 9 (Speed is an integer)
     "Sight": "10",                       # 8
     "ROT": "8",                          # 5
     "Cost": "3000",                      # 1200

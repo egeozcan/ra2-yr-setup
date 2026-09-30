@@ -242,7 +242,7 @@ It shares no geometry with the Tesla tank.
   afterwards overwrites it with the custom model again.
 
 Stats compared with the stock Tesla tank:
-- 1500 HP (stock 300), speed 4 (stock 6; was 9, halved and rounded down because Speed is an integer), self-healing, immune to mind control and radiation.
+- 1500 HP (stock 300), speed 2 (stock 6; was 9, then 4, halved again on 2026-09-30 because it was too strong), self-healing, immune to mind control and radiation.
 - Weapon: 300 damage, range 7; elite: 450 damage, range 8. The bolt chains between targets.
 - Warhead `LibertyElectric` does full damage to buildings.
 - Requires an Allied War Factory and an Allied Battle Lab (`GAWEAP,GATECH`). The Battle Lab
