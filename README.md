@@ -1017,13 +1017,13 @@ plus army value, and within 20% count as a draw.
 | Set | Director record |
 |---|---|
 | Tuning suite, first version | 15/16 (1 timeout while far ahead) |
-| Tuning suite, 2026-09-30 evening build (v4) | 16/16 |
-| Tuning suite, v8 build | 14/16 |
-| **Tuning suite, final build (v9: ferries, expansion, evidence-based water fallback)** | **15W 1D** (the draw: director ahead at the cap) |
-| Held-out maps set 1 (v4 build, then used for tuning) | 11/13; director won all 3 free-for-alls with 4–6 AIs |
-| **Held-out maps set 2** (8 unused maps, Tier-2/3 bases, v8) | **13W 1D**: 12/12 duels, all won by frame 18,500; 1 director beat 5 stock AIs in a 6-AI FFA; the 1-vs-3 FFA ended with the director ahead |
-| 1 director vs 2 allied stock Brutals | v4 build 1W 4L → v8 **3W 2L** |
-| 4-AI FFAs, 2 directors vs 2 stock | 2/2 won by a director (v4 and v8) |
+| Tuning suite, v4 / v8 / v9 builds | 16/16 / 14/16 / 15W 1D |
+| **Tuning suite, final build** | **16/16** (15 eliminations; 1 timeout with 99k vs 46k army) |
+| Held-out maps set 1 (v4 build, then used for tuning) | 11/13; director won all 3 FFAs with 4–6 AIs |
+| Held-out maps set 2 (8 unused maps, Tier-2/3 starts), v8 build | 13W 1D: 12/12 duels; won the 6-AI FFA (1 director vs 5 stock) |
+| **Held-out maps set 2, final build** | **10W 4L**: 10 of 12 duels; lost EB5 (economy ran dry by frame 9k); both big FFAs ended at the cap with the director behind |
+| 1 director vs 2 allied stock Brutals | v4 build 1W 4L → v8 3W 2L → final 2W 1L, plus 2 where it eliminated one of the two before the cap |
+| 4-AI FFAs, 2 directors vs 2 stock | won by a director every time (v4, v8, final) |
 
 - The tuning suite covers 8 stock maps and all three sides, with starts swapped.
 - In the v1 baseline, stock Brutal kept 40–50k credits unspent all match. A director house spends
@@ -1036,11 +1036,16 @@ plus army value, and within 20% count as a draw.
     repeat trips.
   - An MCV was built, driven to an ore field 23 cells out and deployed.
 
-  Neither has yet triggered on its own in a benchmark match.
+  In the final held-out and hard runs, expansion also triggered naturally in 3 of 21 matches.
+  The ferry has not.
 - The director also runs in normal launches. With `Benchmark=0` and Human in peace off, the log
   shows `director=0x…` for the AI house, and the AI destroyed an idle human base.
 
 ### Known limits
+
+- Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
+  post-v8 behaviours those matches triggered were expansions.
+- The stock AI sometimes sets an expansion MCV to Hunt, so the director keeps re-issuing the deploy.
 
 - The water fallback relies on stall evidence, so a cut-off army first wastes some attack time.
 - A bridge whose hut is across the water can't be repaired. An engineer that times out skips

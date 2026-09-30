@@ -55,7 +55,7 @@ typedef struct {
     int repair_frame, repair_mode, want_engineer, failed_frame;
     BYTE *failed_job;   /* mode 0 bridge, 1 capture */
     int idle_harvesters, next_economy;
-    int want_mcv, next_site;                  /* expansion: build an MCV and deploy it by fresh ore */
+    int want_mcv, want_mcv_frame, next_site, deploy_tries;                  /* expansion: build an MCV and deploy it by fresh ore */
     CellXY site;
     int island, next_island, ferry_state, ferry_frame, home_zone;   /* enemy only reachable by water: ferry troops */
     BYTE *ferry;
@@ -318,7 +318,8 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
             d->unit_request_frame = CURRENT_FRAME;
         }
     }
-    if (current == -1 && !d->want_mcv)   /* saving up for the expansion MCV */
+    /* The MCV is bought as an urgent order when cash allows; the army is never paused for it. */
+    if (current == -1)
         dir_choose_vehicle(house, d);
     return result;
 }
@@ -839,6 +840,16 @@ static void dir_economy(BYTE *house, DirState *d)
             logmsg("director: house %d queued its first war factory at frame %d", FIELD(house, 0x30, int), CURRENT_FRAME);
         }
     }
+    /* the expansion MCV needs a service depot (Yuri: grinder); tried every tick like the refinery */
+    static const char *depots[3] = { "GADEPT", "NADEPT", "YAGRND" };
+    if (d->want_mcv && FIELD(house, OIL_H_PRODUCING, int) == -1 && !combat_building_count(house, depots[side])) {
+        BYTE *type = find_type(BUILDINGTYPE_ARRAY, depots[side]);
+        if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
+            && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+            logmsg("director: house %d queued %s for the expansion MCV", FIELD(house, 0x30, int), depots[side]);
+        }
+    }
     if (CURRENT_FRAME >= d->next_economy) {
         d->next_economy = CURRENT_FRAME + 450;
         d->idle_harvesters = dir_idle_harvesters(house);
@@ -1088,9 +1099,9 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
         return 0;
     /* a clear 4x4 spot for the construction yard beside the ore */
     CellXY out = { 0, 0 }, want = *site;
-    /* overlay allowed: the ore is overlay */
-    ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, -1, 0, 0, 4, 4, 0, 0, 0, 0, &want, 0, 0);
-    if (out.X <= 0 || dir_dist2(out, want) > 10 * 10)
+    /* beside the field: buildings cannot stand on ore, so no overlay under the yard */
+    ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, -1, 0, 0, 4, 4, 1, 0, 0, 0, &want, 0, 0);
+    if (out.X <= 0 || dir_dist2(out, want) > 12 * 12)
         return 0;
     *site = (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
     return 1;
@@ -1113,9 +1124,25 @@ static void dir_expansion(BYTE *house, DirState *d)
         CellXY at = object_cell(mcv);
         BYTE *cell = dir_cell(d->site);
         if (dir_dist2(at, d->site) <= 2 * 2) {
+            /* TryToDeploy refuses while the unit has a destination or is still rolling */
+            if (FIELD(mcv, COMBAT_DESTINATION, BYTE *)) {
+                ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(mcv, COMBAT_SET_DESTINATION))(mcv, NULL, 1);
+                ((char (GTHISCALL *)(BYTE *))VFUNC(mcv, COMBAT_STOP_MOVING))(mcv);
+                return;
+            }
             if (!dir_recent_order(mcv, (BYTE *)1, 120)) {
-                dir_order(mcv, 16, NULL, NULL);   /* Unload = deploy */
-                logmsg("director: house %d deploying expansion MCV at %d,%d", FIELD(house, 0x30, int), at.X, at.Y);
+                if (++d->deploy_tries > 2) {
+                    /* the spot is taken (units, a new building): the nearest clear 4x4 around it */
+                    CellXY out = { 0, 0 };
+                    ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &at, 1, -1, 0, 0, 4, 4, 1, 0, 0, 0, &at, 0, 0);
+                    if (out.X > 0 && dir_dist2(out, at) <= 12 * 12)
+                        d->site = (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
+                    d->deploy_tries = 0;
+                }
+                /* the player's deploy order: the Unload mission retries UnitClass::TryToDeploy each frame */
+                ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(mcv, VT_QUEUEMISSION))(mcv, 16, 1);
+                logmsg("director: house %d deploying expansion MCV at %d,%d (mission %d)", FIELD(house, 0x30, int),
+                       at.X, at.Y, FIELD(mcv, COMBAT_MISSION, int));
             }
         } else if (cell && !dir_recent_order(mcv, cell, 450))
             dir_order(mcv, MISSION_MOVE, NULL, cell);
@@ -1124,8 +1151,9 @@ static void dir_expansion(BYTE *house, DirState *d)
     if (CURRENT_FRAME < d->next_site)
         return;
     d->next_site = CURRENT_FRAME + 900;
+    int wanted = d->want_mcv;
     d->want_mcv = 0;
-    if (!(director_enabled(house) & DIR_F_EXPANSION) || !yards || yards >= 3 || mcv || CURRENT_FRAME < 9000
+    if (!(director_enabled(house) & DIR_F_EXPANSION) || !yards || yards >= 2 || mcv || CURRENT_FRAME < 9000
         || (d->idle_harvesters < 1 && !bench_force_expand) || d->state == DIR_DEFEND)
         return;
     if (!dir_find_site(house, d, &d->site)) {
@@ -1134,18 +1162,12 @@ static void dir_expansion(BYTE *house, DirState *d)
         return;
     }
     d->want_mcv = 1;
-    logmsg("director: house %d wants an expansion at %d,%d (idle harvesters %d)", FIELD(house, 0x30, int),
-           d->site.X, d->site.Y, d->idle_harvesters);
-    /* the MCV needs a service depot (Yuri: grinder) */
-    static const char *depots[3] = { "GADEPT", "NADEPT", "YAGRND" };
-    int side = FIELD(house, OIL_H_SIDE, int);
-    if (side >= 0 && side <= 2 && !combat_building_count(house, depots[side]) && FIELD(house, OIL_H_PRODUCING, int) == -1) {
-        BYTE *type = find_type(BUILDINGTYPE_ARRAY, depots[side]);
-        if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
-            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
-            logmsg("director: house %d queued %s for the expansion MCV", FIELD(house, 0x30, int), depots[side]);
-        }
+    if (!wanted) {
+        d->want_mcv_frame = CURRENT_FRAME;
+        logmsg("director: house %d wants an expansion at %d,%d (idle harvesters %d)", FIELD(house, 0x30, int),
+               d->site.X, d->site.Y, d->idle_harvesters);
     }
+
 }
 
 /* ---- ferry ----
