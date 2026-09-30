@@ -1,0 +1,144 @@
+/* Optional AI-vs-AI benchmark for measuring Brutal AI changes.
+ * [Settings] Benchmark=1 writes yspawn-bench.csv beside the exe: one row per player house every
+ * BENCH_INTERVAL frames, then a result row when one side is left (or FrameLimit= is reached),
+ * after which the game exits. [AIn] Director=0 turns the strategy director (director.h) off for that
+ * AI (default on), so old and new Brutal logic can fight in the same match; DirectorFlags= keeps only
+ * some director features on (DIR_F_* bits, for ablation runs).
+ * HouseClass offsets: YRpp field order, anchored on known fields (OwnedBuildings 0x2F0,
+ * Balance 0x30C, PowerOutput 0x53A4, BaseSpawnCell 0x5490, ProducingBuildingTypeIndex 0x564C). */
+#define BENCH_INTERVAL 300
+#define H_OWNED_UNITS 0x2E8
+#define H_OWNED_NAVY 0x2EC
+#define H_OWNED_BUILDINGS 0x2F0
+#define H_OWNED_INFANTRY 0x2F4
+#define H_OWNED_AIRCRAFT 0x2F8
+#define H_HARVESTERS 0x158
+#define H_KILLED_UNITS 0x5434
+#define H_KILLED_BUILDINGS 0x5488
+#define H_COST_INFANTRY 0x160A8
+#define H_COST_VEHICLES 0x160AC
+#define H_COST_AIRCRAFT 0x160B0
+#define H_ALLIES 0x5788
+
+static FILE *bench_file;
+static void bench_row_extra(BYTE *house);
+static int bench_limit, bench_next, bench_over, bench_players, bench_reveal, bench_camera = -1;
+static void bench_camera_update(void);
+static DWORD bench_start_ms;
+static int director_slot[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static int director_house[32], director_mapped;
+
+static void bench_init(void)
+{
+    for (int i = 1; i < 8; i++) {
+        char sec[8];
+        snprintf(sec, sizeof sec, "AI%d", i);
+        director_slot[i] = ini_int(sec, "Director", 1) ? ini_int(sec, "DirectorFlags", 0xFF) : 0;
+    }
+    if (!ini_int("Settings", "Benchmark", 0))
+        return;
+    bench_limit = ini_int("Settings", "FrameLimit", 0);
+    bench_reveal = ini_int("Settings", "RevealMap", 0);      /* observer sees the whole map */
+    bench_camera = ini_int("Settings", "Camera", -1);        /* follow this house's army front */
+    bench_file = fopen("yspawn-bench.csv", "w");
+    if (!bench_file) {
+        logmsg("benchmark: could not open yspawn-bench.csv");
+        return;
+    }
+    fputs("frame,ms,house,country,human,director,defeated,units,infantry,aircraft,navy,buildings,cash,"
+          "harvesters,refineries,killed_units,killed_buildings,cost_infantry,cost_vehicles,cost_aircraft,power,drain,"
+          "war_factories,building_order,unit_order,infantry_order,state,army_value\n",
+          bench_file);
+    logmsg("benchmark: enabled, frame limit %d", bench_limit);
+}
+
+/* Houses 0..players-1 are the match's players, in the order AssignHouses created them:
+ * checked in yspawn.log's "benchmark: house" lines. AI slots follow [AI1]..[AI7] order. */
+static void bench_map_houses(void)
+{
+    DynVec *v = HOUSE_ARRAY;
+    int slot = 1;
+    director_mapped = 1;
+    bench_players = *GAME_PLAYERCOUNT + SESSION->Config.AIPlayers;
+    for (int i = 0; i < v->Count && i < 32; i++) {
+        BYTE *h = v->Items[i];
+        if (i >= bench_players)
+            break;
+        if (!h[H_ISHUMAN]) {
+            while (slot < 8 && SESSION->Config.Slots.Countries[slot] < 0)
+                slot++;
+            director_house[i] = slot < 8 ? director_slot[slot] : 1;
+            slot++;
+        }
+        logmsg("house %d %s human=%d director=%#x", i, (char *)FIELD(h, H_TYPE, BYTE *) + T_ID,
+               h[H_ISHUMAN] != 0, director_house[i]);
+    }
+}
+
+/* Director feature bits for the house (0: director off). Every match maps houses on first use. */
+static int director_enabled(BYTE *house)
+{
+    if (!director_mapped)
+        bench_map_houses();
+    int idx = FIELD(house, 0x30, int);
+    return idx >= 0 && idx < 32 ? director_house[idx] : 0;
+}
+
+static void bench_row(BYTE *h)
+{
+    fprintf(bench_file, "%d,%lu,%d,%.24s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+            CURRENT_FRAME, (unsigned long)(GetTickCount() - bench_start_ms), FIELD(h, 0x30, int),
+            (char *)FIELD(h, H_TYPE, BYTE *) + T_ID, h[H_ISHUMAN] != 0, director_house[FIELD(h, 0x30, int) & 31] != 0,
+            h[OIL_H_DEFEATED] != 0, FIELD(h, H_OWNED_UNITS, int), FIELD(h, H_OWNED_INFANTRY, int),
+            FIELD(h, H_OWNED_AIRCRAFT, int), FIELD(h, H_OWNED_NAVY, int), FIELD(h, H_OWNED_BUILDINGS, int),
+            FIELD(h, OIL_H_CASH, int), FIELD(h, H_HARVESTERS, int), FIELD(h, OIL_H_REFINERIES, int),
+            FIELD(h, H_KILLED_UNITS, int), FIELD(h, H_KILLED_BUILDINGS, int), FIELD(h, H_COST_INFANTRY, int),
+            FIELD(h, H_COST_VEHICLES, int), FIELD(h, H_COST_AIRCRAFT, int), FIELD(h, OIL_H_POWER, int),
+            FIELD(h, OIL_H_DRAIN, int));
+    bench_row_extra(h);   /* production and director columns, from director.h */
+}
+
+/* Called from the per-house AI update; samples every player house once per interval. */
+static void bench_sample(void)
+{
+    if (!bench_file || bench_over || CURRENT_FRAME < bench_next)
+        return;
+    if (!bench_next) {
+        bench_start_ms = GetTickCount();
+        if (!director_mapped)
+            bench_map_houses();
+        DynVec *hv = HOUSE_ARRAY;
+        for (int i = 0; bench_reveal && i < hv->Count && i < bench_players; i++)
+            if (((BYTE *)hv->Items[i])[H_ISHUMAN])   /* MapClass::Reveal, as the Spy Satellite does */
+                ((void (GTHISCALL *)(void *, BYTE *))0x577D90)(MAP_INSTANCE, hv->Items[i]);
+    }
+    bench_camera_update();
+    bench_next = CURRENT_FRAME + BENCH_INTERVAL;
+    DynVec *v = HOUSE_ARRAY;
+    BYTE *alive[32];
+    int n = 0;
+    for (int i = 0; i < v->Count && i < bench_players; i++) {
+        BYTE *h = v->Items[i];
+        bench_row(h);
+        if (!h[H_ISHUMAN] && !h[OIL_H_DEFEATED])
+            alive[n++] = h;
+    }
+    /* Over when every surviving AI is allied with the first one (ignoring the idle human). */
+    int sides = n > 0;
+    for (int i = 1; i < n; i++)
+        if (!(FIELD(alive[0], H_ALLIES, DWORD) & (1u << FIELD(alive[i], 0x30, int))))
+            sides = 2;
+    int timeout = bench_limit && CURRENT_FRAME >= bench_limit;
+    if (sides <= 1 || timeout) {
+        bench_over = 1;
+        fprintf(bench_file, "result,%d,%s,%d\n", CURRENT_FRAME, timeout && sides > 1 ? "timeout" : "win",
+                n ? FIELD(alive[0], 0x30, int) : -1);
+        fclose(bench_file);
+        bench_file = NULL;
+        logmsg("benchmark: %s at frame %d", sides <= 1 ? "one side left" : "frame limit", CURRENT_FRAME);
+        if (logf)
+            fflush(logf);
+        ExitProcess(0);
+    }
+    fflush(bench_file);
+}

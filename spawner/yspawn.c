@@ -1023,9 +1023,14 @@ static void start_bases(void)
 
 static void combat_queue_expansion(BYTE *house);
 static void team_telemetry_sample(BYTE *house);
+static void bench_sample(void);
+static int director_enabled(BYTE *house);
+static void dir_update(BYTE *house);
 #include "oil-defenses.h"
+#include "bench.h"
 #include "combat-ai.h"
 #include "team-telemetry.h"
+#include "director.h"
 #include "human-peace.h"
 
 __declspec(dllexport) int yspawn_init(void) { return 0; }   /* the symbol the exe imports */
@@ -1048,7 +1053,9 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
     patch(AI_GANG_UP, (const BYTE[]){ 0xC3 }, 1);
     patch_magnetron();
     patch_oil_defenses();
+    patch_director();
     team_telemetry_init();
+    bench_init();
     human_in_peace = ini_int("Settings", "HumanInPeace", 0) != 0;
     if (human_in_peace)
         peace_ready = patch_human_peace();
