@@ -930,3 +930,126 @@ back this update. Revert the corresponding source edits before reinstalling to
 keep it rolled back. Start a **new skirmish** to load the changes. Live attack
 cohesion, capture timing, coastal access and balance have not yet been measured.
 Land/water pathfinding and attack targeting still use the stock engine.
+
+## Brutal strategy director (2026-09-30)
+
+The custom launcher gives every **Brutal** computer player a strategy director
+(`spawner/director.h`, decisions in `spawner/director-policy.h`). Easy/Normal AIs and the
+ordinary Steam launch are unchanged. The INI teams from the sections above still run. The
+director works alongside them and takes over what the stock AI does badly.
+
+What it does, per Brutal house:
+
+- **Production.** Stock AI builds units only to fill the task forces its triggers choose, so it
+  sat on ~40k unspent credits with one idle factory. When the stock unit and infantry pickers leave
+  the queue empty, the director orders a unit. It picks the role (main tank, anti-air, siege,
+  anti-infantry) furthest below a mix taken from the enemy's current forces: more anti-air
+  against aircraft, more siege against heavy defences. It adds war factories as cash piles up
+  (up to 4), and queues the first war factory as soon as a refinery stands. It adds refineries
+  when money runs short, but not while harvesters stand idle (ore gone or cut off). Liberators are
+  capped at 4 and Masterminds at 3.
+- **Army.** Team-less combat units form one army. Units are taken from attack teams once their
+  script has started. Guard, oil and base-defence teams keep theirs.
+  - The army gathers at a rally point on open land (never a bridge or inside the base).
+  - It launches when it outvalues the target enemy's army plus half its defences.
+  - It attacks the nearest structures with focus fire. Units answer anything already able to
+    shoot them, and units well ahead of the group wait for the rest.
+  - It retreats a losing attack, measured at the front. It defends against enemies near its
+    buildings, with dwell times so it doesn't ping-pong through chokes.
+- **Engineers.** It repairs the nearest broken bridge on its side, using the engine's own
+  `MapClass::IsLinkedBridgeDestroyed`. It captures enemy tech buildings (derricks first) near
+  its army or base once no armed enemy guards them. The army never shoots those buildings.
+- **Water.** An attack that reaches no objective, with several objectives in a row going nowhere,
+  marks the enemy as cut off. This covers an island map or a bridge that fell. The director then:
+  - builds an amphibious transport;
+  - drives the transport ashore at the rally point and loads up to 8 ground units;
+  - drives it to the enemy base, unloads, and repeats;
+  - switches main production to hover/air units: Robot Tanks (it queues a Robot Control Center
+    for them), Kirovs and Siege Choppers, or Floating Discs.
+
+  Units dropped nearer the enemy's base rejoin the army, and units at home still defend. The
+  ground route is retried every 6000 frames, for example after engineers mend the bridge.
+  - The engine's movement-zone labels were tried as a connectivity test and rejected. One
+    landmass reads several labels.
+- **Expansion.** With harvesters idle, it looks for rich ore 16–45 cells from home, away from its
+  refineries and from enemies. It saves up for an MCV (plus a service depot if needed), drives it
+  there and deploys it. The engine then re-centres the AI's base plan on the new yard, so new
+  refineries follow the ore.
+
+### Settings
+
+`[AIn]` keys in `yspawn.ini` (the launcher writes none, so the defaults apply):
+
+- `Director=0` turns the director off for that AI (stock Brutal).
+- `DirectorFlags=N` keeps only some features. Bits: 1 production, 2 army, 4 team takeover,
+  8 focus fire, 16 economy, 32 answer fire, 64 defences-first objectives, 128 cohesion,
+  256 engineers, 512 expansion.
+  - The default is everything except 64. Defences-first lost 3 of 4 director-vs-director
+    ablation matches.
+
+### Benchmark (`spawner/bench.py`)
+
+AI-vs-AI matches run unattended. An idle observer uses Human in peace, the game runs uncapped
+(roughly 300–600 frames/s at speed 0), and the DLL exits when one side is left or at the frame limit.
+
+- `bench.py run OUTDIR MAP AI... [--frames N] [--camera HOUSE]`: one match.
+  - Each AI is `COUNTRY:START:DIRECTOR[:DIFFICULTY[:TEAM]]`.
+  - `--camera` reveals the map and follows that house's army.
+- `bench.py suite OUTDIR [tune|heldout|heldout2|hard]`: match sets, director vs stock Brutal.
+- `bench.py summary DIR...`: one line per match, plus a win/draw/loss tally.
+- `bench.py restore`: puts the user's `yspawn.ini/.log/.map` back after runs.
+
+Bench-only `[Settings]` keys, for tests:
+- `RevealMap=1` and `Camera=HOUSE`: what `--camera` sets.
+- `ForceIsland=1`: treat enemies as cut off by water.
+- `ForceExpand=1`: expand without waiting for idle harvesters.
+
+Each match writes `yspawn-bench.csv`: per-house snapshots every 300 frames and a result row.
+- The snapshot columns `killed_units`/`killed_buildings` are the house's **losses**.
+- Also recorded: cash, factories, current build orders and director state.
+- `yspawn.log` has the director's decisions.
+
+### Results
+
+All matches were AI vs AI, every AI on Brutal, 60,000-frame cap. Timeouts are scored on buildings
+plus army value, and within 20% count as a draw.
+
+| Set | Director record |
+|---|---|
+| Tuning suite, first version | 15/16 (1 timeout while far ahead) |
+| Tuning suite, 2026-09-30 evening build (v4) | 16/16 |
+| Tuning suite, v8 build | 14/16 |
+| **Tuning suite, final build (v9: ferries, expansion, evidence-based water fallback)** | **15W 1D** (the draw: director ahead at the cap) |
+| Held-out maps set 1 (v4 build, then used for tuning) | 11/13; director won all 3 free-for-alls with 4–6 AIs |
+| **Held-out maps set 2** (8 unused maps, Tier-2/3 bases, v8) | **13W 1D**: 12/12 duels, all won by frame 18,500; 1 director beat 5 stock AIs in a 6-AI FFA; the 1-vs-3 FFA ended with the director ahead |
+| 1 director vs 2 allied stock Brutals | v4 build 1W 4L → v8 **3W 2L** |
+| 4-AI FFAs, 2 directors vs 2 stock | 2/2 won by a director (v4 and v8) |
+
+- The tuning suite covers 8 stock maps and all three sides, with starts swapped.
+- In the v1 baseline, stock Brutal kept 40–50k credits unspent all match. A director house spends
+  its money by frame ~18,000.
+- Live-verified: engineers repaired a fallen bridge (the log shows "bridge repaired"). An engineer
+  captured an enemy derrick placed next to the director's base.
+- Ferries and expansion were checked with the bench-only switches `ForceIsland=1` and
+  `ForceExpand=1`:
+  - A Soviet transport loaded tanks at the rally, landed them at the enemy base and made
+    repeat trips.
+  - An MCV was built, driven to an ore field 23 cells out and deployed.
+
+  Neither has yet triggered on its own in a benchmark match.
+- The director also runs in normal launches. With `Benchmark=0` and Human in peace off, the log
+  shows `director=0x…` for the AI house, and the AI destroyed an idle human base.
+
+### Known limits
+
+- The water fallback relies on stall evidence, so a cut-off army first wastes some attack time.
+- A bridge whose hut is across the water can't be repaired. An engineer that times out skips
+  that hut for 9000 frames.
+- Director-vs-director matches are dominated by start position on the tuning maps.
+
+### Install and roll back
+
+- Install with `python3 spawner/spawn.py install` while the game is closed.
+- Tests: `spawner/test_director.py` (policy rules and hook prologues).
+- The previous DLL and INIs are in `backups/director-20260930/`. Restoring `yspawn.dll` from there
+  with the game closed removes the director.

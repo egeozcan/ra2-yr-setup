@@ -24,6 +24,7 @@
 static FILE *bench_file;
 static void bench_row_extra(BYTE *house);
 static int bench_limit, bench_next, bench_over, bench_players, bench_reveal, bench_camera = -1;
+static int bench_force_island, bench_force_expand;   /* tests: force ferries / expansion */   /* test: treat every enemy as cut off by water, to exercise ferries */
 static void bench_camera_update(void);
 static DWORD bench_start_ms;
 static int director_slot[8] = { DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT };
@@ -41,6 +42,8 @@ static void bench_init(void)
     bench_limit = ini_int("Settings", "FrameLimit", 0);
     bench_reveal = ini_int("Settings", "RevealMap", 0);      /* observer sees the whole map */
     bench_camera = ini_int("Settings", "Camera", -1);        /* follow this house's army front */
+    bench_force_island = ini_int("Settings", "ForceIsland", 0);
+    bench_force_expand = ini_int("Settings", "ForceExpand", 0);
     bench_file = fopen("yspawn-bench.csv", "w");
     if (!bench_file) {
         logmsg("benchmark: could not open yspawn-bench.csv");
