@@ -226,10 +226,14 @@ static int GFASTCALL oil_build_update(BYTE *house, void *unused)
     return oil_build_original(house);
 }
 
+static int dir_outpost_place(BYTE *house, BYTE *type, CellXY *out);   /* director.h */
+
 static CellXY *GFASTCALL oil_find_location(BYTE *house, void *unused, CellXY *out,
                                           BYTE *type, void *callback, DWORD extra)
 {
     (void)unused;
+    if (dir_outpost_place(house, type, out))   /* the director's ore outpost by a captured building */
+        return out;
     int idx = FIELD(house, 0x30, int);
     if (oil_eligible(house) && idx >= 0 && idx < 32 && oil_orders[idx].house == house
         && oil_orders[idx].type == type && oil_owned(oil_orders[idx].oil, house)) {

@@ -81,6 +81,9 @@ typedef struct {
     BYTE *garrison_unit[24], *garrison_site[24];                               /* infantry on their way into civilian buildings */
     int garrison_frame[24], garrison_next, garrison_held;
     CellXY stranded_at;                                     /* units cut off by a fallen bridge */
+    BYTE *outpost_anchor, *outpost_type, *outpost_built;    /* ore outpost by a captured building */
+    CellXY outpost_ore;
+    int outpost_step, outpost_frame, next_outpost;
     int stranded_frame;
 } DirState;
 static DirState dir_state[32];
@@ -1565,6 +1568,7 @@ static void dir_army(BYTE *house, DirState *d)
 
 /* ---- economy ---- */
 static int dir_idle_harvesters(BYTE *house);
+static void dir_outpost(BYTE *house, DirState *d);
 static int dir_watch_harvester(BYTE *house, BYTE *o);
 static void dir_economy(BYTE *house, DirState *d)
 {
@@ -1595,6 +1599,7 @@ static void dir_economy(BYTE *house, DirState *d)
     if (CURRENT_FRAME >= d->next_economy) {
         d->next_economy = CURRENT_FRAME + 450;
         d->idle_harvesters = dir_idle_harvesters(house);
+        dir_outpost(house, d);
     }
     /* checked every tick: the build queue is rarely free, and stock picks fill it at once */
     if (FIELD(house, OIL_H_PRODUCING, int) != -1 || CURRENT_FRAME < d->refinery_backoff
@@ -1622,6 +1627,160 @@ static void dir_economy(BYTE *house, DirState *d)
                refineries[side], FIELD(house, OIL_H_REFINERIES, int), FIELD(house, H_HARVESTERS, int),
                FIELD(house, OIL_H_CASH, int));
     }
+}
+
+/* ---- ore outposts ----
+ * A captured tech building (an oil derrick, say) is our own building, so we may build next to it.
+ * Where rich ore lies near one, far from our refineries and clear of enemies, the director builds
+ * a refinery beside it on the ore side, then a ground defence and an anti-air defence by the
+ * refinery. One outpost at a time; a step that hasn't appeared after 3000 frames ends it. */
+static const char *dir_refineries[3] = { "GAREFN", "NAREFN", "YAREFN" };
+static int dir_object_listed(DynVec *v, BYTE *obj);
+static int dir_ore_near(CellXY c, int r);
+static const char *dir_light_defenses[3] = { "GAPILL", "NALASR", "YAGGUN" };
+static const char *dir_outpost_defenses[3] = { "NASAM", "NAFLAK", "YAGGUN" };
+
+static BYTE *dir_built_near(BYTE *house, BYTE *type, CellXY at, int r)
+{
+    DynVec *v = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *b = v->Items[i];
+        if (oil_live(b) && FIELD(b, O_OWNER, BYTE *) == house && FIELD(b, B_TYPE, BYTE *) == type
+            && dir_dist2(object_cell(b), at) <= r * r)
+            return b;
+    }
+    return NULL;
+}
+
+static int dir_outpost_place(BYTE *house, BYTE *type, CellXY *out)
+{
+    if (!house || !dir_active(house))
+        return 0;
+    DirState *d = dir_get(house);
+    if (!d || !d->outpost_step || type != d->outpost_type)
+        return 0;
+    BYTE *anchor = d->outpost_step == 1 ? d->outpost_anchor : d->outpost_built;
+    if (!anchor || !dir_object_listed(OIL_BUILDING_ARRAY, anchor) || !oil_live(anchor)
+        || FIELD(anchor, O_OWNER, BYTE *) != house)
+        return 0;
+    /* the placeable spot beside the anchor closest to the ore */
+    CellXY at = object_cell(anchor);
+    int best = 0x7FFFFFFF;
+    for (int r = 2; r <= 6; r++)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                if (abs(dx) != r && abs(dy) != r)
+                    continue;
+                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
+                int dd = dir_dist2(c, d->outpost_ore);
+                if (dd < best && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                    best = dd;
+                    *out = c;
+                }
+            }
+    if (best == 0x7FFFFFFF)
+        return 0;
+    logmsg("director: house %d frame %d: outpost %.24s placed at %d,%d", FIELD(house, 0x30, int), CURRENT_FRAME,
+           (char *)type + T_ID, out->X, out->Y);
+    return 1;
+}
+
+static int dir_queue_building(BYTE *house, const char *id, BYTE **queued)
+{
+    BYTE *type = find_type(BUILDINGTYPE_ARRAY, id);
+    if (!type || FIELD(house, OIL_H_PRODUCING, int) != -1 || FIELD(house, OIL_H_CASH, int) < dir_cost(type)
+        || ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) <= 0)
+        return 0;
+    FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+    *queued = type;
+    return 1;
+}
+
+static void dir_outpost(BYTE *house, DirState *d)
+{
+    int side = FIELD(house, OIL_H_SIDE, int);
+    if (side < 0 || side > 2)
+        return;
+    if (d->outpost_step) {
+        /* step 1: the refinery beside the captured building; 2 and 3: a ground and an anti-air
+         * defence beside the new refinery */
+        BYTE *anchor = d->outpost_step == 1 ? d->outpost_anchor : d->outpost_built;
+        if (!anchor || !dir_object_listed(OIL_BUILDING_ARRAY, anchor) || !oil_live(anchor)
+            || FIELD(anchor, O_OWNER, BYTE *) != house || CURRENT_FRAME - d->outpost_frame > 3000) {
+            d->outpost_step = 0;   /* lost the anchor, or the step never appeared */
+            return;
+        }
+        BYTE *done = dir_built_near(house, d->outpost_type, object_cell(anchor), 8);
+        if (!done) {   /* keep the order in the queue: stock picks may have taken the slot */
+            if (FIELD(house, OIL_H_PRODUCING, int) == -1)
+                dir_queue_building(house, (char *)d->outpost_type + T_ID, &d->outpost_type);
+            return;
+        }
+        if (d->outpost_step == 1)
+            d->outpost_built = done;
+        if (d->outpost_step == 3) {
+            logmsg("director: house %d frame %d: ore outpost done", FIELD(house, 0x30, int), CURRENT_FRAME);
+            d->outpost_step = 0;
+            return;
+        }
+        BYTE *next = find_type(BUILDINGTYPE_ARRAY, d->outpost_step == 1 ? dir_light_defenses[side] : dir_outpost_defenses[side]);
+        if (!next) {
+            d->outpost_step = 0;
+            return;
+        }
+        d->outpost_type = next;   /* queued from the next tick on, as above */
+        d->outpost_step++;
+        d->outpost_frame = CURRENT_FRAME;
+        return;
+    }
+    if (CURRENT_FRAME < d->next_outpost || FIELD(house, OIL_H_PRODUCING, int) != -1)
+        return;
+    d->next_outpost = CURRENT_FRAME + 3000;
+    BYTE *refinery = find_type(BUILDINGTYPE_ARRAY, dir_refineries[side]);
+    if (!refinery)
+        return;
+    DynVec *v = OIL_BUILDING_ARRAY;
+    BYTE *best = NULL;
+    CellXY best_ore = { 0, 0 };
+    int best_score = 2000;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *b = v->Items[i], *type = FIELD(b, B_TYPE, BYTE *);
+        if (!oil_live(b) || FIELD(b, O_OWNER, BYTE *) != house || !type
+            || !in_list("CAOILD,CAAIRP,CATHOSP,CAOUTP,CAMACH,CAPOWR", (char *)type + T_ID))
+            continue;
+        CellXY at = object_cell(b);
+        int distant = 1;
+        for (int k = 0; k < v->Count && distant; k++) {
+            BYTE *r = v->Items[k];
+            distant = !(oil_live(r) && FIELD(r, O_OWNER, BYTE *) == house && FIELD(r, B_TYPE, BYTE *)
+                    && FIELD(r, B_TYPE, BYTE *)[0x16BB] && dir_dist2(object_cell(r), at) < 15 * 15);   /* Refinery */
+        }
+        int armed = 0;
+        for (int k = 0; k < dir_enemy_count && !armed; k++)
+            armed = dir_enemies[k].armed && dir_dist2(dir_enemies[k].at, at) <= 12 * 12;
+        if (!distant || armed)
+            continue;
+        for (int dy = -10; dy <= 10; dy += 2)
+            for (int dx = -10; dx <= 10; dx += 2) {
+                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
+                int score = dir_ore_near(c, 3);
+                if (score > best_score) {
+                    best_score = score;
+                    best = b;
+                    best_ore = c;
+                }
+            }
+    }
+    if (!best || !dir_queue_building(house, dir_refineries[side], &d->outpost_type))
+        return;
+    d->outpost_anchor = best;
+    d->outpost_built = NULL;
+    d->outpost_ore = best_ore;
+    d->outpost_step = 1;
+    d->outpost_frame = CURRENT_FRAME;
+    CellXY at = object_cell(best);
+    logmsg("director: house %d frame %d: ore outpost by the %.24s at %d,%d (ore %d at %d,%d)", FIELD(house, 0x30, int),
+           CURRENT_FRAME, (char *)FIELD(best, B_TYPE, BYTE *) + T_ID, at.X, at.Y, best_score, best_ore.X, best_ore.Y);
 }
 
 static int dir_idle_harvesters(BYTE *house)
@@ -1799,6 +1958,14 @@ static void dir_engineers(BYTE *house, DirState *d)
         if (alive && done)
             logmsg("director: house %d engineer job done (%s)", FIELD(house, 0x30, int),
                    d->repair_mode ? "captured" : "bridge repaired");
+        /* an engineer still walking to a hut whose bridge is already whole (mended by someone else,
+         * or the job timed out) is called home instead of entering it for nothing */
+        BYTE *eng = d->repair_engineer;
+        if (eng && dir_object_listed(OIL_TECHNO_ARRAY, eng) && oil_live(eng)
+            && FIELD(eng, COMBAT_MISSION, int) != MISSION_CAPTURE) {
+            dir_why = "engineer home";
+            dir_command(eng, d->base, NULL, 0);
+        }
         d->repair_hut = d->repair_engineer = NULL;
     }
     d->want_engineer = 0;

@@ -1074,6 +1074,20 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
     side).
   - **Liberators:** beyond two (the mod's Allied AI teams order them in threes).
 - **Allied tank order:** Mirage first, then Tank Destroyer, Grizzly, Liberator.
+- **Ore outposts.** A captured tech building (an oil derrick, say) is our own building, so we may
+  build beside it. Where rich ore lies within 10 cells of one, 15+ cells from our refineries and with
+  no armed enemy within 12, the director builds a refinery beside it, on the side nearest the ore.
+  Then a ground defence (Pillbox, Sentry Gun, Gatling Cannon) and an anti-air defence
+  go beside the refinery.
+  - **How:** the director's own placement step in the `FindBuildLocation` hook used by the oil
+    defences.
+  - **Limits:** one outpost at a time, checked every 3000 frames; a step that hasn't appeared after
+    3000 frames ends it.
+  - **Tested:** a derrick given to Korea on *Crocodile* got a refinery by the ore, pillboxes and a
+    Patriot by frame 4,640.
+- **Engineers called home.** When a bridge-repair job ends (mended by someone else, or timed out),
+  an engineer still walking to the hut is sent home instead of entering a hut whose bridge is
+  already whole.
 - **Walled-in units.** A unit that hasn't moved for 3000 frames, with nothing in its sights and its goal
   far away, is checked with a flood fill of the cells within 14. When the fill can't leave that box
   past buildings, water or rock, the unit is in a pocket, and the director sells the cheapest
@@ -1162,6 +1176,10 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
     answer above.
 - Third run (all 24 matches): Yuri 10, Russia 9, America 3. Air defence cut the Kirov's ratio to 2.7
   and the Disc's to 1.1. America still lost: Grizzly 0.70, IFV 0.75, GI 0.29.
+- Fourth run (all 24, with deploying GIs and Kirov kiting): Yuri 13, Russia 6, America 5. America
+  against Russia is now even (5–3 to America); Yuri beat America 7–1 and Russia 6–2. The Kirov's
+  ratio is down to 1.2. Yuri's Gatling Tank (1.65), Floating Disc (1.6), Lasher (1.25) and Gatling
+  Cannon (7.2) lead.
 - **Stat change:** the Grizzly got Rhino-level armour (`MTNK` Strength 300 → 400), listed in
   `BALANCE` in `mod/build-tesla-mod.py`. America's 16 matches afterwards: still 2 wins, though the
   Grizzly's ratio rose from 0.49 to 0.67. America's army is as large as the others (49k at frame
