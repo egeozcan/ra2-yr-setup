@@ -189,6 +189,16 @@ AnimList=TSTIMPCT
 """
 
 
+# Balance changes to stock units, measured with spawner/bench.py (suite "balance", "units").
+# (section, key): new value. Each needs a reason and the numbers behind it.
+BALANCE = {
+    # 2026-10-01: Allies won 2 of 16 director-vs-director matches once the Liberator was halved twice;
+    # Grizzlies destroyed 0.49 of their own value lost, against 1.66 for Rhinos and 1.53 for Lashers.
+    # Rhino parity on armour; still cheaper (700 vs 900) and faster (7 vs 6).
+    ("MTNK", "Strength"): "400",
+}
+
+
 def section_lines(lines, name):
     """Return (start, end) indices of section `name` (header line .. line before next header)."""
     start = next(i for i, l in enumerate(lines) if l.split(";")[0].strip() == f"[{name}]")
@@ -250,6 +260,12 @@ def patch(text):
     for i in range(s + 1, e):
         if lines[i].split('=', 1)[0].strip() == 'TeamDelays':
             lines[i] = 'TeamDelays=900,2500,3500'
+    for (name, key), value in BALANCE.items():
+        s, e = section_lines(lines, name)
+        hits = [i for i in range(s + 1, e) if lines[i].split('=', 1)[0].strip() == key]
+        if len(hits) != 1:
+            raise SystemExit(f"balance: [{name}] {key} found {len(hits)} times")
+        lines[hits[0]] = f"{key}={value}"
     return "\r\n".join(lines)
 
 

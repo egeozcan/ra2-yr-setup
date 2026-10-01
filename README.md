@@ -1042,6 +1042,28 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
 
   It was added because Kirovs (10× value destroyed vs lost) and Floating Discs (3×) led the kill
   table against AIs that hardly built anti-air.
+- **Bridges.**
+  - **Route cut:** when an attack stalls with a fallen bridge within 25 cells of its front, the
+    ground route counts as cut right away (hover/air and ferries), not after five stalled
+    objectives.
+  - **Left behind:** units that can't cross water are sent back to the rally, where ferries load.
+  - **Never stop on a deck:** a unit on a bridge (CellClass flags +0x140 & 0x100) gets no hold,
+    regroup or wait order.
+  - **Walked off:** any of our units standing still on a deck for 600 frames, team members
+    included, is walked to the nearest land along its own, perhaps broken, span.
+  - **Stranded:** units stuck beyond a fallen bridge, far from home and the rally, guard where they
+    stand instead of pathing at an impossible goal. Engineers mend the bridge nearest them first.
+- **Dodging Kirovs.** A unit that can't shoot at a nearby Kirov or Floating Disc moves out from
+  under it: toward our nearest anti-air within 20 cells, or 8 cells straight away.
+- **Order churn.** Each unit remembers the last cell it was sent to; a goal that drifts by under
+  6 cells within 450 frames is the same order. A current target is swapped only for one scoring 30
+  more, and engagement orders are at least 60 frames apart. Units no longer get restarted by small
+  changes (churn per 6 Lostlake matches: from 350 events to under 30).
+- **Stock picks vetoed:**
+  - **MCVs:** at two construction yards (stock AI with MCV repacking parked extra yards side by
+    side).
+  - **Liberators:** beyond two (the mod's Allied AI teams order them in threes).
+- **Allied tank order:** Mirage first, then Tank Destroyer, Grizzly, Liberator.
 - **Walled-in units.** A unit that hasn't moved for 3000 frames, with nothing in its sights and its goal
   far away, is checked with a flood fill of the cells within 14. When the fill can't leave that box
   past buildings, water or rock, the unit is in a pocket, and the director sells the cheapest
@@ -1128,6 +1150,12 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
     damage dealer, 592k), Rhino 0.9, Grizzly 0.4.
   - The Liberator was then halved again, to 375 HP and ROF 140/100, and the AIs got the air-defence
     answer above.
+- Third run (all 24 matches): Yuri 10, Russia 9, America 3. Air defence cut the Kirov's ratio to 2.7
+  and the Disc's to 1.1. America still lost: Grizzly 0.70, IFV 0.75, GI 0.29.
+- **Stat change:** the Grizzly got Rhino-level armour (`MTNK` Strength 300 → 400), listed in
+  `BALANCE` in `mod/build-tesla-mod.py`. America's 16 matches afterwards: still 2 wins, though the
+  Grizzly's ratio rose from 0.49 to 0.67. America's army is as large as the others (49k at frame
+  20,000 against 45k and 41k), so it is losing trades, not economy.
 
 Balance tools:
 - `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every

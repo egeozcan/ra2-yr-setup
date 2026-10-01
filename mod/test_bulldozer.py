@@ -40,6 +40,7 @@ class BulldozerBuildTests(unittest.TestCase):
             for key, value in section.items():
                 if (name, key) == ('General', 'TeamDelays'):
                     value = '900,2500,3500'
+                value = builder.BALANCE.get((name, key), value)
                 self.assertEqual(self.rules[name][key], value, (name, key))
         self.assertIn('ATTNK', self.rules['VehicleTypes'].values())
         self.assertIn('CHEATDEF', self.rules['BuildingTypes'].values())

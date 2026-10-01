@@ -80,6 +80,8 @@ typedef struct {
     int bunker_failed_frame[8], bunker_failed_next, last_veto_log, last_pick_log, next_garrison;
     BYTE *garrison_unit[24], *garrison_site[24];                               /* infantry on their way into civilian buildings */
     int garrison_frame[24], garrison_next, garrison_held;
+    CellXY stranded_at;                                     /* units cut off by a fallen bridge */
+    int stranded_frame;
 } DirState;
 static DirState dir_state[32];
 
@@ -219,7 +221,8 @@ static int dir_poolable(BYTE *obj, int what)
 /* ---- production ---- */
 
 static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
-    { "ATTNK,TNKD,MGTK,MTNK", "FV", "SREF", "MGTK,FV" },
+    /* Mirage first: the Liberator, at 375 HP and half its fire rate, lost more than it killed (0.89) */
+    { "MGTK,TNKD,MTNK,ATTNK", "FV", "SREF", "MGTK,FV" },
     { "APOC,TTNK,HTNK", "HTK", "V3", "HTK" },
     { "MIND,LTNK", "YTNK", "TELE", "YTNK" },
 };
@@ -272,7 +275,7 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
             if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
                 && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
-                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 4)    /* slow: a few, not the army */
+                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 2)    /* slow and costly: a pair at most */
                 && (_stricmp(id, "ZEP") || dir_owned_of(house, type) < 4))     /* Kirovs: slow and costly */
                 return type;
         }
@@ -332,6 +335,8 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
     d->unit_request_frame = CURRENT_FRAME;
 }
 
+static void dir_veto_production(BYTE *house, DirState *d);
+
 static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
 {
     (void)unused;
@@ -341,6 +346,7 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
     DirState *d = dir_get(house);
     if (!d)
         return result;
+    dir_veto_production(house, d);   /* right after the stock pick */
     int current = FIELD(house, H_PRODUCING_UNIT, int);
     /* A request the factory never picked up would block the queue; drop it after a while. */
     if (current != -1 && current == d->unit_request && CURRENT_FRAME - d->unit_request_frame > 3000) {
@@ -727,6 +733,22 @@ static void dir_order(BYTE *unit, int mission, BYTE *target, BYTE *cell)
         unit, mission, target, cell, NULL);
 }
 
+/* The last cell each unit was sent to guard: a goal that drifts (a moving raider, the marching body)
+ * is the same order while it stays within 6 cells, so the unit is not restarted every tick. */
+static struct { BYTE *unit; CellXY goal; int frame; } dir_goals[4096];
+static struct { BYTE *unit; int frame; } dir_engaged[4096];   /* last engagement order */
+
+static int dir_same_goal(BYTE *unit, CellXY goal)
+{
+    unsigned k = ((DWORD)unit >> 3) % 4096;
+    if (dir_goals[k].unit == unit && CURRENT_FRAME - dir_goals[k].frame < 450 && dir_dist2(dir_goals[k].goal, goal) <= 6 * 6)
+        return 1;
+    dir_goals[k].unit = unit;
+    dir_goals[k].goal = goal;
+    dir_goals[k].frame = CURRENT_FRAME;
+    return 0;
+}
+
 /* Attack-move: fight whatever is worth fighting near the unit, else keep heading for the goal. */
 static int dir_flags;   /* the commanding house's DirectorFlags, set by dir_army */
 
@@ -734,7 +756,7 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
 {
     CellXY at = object_cell(unit);
     BYTE *current = FIELD(unit, O_TARGET, BYTE *);
-    int reach = dir_weapon_cells(unit) + 3, best_score = -1000000;
+    int reach = dir_weapon_cells(unit) + 3, best_score = -1000000, keep_score = -1000000;
     DirEnemy *best = NULL, *keep = NULL;
     if (engage) {
         for (int i = 0; i < dir_enemy_count; i++) {
@@ -752,6 +774,8 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
             int score = priority + hurt + (e->focus < 5 ? e->focus * 8 : -40) - dd / 4;
             if (e->capturable)
                 continue;   /* an engineer will take it; don't shoot what we want to own */
+            if (e == keep)
+                keep_score = score;
             if (score > best_score && dir_can_fire_at(unit, e->obj)) {
                 best_score = score;
                 best = e;
@@ -759,14 +783,25 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
         }
     }
     /* Stay on a live armed target; switch from buildings or harmless targets to a real threat. */
-    if (keep && ((keep->armed && !keep->building) || !best || !best->armed || best->building)) {
+    /* ...and a target is only swapped for a clearly better one: near-equal scores shift every tick
+     * with focus counts, and each swap was a new order */
+    if (keep && ((keep->armed && !keep->building) || !best || !best->armed || best->building
+                 || best_score < keep_score + 30)) {
         keep->focus++;
         return;
     }
     if (best) {
         best->focus++;
-        if (!dir_recent_order(unit, best->obj, 90))
+        /* a new attack order needs the unit's target to settle first: before it does, the choice
+         * can flip between two enemies every tick, and each flip restarted the unit */
+        unsigned k = ((DWORD)unit >> 3) % 4096;
+        if (dir_engaged[k].unit == unit && CURRENT_FRAME - dir_engaged[k].frame < 60)
+            return;
+        if (!dir_recent_order(unit, best->obj, 90)) {
             dir_order(unit, MISSION_ATTACK, best->obj, NULL);
+            dir_engaged[k].unit = unit;
+            dir_engaged[k].frame = CURRENT_FRAME;
+        }
         return;
     }
     /* Marching on an enemy structure: attack it outright. The engine paths to firing range, which
@@ -791,7 +826,7 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
     /* The engine moves Focus while it guards, so Focus alone can't tell an order already given:
      * re-queueing every tick restarted the unit, which wiggled in place. Our own order memory
      * leaves it to work for a while (it may be fighting on the way). */
-    if (dir_recent_order(unit, cell, 450))
+    if (dir_same_goal(unit, goal))
         return;
     FIELD(unit, T_FOCUS, BYTE *) = cell;
     dir_note_order(unit);
@@ -810,10 +845,156 @@ static int dir_landed(DirState *d, CellXY c)
  * goal is far away and nothing is in its sights is stuck; selling a cheap building next to it (a
  * wall, or a power plant while others remain) opens the way, as a player would. */
 #define DIR_STUCK 2048
-static struct { BYTE *unit; CellXY at; int frame; } dir_moves[DIR_STUCK];
+static int dir_bridge_down_near(CellXY at, int r);
+static struct { BYTE *unit; CellXY at; int frame, stranded; } dir_moves[DIR_STUCK];
+
+/* Stranded: stuck on a section cut off by a fallen bridge. It guards where it stands instead of
+ * pathing at an impossible goal, and engineers go for that bridge first. Re-checked every 600
+ * frames, so a repaired bridge brings it back into the army. */
+static int dir_stranded(BYTE *unit)
+{
+    unsigned h = ((DWORD)unit >> 3) % DIR_STUCK;
+    for (int i = 0; i < 8; i++) {
+        unsigned j = (h + i) % DIR_STUCK;
+        if (dir_moves[j].unit == unit)
+            return dir_moves[j].stranded && CURRENT_FRAME - dir_moves[j].stranded < 600;
+    }
+    return 0;
+}
 
 #define C_LANDTYPE 0xEC                /* CellClass::LandType: 2 water, 3 rock, 4 wall */
+#define C_FLAGS 0x140                  /* CellClass::Flags: 0x100 a bridge deck (ContainsBridge) */
 #define C_OCCUPATION 0x124             /* CellClass::OccupationFlags: 0x80 a building */
+
+static int dir_on_bridge(CellXY c)
+{
+    BYTE *cell = dir_cell(c);
+    return cell && (FIELD(cell, C_FLAGS, DWORD) & 0x100);
+}
+
+/* The nearest land off the bridge deck a unit stands on, following its own (perhaps broken) span. */
+static int dir_off_bridge(CellXY at, CellXY *out);
+
+/* Kirovs are slow: a unit that can't shoot back gets out from under one instead of sitting there,
+ * toward our nearest anti-air if any is close, else straight away from it. Returns 1 while dodging. */
+static struct { BYTE *unit; int until; } dir_dodge[512];
+static const char *dir_aa_vehicles[3], *dir_aa_infantry[3];
+
+static int dir_dodge_air(BYTE *house, BYTE *unit, CellXY at)
+{
+    unsigned k = ((DWORD)unit >> 3) % 512;
+    if (dir_dodge[k].unit == unit && CURRENT_FRAME < dir_dodge[k].until)
+        return 1;
+    DirEnemy *air = NULL;
+    int best = 7 * 7 + 1;
+    for (int i = 0; i < dir_enemy_count; i++) {
+        DirEnemy *e = &dir_enemies[i];
+        int dd = dir_dist2(e->at, at);
+        if (e->air && e->armed && e->value >= 1500 && dd < best) {   /* slow heavies: Kirovs, Discs */
+            best = dd;
+            air = e;
+        }
+    }
+    if (!air || dir_can_fire_at(unit, air->obj))
+        return 0;
+    CellXY to = { 0, 0 };
+    int side = FIELD(house, OIL_H_SIDE, int), cover = 20 * 20 + 1;
+    DynVec *v = OIL_TECHNO_ARRAY;
+    for (int i = 0; side >= 0 && side <= 2 && i < v->Count; i++) {
+        BYTE *o = v->Items[i], *type;
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !(type = dir_type(o))
+            || !(in_list(dir_aa_vehicles[side], (char *)type + T_ID) || in_list("NASAM,NAFLAK,YAGGUN", (char *)type + T_ID)))
+            continue;
+        CellXY c = object_cell(o);
+        int dd = dir_dist2(c, at);
+        if (dd < cover && dir_dist2(c, air->at) > dd) {   /* cover that is not under the Kirov too */
+            cover = dd;
+            to = c;
+        }
+    }
+    if (!to.X) {
+        int dx = at.X - air->at.X, dy = at.Y - air->at.Y, len = dir_isqrt(dx * dx + dy * dy);
+        if (!len) {
+            dx = 1;
+            len = 1;
+        }
+        to = (CellXY){ (short)(at.X + dx * 8 / len), (short)(at.Y + dy * 8 / len) };
+    }
+    BYTE *cell = dir_cell(to);
+    if (!cell || FIELD(cell, C_LANDTYPE, int) == 2)
+        return 0;
+    dir_why = "dodge air";
+    dir_order(unit, MISSION_MOVE, NULL, cell);
+    dir_dodge[k].unit = unit;
+    dir_dodge[k].until = CURRENT_FRAME + 150;
+    return 1;
+}
+
+/* A unit standing still on a bridge deck (often a broken one, the far end cut off) is walked to the
+ * nearest land along its own span, and left alone meanwhile. Returns 1 while it is being moved. */
+static struct { BYTE *unit; CellXY at; int since, until; } dir_evac[512];
+
+static int dir_bridge_evac(BYTE *unit, CellXY at)
+{
+    unsigned k = ((DWORD)unit >> 3) % 512;
+    if (dir_evac[k].unit == unit && CURRENT_FRAME < dir_evac[k].until)
+        return 1;
+    if (!dir_on_bridge(at)) {
+        if (dir_evac[k].unit == unit)
+            dir_evac[k].unit = NULL;
+        return 0;
+    }
+    if (dir_evac[k].unit != unit || dir_dist2(dir_evac[k].at, at) > 1) {
+        dir_evac[k].unit = unit;
+        dir_evac[k].at = at;
+        dir_evac[k].since = CURRENT_FRAME;
+        dir_evac[k].until = 0;
+        return 0;
+    }
+    CellXY off;
+    if (CURRENT_FRAME - dir_evac[k].since < 600 || !dir_off_bridge(at, &off))
+        return 0;
+    dir_why = "off the bridge";
+    dir_order(unit, MISSION_MOVE, NULL, dir_cell(off));
+    dir_evac[k].since = CURRENT_FRAME;
+    dir_evac[k].until = CURRENT_FRAME + 450;
+    return 1;
+}
+
+static int dir_off_bridge(CellXY at, CellXY *out)
+{
+    enum { R = 16, W = 2 * R + 1 };
+    static unsigned char seen[W * W];
+    static CellXY queue[W * W];
+    memset(seen, 0, sizeof seen);
+    int head = 0, tail = 0;
+    queue[tail++] = at;
+    seen[R * W + R] = 1;
+    while (head < tail) {
+        CellXY c = queue[head++];
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                CellXY n = { (short)(c.X + dx), (short)(c.Y + dy) };
+                int bx = n.X - at.X + R, by = n.Y - at.Y + R;
+                if ((!dx && !dy) || bx < 0 || by < 0 || bx >= W || by >= W || seen[by * W + bx])
+                    continue;
+                seen[by * W + bx] = 1;
+                BYTE *cell = dir_cell(n);
+                if (!cell)
+                    continue;
+                int land = FIELD(cell, C_LANDTYPE, int), deck = (FIELD(cell, C_FLAGS, DWORD) & 0x100) != 0;
+                if (deck) {
+                    queue[tail++] = n;
+                    continue;
+                }
+                if (land != 2 && land != 3 && land != 4 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)) {
+                    *out = n;
+                    return 1;
+                }
+            }
+    }
+    return 0;
+}
 #define CELL_GET_BUILDING 0x47C520     /* CellClass::GetBuilding */
 
 /* The region the unit can walk to, within 14 cells: enclosed when the fill never reaches the edge
@@ -911,6 +1092,21 @@ static void dir_track_stuck(BYTE *house, DirState *d, BYTE *unit, CellXY at, Cel
         dir_moves[k].frame = CURRENT_FRAME;
         return;
     }
+    /* far from home and the rally too: a unit by our own bridgehead is blocked, not stranded, and
+     * holding it there would block the crossing */
+    if (CURRENT_FRAME - dir_moves[k].frame > 1500 && !dir_crosses(unit) && dir_bridge_down_near(at, 20)
+        && dir_dist2(at, d->base) > 25 * 25 && dir_dist2(at, d->rally) > 25 * 25) {
+        if (!dir_moves[k].stranded || CURRENT_FRAME - dir_moves[k].stranded >= 600) {
+            if (!dir_moves[k].stranded)
+                logmsg("director: house %d frame %d: %.24s at %d,%d is cut off by a fallen bridge", FIELD(house, 0x30, int),
+                       CURRENT_FRAME, (char *)dir_type(unit) + T_ID, at.X, at.Y);
+            dir_moves[k].stranded = CURRENT_FRAME;
+        }
+        d->stranded_at = at;
+        d->stranded_frame = CURRENT_FRAME;
+        return;
+    }
+    dir_moves[k].stranded = 0;
     if (CURRENT_FRAME - dir_moves[k].frame > 3000 && CURRENT_FRAME >= d->next_unstick && !dir_crosses(unit))
         dir_unstick(house, d, unit, at);
 }
@@ -924,6 +1120,8 @@ static int dir_hostile_houses(BYTE *house)
         count += dir_hostile(house, v->Items[i]) && dir_house_alive(v->Items[i]);
     return count;
 }
+
+static int dir_bridge_down_near(CellXY at, int r);
 
 static void dir_army(BYTE *house, DirState *d)
 {
@@ -945,8 +1143,15 @@ static void dir_army(BYTE *house, DirState *d)
         if ((d->blocked || d->island) && !dir_crosses(o)) {
             /* on an island map only hover/air units and troops already ferried across attack */
             CellXY c = object_cell(o);
-            if (d->threat_value < 1500 && !dir_landed(d, c))
-                continue;   /* ...but everyone defends the base */
+            if (d->threat_value < 1500 && !dir_landed(d, c)) {
+                /* ...but everyone defends the base. Those left by the water when the route fell
+                 * come back to the rally, where the ferry loads, instead of crowding the shore. */
+                if (!dir_bridge_evac(o, c) && dir_dist2(c, d->rally) > 12 * 12) {
+                    dir_why = "cut off";
+                    dir_command(o, d->rally, NULL, 1);
+                }
+                continue;
+            }
         }
         pool[n++] = o;
         value += dir_cost(dir_type(o));
@@ -1035,7 +1240,15 @@ static void dir_army(BYTE *house, DirState *d)
             d->objective = NULL;
             d->progress_frame = CURRENT_FRAME;
             d->best_dist = 0x7FFFFFFF;
-            if (d->unreachable_count >= 5 && !d->reached && !d->blocked) {
+            /* a fallen bridge by the front: the ground route is gone now, not after five stalls */
+            if (!d->blocked && dir_bridge_down_near(d->front, 25)) {
+                logmsg("director: house %d frame %d: a bridge on the route is down, switching to hover/air and ferries",
+                       FIELD(house, 0x30, int), CURRENT_FRAME);
+                d->blocked = 1;
+                d->blocked_frame = CURRENT_FRAME;
+                d->unreachable_count = 0;
+                d->state = DIR_RETREAT;
+            } else if (d->unreachable_count >= 5 && !d->reached && !d->blocked) {
                 logmsg("director: house %d: no ground route to the enemy, switching to hover/air",
                        FIELD(house, 0x30, int));
                 d->blocked = 1;
@@ -1198,7 +1411,17 @@ static void dir_army(BYTE *house, DirState *d)
     int regrouping = 0, held = 0, waiting = 0;
     for (int i = 0; i < n; i++) {
         CellXY c = object_cell(pool[i]);
-        if (body_cells >= 0) {
+        if (dir_bridge_evac(pool[i], c) || dir_dodge_air(house, pool[i], c))
+            continue;
+        if (dir_stranded(pool[i])) {
+            dir_why = "stranded";
+            dir_track_stuck(house, d, pool[i], c, d->state == DIR_ATTACK ? d->objective_at : d->rally);
+            dir_command(pool[i], c, NULL, 1);   /* guard the section until the bridge is mended */
+            continue;
+        }
+        /* nobody stops on a bridge deck: holding, regrouping or waiting there blocks the crossing */
+        int deck = dir_on_bridge(c);
+        if (body_cells >= 0 && !deck) {
             int ahead = body_cells - dir_isqrt(dir_dist2(c, d->objective_at));
             if (ahead >= 8) {
                 int ours = 0, theirs = 0;
@@ -1216,14 +1439,14 @@ static void dir_army(BYTE *house, DirState *d)
                 }
             }
         }
-        if (hold > 0 && !FIELD(pool[i], O_TARGET, BYTE *) && dir_dist2(c, d->objective_at) < hold) {
+        if (hold > 0 && !deck && !FIELD(pool[i], O_TARGET, BYTE *) && dir_dist2(c, d->objective_at) < hold) {
             held++;
             dir_why = "cohesion hold";
             dir_command(pool[i], c, NULL, engage);   /* area-guard where it stands */
             continue;
         }
         /* In an attack, fresh units far behind wait at the rally for the next wave. */
-        if (d->state == DIR_ATTACK && d->launch_frame != CURRENT_FRAME
+        if (d->state == DIR_ATTACK && d->launch_frame != CURRENT_FRAME && !deck
             && dir_dist2(object_cell(pool[i]), d->centroid) > 30 * 30
             && dir_dist2(object_cell(pool[i]), d->rally) <= 12 * 12) {
             waiting++;
@@ -1441,6 +1664,17 @@ static int dir_bridge_down(BYTE *hut)
     return ((char (GTHISCALL *)(void *, CellXY *))MAP_BRIDGE_DOWN)(MAP_INSTANCE, &c) != 0;
 }
 
+static int dir_bridge_down_near(CellXY at, int r)
+{
+    DynVec *v = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *b = v->Items[i], *type = FIELD(b, B_TYPE, BYTE *);
+        if (oil_live(b) && type && type[BT_BRIDGE_HUT] && dir_dist2(object_cell(b), at) <= r * r && dir_bridge_down(b))
+            return 1;
+    }
+    return 0;
+}
+
 static int dir_is_engineer(BYTE *obj)
 {
     BYTE *type = dir_type(obj);
@@ -1491,6 +1725,8 @@ static void dir_engineers(BYTE *house, DirState *d)
         CellXY c = object_cell(b);
         int dd = dir_dist2(c, d->base), df = dir_dist2(c, d->front);
         dd = df < dd ? df : dd;
+        if (d->stranded_frame && CURRENT_FRAME - d->stranded_frame < 1500 && dir_dist2(c, d->stranded_at) <= 25 * 25)
+            dd = 0;   /* our units are cut off behind this one: mend it first, wherever it is */
         if (dd >= best || (b == d->failed_job && CURRENT_FRAME - d->failed_frame < 9000))
             continue;
         best = dd;
@@ -2071,6 +2307,19 @@ static void dir_veto_production(BYTE *house, DirState *d)
                    d->threat_value >= 1500 ? "base under attack" : "four out already");
         }
     }
+    /* stock AI with MCV repacking buys MCVs of its own and parks extra yards side by side: two
+     * yards (the base and one expansion) are enough; a lost yard can still be replaced */
+    int pick = FIELD(house, H_PRODUCING_UNIT, int);
+    DynVec *uts = UNITTYPE_ARRAY;
+    if (pick >= 0 && pick < uts->Count && in_list(dir_mcvs, (char *)uts->Items[pick] + T_ID) && !d->want_mcv
+        && pick != d->unit_request && combat_building_count(house, "GACNST,NACNST,YACNST") >= 2)
+        FIELD(house, H_PRODUCING_UNIT, int) = -1;
+    /* the mod's Allied AI teams order Liberators in threes; a pair is all that still pays */
+    int unit = FIELD(house, H_PRODUCING_UNIT, int);
+    DynVec *ut = UNITTYPE_ARRAY;
+    if (unit >= 0 && unit < ut->Count && !_stricmp((char *)ut->Items[unit] + T_ID, "ATTNK")
+        && dir_owned_of(house, ut->Items[unit]) >= 2)
+        FIELD(house, H_PRODUCING_UNIT, int) = -1;
     int inf = FIELD(house, H_PRODUCING_INF, int);
     DynVec *it = INFANTRYTYPE_ARRAY;
     if ((d->blocked || d->island) && inf >= 0 && inf < it->Count && FIELD(house, H_OWNED_INFANTRY, int) >= 24
@@ -2372,6 +2621,18 @@ static void dir_update(BYTE *house)
     if (director_enabled(house) & DIR_F_NAVY)
         dir_navy(house, d);
     dir_army(house, d);
+    /* every unit of ours, team members included: standing on a bridge deck never helps anyone */
+    if (CURRENT_FRAME % 150 < 15) {
+        DynVec *tv = OIL_TECHNO_ARRAY;
+        for (int i = 0; i < tv->Count; i++) {
+            BYTE *o = tv->Items[i];
+            int what, m;
+            if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || ((what = dir_whatami(o)) != 1 && what != 15)
+                || dir_naval(o) || dir_crosses(o) || (m = FIELD(o, COMBAT_MISSION, int)) == 7 || m == 8 || m == 10 || m == 16)
+                continue;
+            dir_bridge_evac(o, object_cell(o));
+        }
+    }
     if (director_enabled(house) & DIR_F_BUNKERS) {
         dir_bunkers(house, d);
         dir_garrison(house, d);
