@@ -37,6 +37,8 @@
 #define MAX_ENEMY 1024
 #define TT_NAVAL 0xCCE             /* TechnoTypeClass::Naval (after Repairable 0xCCC, Crewed 0xCCD) */
 #define VT_SELL 0x1A0              /* ObjectClass::Sell(control): 1 queues the Selling mission */
+#define T_CAPTURE_MANAGER 0x2BC    /* TechnoClass::CaptureManager: set on mind-controllers */
+#define T_MIND_CONTROLLED_BY 0x2C0 /* TechnoClass::MindControlledBy */
 #define T_BUNKER_LINK 0x2E4        /* TechnoClass::BunkerLinkedItem: unit <-> the tank bunker holding it */
 
 typedef int (GTHISCALL *dir_prod_fn)(BYTE *);
@@ -79,9 +81,12 @@ typedef struct {
     BYTE *bunker_failed[8];                                 /* tanks that could not get in: skip a while */
     int bunker_failed_frame[8], bunker_failed_next, last_veto_log, last_pick_log, next_garrison;
     BYTE *garrison_unit[24], *garrison_site[24];                               /* infantry on their way into civilian buildings */
-    int garrison_frame[24], garrison_next, garrison_held;
+    int garrison_frame[24], garrison_next, garrison_held, want_occupier;
     CellXY stranded_at;                                     /* units cut off by a fallen bridge */
     BYTE *outpost_anchor, *outpost_type, *outpost_built;    /* ore outpost by a captured building */
+    BYTE *post_unit[6];                                     /* Allied infantry dug in at the base edge */
+    CellXY post_cell[6], post_rally;
+    int post_toggled[6], next_posts;
     CellXY outpost_ore;
     int outpost_step, outpost_frame, next_outpost;
     int stranded_frame;
@@ -426,7 +431,10 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
         return result;
     DirState *d = dir_get(house);
     static const char *engineers[3] = { "ENGINEER", "SENGINEER", "YENGINEER" };
+    static const char *occupiers[3] = { "E1", "E2", "INIT" };
     BYTE *type = d && d->want_engineer ? dir_first_buildable(house, INFANTRYTYPE_ARRAY, engineers[side], 0) : NULL;
+    if (!type && d && d->want_occupier)
+        type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, occupiers[side], 500);
     if (!type)
         type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, dir_infantry[side], 4000);
     int index = type ? dir_type_index(INFANTRYTYPE_ARRAY, type) : -1;
@@ -772,6 +780,14 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
             if (e->obj == current && !e->capturable)
                 keep = e;
             int priority = e->armed ? (e->building ? 70 : 100) : (e->building ? 25 : 45);
+            /* mind control: kill the controller (Yuri, Yuri Prime, Mastermind, Psychic Tower) and its
+             * captives switch back; while it is close by, its captives are the wrong target */
+            if (FIELD(e->obj, T_CAPTURE_MANAGER, BYTE *))
+                priority += 80;
+            BYTE *controller = FIELD(e->obj, T_MIND_CONTROLLED_BY, BYTE *);
+            if (controller && oil_live(controller)
+                && dir_dist2(object_cell(controller), at) <= (reach + 6) * (reach + 6))
+                priority -= 60;
             int strength = FIELD(dir_type(e->obj), OT_STRENGTH, int);
             int hurt = strength > 0 ? 40 - 40 * FIELD(e->obj, O_HEALTH, int) / strength : 0;
             int score = priority + hurt + (e->focus < 5 ? e->focus * 8 : -40) - dd / 4;
@@ -1232,6 +1248,8 @@ static void dir_army(BYTE *house, DirState *d)
             bound |= d->bunker_unit[k] == o;
         for (int k = 0; k < 24; k++)
             bound |= d->garrison_unit[k] == o && CURRENT_FRAME - d->garrison_frame[k] < 900;
+        for (int k = 0; k < 6; k++)
+            bound |= d->post_unit[k] == o;
         if (bound)
             continue;
         if ((d->blocked || d->island) && !dir_crosses(o)) {
@@ -2610,15 +2628,95 @@ static void dir_air_defense(BYTE *house, DirState *d)
         logmsg("director: house %d frame %d: enemy air %d nearby, our anti-air %d: %s", FIELD(house, 0x30, int),
                CURRENT_FRAME, d->air_seen, d->own_aa, want ? "building anti-air" : "enough anti-air");
     d->want_aa = want;
-    if (!want || d->air_near < 1500 || CURRENT_FRAME < d->next_aa_defense || FIELD(house, OIL_H_PRODUCING, int) != -1)
+    if (CURRENT_FRAME < d->next_aa_defense || FIELD(house, OIL_H_PRODUCING, int) != -1)
         return;
     BYTE *type = find_type(BUILDINGTYPE_ARRAY, dir_aa_defenses[side]);
+    /* a standing pair at home whatever the sky looks like (Flak Cannons for the Soviets), once
+     * the house can spare the money; more while aircraft are actually raiding */
+    int standing = type && CURRENT_FRAME >= 9000 && combat_building_count(house, dir_aa_defenses[side]) < 2
+        && FIELD(house, OIL_H_CASH, int) >= dir_cost(type) + 2000;
+    if (!standing && (!want || d->air_near < 1500))
+        return;
     if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
         && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
         FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
         d->next_aa_defense = CURRENT_FRAME + 3000;
         logmsg("director: house %d frame %d: queued %s against air", FIELD(house, 0x30, int), CURRENT_FRAME,
                dir_aa_defenses[side]);
+    }
+}
+
+/* ---- Allied infantry posts ----
+ * GIs and Guardian GIs are at their best dug in. Six of them hold posts at the base edge facing
+ * the enemy: about 9 cells from the base centre towards the rally, spread across that line. Each
+ * walks to its post and deploys there; a dead one is replaced from the army. */
+static void dir_posts(BYTE *house, DirState *d)
+{
+    if (FIELD(house, OIL_H_SIDE, int) != 0 || CURRENT_FRAME < d->next_posts || !d->enemy)
+        return;
+    d->next_posts = CURRENT_FRAME + 150;
+    dir_why = "post";
+    if (d->post_rally.X != d->rally.X || d->post_rally.Y != d->rally.Y) {   /* lay out the posts */
+        d->post_rally = d->rally;
+        int dx = d->rally.X - d->base.X, dy = d->rally.Y - d->base.Y, len = dir_isqrt(dx * dx + dy * dy);
+        if (!len)
+            return;
+        static const int across[6] = { -2, 2, -5, 5, -8, 8 };   /* the centre posts fill first */
+        for (int k = 0; k < 6; k++) {
+            CellXY c = { (short)(d->base.X + dx * 9 / len - dy * across[k] / len),
+                         (short)(d->base.Y + dy * 9 / len + dx * across[k] / len) };
+            BYTE *cell = dir_cell(c);
+            int land = cell ? FIELD(cell, C_LANDTYPE, int) : 2;
+            d->post_cell[k] = cell && land != 2 && land != 3 && land != 4 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
+                ? c : (CellXY){ 0, 0 };
+        }
+    }
+    DynVec *tv = OIL_TECHNO_ARRAY;
+    /* as many posts as the enemy army calls for: two, plus one per 8000 of its value, at most six;
+     * soldiers of posts no longer needed rejoin the army (which packs them up) */
+    int wanted = 2 + d->target_army / 8000;
+    wanted = wanted > 6 ? 6 : wanted;
+    for (int k = wanted; k < 6; k++)
+        d->post_unit[k] = NULL;
+    for (int k = 0; k < wanted; k++) {
+        if (!d->post_cell[k].X)
+            continue;
+        BYTE *u = d->post_unit[k];
+        if (u && (!dir_object_listed(tv, u) || !oil_live(u) || FIELD(u, O_OWNER, BYTE *) != house))
+            u = d->post_unit[k] = NULL;
+        if (!u) {   /* the nearest free GI or Guardian GI of the army */
+            int best_d = 40 * 40 + 1;
+            for (int i = 0; i < tv->Count; i++) {
+                BYTE *o = tv->Items[i], *ot;
+                if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 15 || !(ot = dir_type(o))
+                    || !in_list(dir_deployers, (char *)ot + T_ID) || !dir_poolable(o, 15))
+                    continue;
+                int taken = 0;
+                for (int m = 0; m < 6; m++)
+                    taken |= d->post_unit[m] == o;
+                int dd = dir_dist2(object_cell(o), d->post_cell[k]);
+                if (!taken && dd < best_d) {
+                    best_d = dd;
+                    u = o;
+                }
+            }
+            if (!u)
+                continue;
+            d->post_unit[k] = u;
+            d->post_toggled[k] = -100000;
+        }
+        CellXY at = object_cell(u);
+        if (dir_deployed(u))
+            continue;
+        if (dir_dist2(at, d->post_cell[k]) <= 1) {
+            if (CURRENT_FRAME - d->post_toggled[k] >= 300) {
+                dir_order(u, MISSION_UNLOAD, NULL, NULL);   /* dig in */
+                logmsg("director: house %d frame %d: %.24s digs in at post %d (%d,%d)", FIELD(house, 0x30, int),
+                       CURRENT_FRAME, (char *)dir_type(u) + T_ID, k, at.X, at.Y);
+                d->post_toggled[k] = CURRENT_FRAME;
+            }
+        } else if (!dir_recent_order(u, dir_cell(d->post_cell[k]), 450))
+            dir_order(u, MISSION_MOVE, NULL, dir_cell(d->post_cell[k]));
     }
 }
 
@@ -2630,6 +2728,7 @@ static void dir_air_defense(BYTE *house, DirState *d)
 #define BT_CAN_BE_OCCUPIED 0x157B       /* BuildingTypeClass::CanBeOccupied (INI loader 0x4600CB) */
 #define B_OCCUPANT_COUNT 0x694          /* BuildingClass::Occupants.Count (KillOccupants 0x4585D9) */
 #define IT_OCCUPIER 0xEB4               /* InfantryTypeClass::Occupier (INI loader 0x5244CE) */
+#define BT_MAX_OCCUPANTS 0x1580         /* BuildingTypeClass::MaxNumberOccupants */
 
 static void dir_garrison(BYTE *house, DirState *d)
 {
@@ -2642,7 +2741,52 @@ static void dir_garrison(BYTE *house, DirState *d)
     for (int i = 0; i < bv->Count; i++) {
         BYTE *b = bv->Items[i], *type = FIELD(b, B_TYPE, BYTE *);
         held += oil_live(b) && type && type[BT_CAN_BE_OCCUPIED] && FIELD(b, O_OWNER, BYTE *) == house
-            && FIELD(b, B_OCCUPANT_COUNT, int) > 0;
+            && FIELD(b, B_OCCUPANT_COUNT, int) > 0 && !_strnicmp((char *)type + T_ID, "CA", 2);
+    }
+    /* our own garrisonable defences (the Soviet Battle Bunker) are filled to capacity; with no
+     * garrison infantry free, the barracks trains some (Tesla Troopers can't garrison) */
+    d->want_occupier = 0;
+    for (int i = 0; i < bv->Count && sent < 3; i++) {
+        BYTE *b = bv->Items[i], *type = FIELD(b, B_TYPE, BYTE *);
+        if (!oil_live(b) || !type || !type[BT_CAN_BE_OCCUPIED] || FIELD(b, O_OWNER, BYTE *) != house
+            || !_strnicmp((char *)type + T_ID, "CA", 2))
+            continue;
+        int pending = 0;
+        for (int k = 0; k < 24; k++)
+            pending += d->garrison_site[k] == b && CURRENT_FRAME - d->garrison_frame[k] < 600;
+        int need = FIELD(type, BT_MAX_OCCUPANTS, int) - FIELD(b, B_OCCUPANT_COUNT, int) - pending;
+        CellXY at = object_cell(b);
+        while (need-- > 0 && sent < 3) {
+            BYTE *best = NULL;
+            int best_d = 30 * 30 + 1;
+            for (int k = 0; k < tv->Count; k++) {
+                BYTE *o = tv->Items[k], *ot;
+                if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 15 || !(ot = dir_type(o))
+                    || !ot[IT_OCCUPIER] || !dir_poolable(o, 15) || FIELD(o, O_TARGET, BYTE *))
+                    continue;
+                int busy = 0;
+                for (int m = 0; m < 24; m++)
+                    busy |= d->garrison_unit[m] == o && CURRENT_FRAME - d->garrison_frame[m] < 900;
+                int dd = dir_dist2(object_cell(o), at);
+                if (!busy && dd < best_d) {
+                    best_d = dd;
+                    best = o;
+                }
+            }
+            if (!best) {
+                d->want_occupier = 1;
+                break;
+            }
+            int g = d->garrison_next++ % 24;
+            d->garrison_unit[g] = best;
+            d->garrison_site[g] = b;
+            d->garrison_frame[g] = CURRENT_FRAME;
+            dir_order(best, MISSION_ENTER, b, b);
+            sent++;
+            logmsg("director: house %d frame %d: %.24s into our %.24s at %d,%d (%d of %d inside)", FIELD(house, 0x30, int),
+                   CURRENT_FRAME, (char *)dir_type(best) + T_ID, (char *)type + T_ID, at.X, at.Y,
+                   FIELD(b, B_OCCUPANT_COUNT, int), FIELD(type, BT_MAX_OCCUPANTS, int));
+        }
     }
     if (held != d->garrison_held) {
         logmsg("director: house %d frame %d: %d civilian buildings garrisoned", FIELD(house, 0x30, int), CURRENT_FRAME, held);
@@ -2895,6 +3039,7 @@ static void dir_update(BYTE *house)
     if (director_enabled(house) & DIR_F_BUNKERS) {
         dir_bunkers(house, d);
         dir_garrison(house, d);
+        dir_posts(house, d);
     }
     if (CURRENT_FRAME % 150 < 15 && (director_enabled(house) & DIR_F_ENGINEERS))
         dir_engineers(house, d);

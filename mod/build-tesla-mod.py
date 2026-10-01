@@ -196,6 +196,14 @@ BALANCE = {
     # Grizzlies destroyed 0.49 of their own value lost, against 1.66 for Rhinos and 1.53 for Lashers.
     # Rhino parity on armour; still cheaper (700 vs 900) and faster (7 vs 6).
     ("MTNK", "Strength"): "400",
+    # 2026-10-01: Yuri won 13 of 16 (7-1 against America, 6-2 against Russia). Its leaders by value
+    # destroyed per value lost: Gatling Cannon 7.2, Gatling Tank 1.65, Floating Disc 1.6. Dearer, not
+    # weaker, at the user's request; the refund (Soylent) follows the price.
+    ("YAGGUN", "Cost"): "1250",       # 1000
+    ("YTNK", "Cost"): "750",          # 600
+    ("YTNK", "Soylent"): "750",
+    ("DISK", "Cost"): "2000",         # 1750
+    ("DISK", "Soylent"): "2000",
 }
 
 

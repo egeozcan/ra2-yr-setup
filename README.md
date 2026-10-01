@@ -1059,6 +1059,21 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   orders. They pack up when nothing armed has been within range + 5 for 150 frames, at once when
   the army retreats, and never on a bridge. Deploy and pack-up are at least 300 frames apart.
   The deployed state is read from `InfantryClass::SequenceAnim` (+0x6C4, 27–30).
+- **Allied infantry posts.** American (Allied) AIs keep GIs and Guardian GIs dug in at posts on
+  the base edge facing the enemy, about 9 cells from the base centre toward the rally and spread
+  across that line. There are two posts plus one per 8000 of the target enemy's army value, at
+  most six; the centre posts fill first. Each soldier walks to its post and deploys there; a dead
+  one is replaced from the army. Soldiers of posts no longer needed rejoin the army.
+- **Full bunkers.** Our own garrisonable defences, such as the Soviet Battle Bunker, are filled to
+  capacity with garrison infantry. The order gives the bunker as both target and destination; the
+  destination alone, which works for civilian buildings, left them empty. With no garrison infantry
+  free, the barracks trains some (GI, Conscript, Initiate).
+- **Standing anti-air.** From frame 9000, every side keeps at least two anti-air defences at home
+  (Patriot, Flak Cannon, Gatling Cannon) once it can spare the price plus 2000, besides the ones
+  queued during air raids.
+- **Mind control.** Targets with a mind-control capture manager (Yuri, Yuri Prime, Mastermind,
+  Psychic Tower) score 80 more. Units controlled by one that is within weapon range + 6 score 60
+  less: kill the controller and they switch back.
 - **Dodging and kiting Kirovs.** A unit that can't shoot at a nearby Kirov or Floating Disc moves
   out from under it: toward our nearest anti-air within 20 cells, or 8 cells straight away. A unit
   that can shoot it kites. When the aircraft closes within 3 cells it steps back to just inside its
@@ -1180,6 +1195,11 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
   against Russia is now even (5–3 to America); Yuri beat America 7–1 and Russia 6–2. The Kirov's
   ratio is down to 1.2. Yuri's Gatling Tank (1.65), Floating Disc (1.6), Lasher (1.25) and Gatling
   Cannon (7.2) lead.
+- **Yuri made dearer** (user's call): Gatling Cannon 1000 → 1250, Gatling Tank 600 → 750, Floating
+  Disc 1750 → 2000, with the refunds alike.
+  - **Results** over Yuri's 16 matches: 8 wins instead of 13. Russia now leads Yuri 5–3, and
+    America trails it 2–5 with 1 draw.
+  - **Ratios:** the Disc fell to 0.54, the Gatling Tank to 1.47.
 - **Stat change:** the Grizzly got Rhino-level armour (`MTNK` Strength 300 → 400), listed in
   `BALANCE` in `mod/build-tesla-mod.py`. America's 16 matches afterwards: still 2 wins, though the
   Grizzly's ratio rose from 0.49 to 0.67. America's army is as large as the others (49k at frame
