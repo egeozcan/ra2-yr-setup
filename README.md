@@ -242,7 +242,7 @@ It shares no geometry with the Tesla tank.
   afterwards overwrites it with the custom model again.
 
 Stats compared with the stock Tesla tank:
-- 1500 HP (stock 300), speed 2 (stock 6; was 9, then 4, halved again on 2026-09-30 because it was too strong), self-healing, immune to mind control and radiation.
+- 750 HP (stock 300; halved from 1500 on 2026-10-01), speed 2 (stock 6; was 9, then 4, halved again on 2026-09-30 because it was too strong), self-healing, immune to mind control and radiation.
 - Weapon: 300 damage, range 7, ROF 70; elite: 450 damage, range 8, ROF 50. The bolt chains between targets.
   Fire rate halved on 2026-10-01 (ROF was 35 and 25; ROF is the delay between shots).
 - Warhead `LibertyElectric` does full damage to buildings.
@@ -1001,6 +1001,23 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   their weapon range), every armed ship we own attacks the nearest one it can hit. The yard builds
   warships until our fleet matches them: Destroyers, Typhoon subs or Sea Scorpions, Boomers. A land raid's
   defence point is now the raider nearest the base, not the average of all raiders.
+- **Fleet offence.** With no enemy ships near the base, a fleet of three or more armed ships worth
+  3000+, outvaluing the enemy ships around the target by 1.2×, goes on the attack:
+  - **Targets:** the nearest enemy ship first, otherwise the target enemy's (then anyone's)
+    structures within 6 cells of water the fleet can actually sail to. That water is a flood fill over
+    water cells from a ship's own cell, so lakes and other seas are left out.
+  - **Orders:** ships that can hit the target attack it; the rest (subs against buildings) escort
+    and fight what they meet.
+  - **Stalls and losses:** a target it can't get closer to within 1500 frames is skipped. At 40% of
+    its strength at launch the fleet returns home.
+  - **Tested:** six placed destroyers on *Crocodile* shelled one base's Tech Center and refineries
+    (that house was eliminated), crossed to an Allied base and turned back at 2000 of 6000.
+- **No more wiggling.** Units on a guard order were re-ordered every tick, about 900 times in one
+  free-for-all. The check for "already guarding there" compared the unit's Focus with the goal, but
+  the engine moves Focus while it guards. Each re-order restarted the unit, which shook in place
+  between buildings. The director now leaves a guarding unit alone once it is within 4 cells of
+  the goal, when its goal moved less than 4 cells, or when it got the same order in the last 450
+  frames. Churn fell from 980 to 17 events per match.
 - **Walled-in units.** A unit that hasn't moved for 3000 frames, with nothing in its sights and its goal
   far away, is checked with a flood fill of the cells within 14. When the fill can't leave that box
   past buildings, water or rock, the unit is in a pocket, and the director sells the cheapest
@@ -1069,6 +1086,16 @@ Bench-only `[Settings]` keys, for tests:
 - `ForceIsland=1`: treat enemies as cut off by water.
 - `ForceExpand=1`: expand without waiting for idle harvesters.
 - `Camera=100+N` follows house N's base; `CameraX`/`CameraY` watch one cell.
+- `FleetTest=N` puts N warships for the first AI on the water nearest its base at frame 300.
+- Every benchmark match also writes `yspawn-kills.csv`: per unit type, kills and the value destroyed
+  (credited through `RegisterDestruction`, vtable 0xE0), deaths and the value lost.
+
+Balance tools:
+- `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every
+  pairing on four 2-player maps with the starts swapped (24 matches).
+- `bench.py factions DIR...`: wins per country and per pairing.
+- `bench.py units DIR...`: kill statistics summed over matches, with value destroyed against
+  value lost per unit type.
 
 Each match writes `yspawn-bench.csv`: per-house snapshots every 300 frames and a result row.
 - The snapshot columns `killed_units`/`killed_buildings` are the house's **losses**.

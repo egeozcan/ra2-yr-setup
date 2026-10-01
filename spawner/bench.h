@@ -23,10 +23,12 @@
 #include "director-policy.h"
 static FILE *bench_file;
 static void bench_row_extra(BYTE *house);
+static int bench_fleet;
 static int bench_limit, bench_next, bench_over, bench_players, bench_reveal, bench_camera = -1, bench_camera_x,
     bench_camera_y;
 static int bench_force_island, bench_force_expand;   /* tests: force ferries / expansion */   /* test: treat every enemy as cut off by water, to exercise ferries */
 static void bench_camera_update(void);
+static void bench_kills_dump(void);
 static DWORD bench_start_ms;
 static int director_slot[8] = { DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT };
 static int director_house[32], director_mapped;
@@ -43,6 +45,7 @@ static void bench_init(void)
     bench_limit = ini_int("Settings", "FrameLimit", 0);
     bench_reveal = ini_int("Settings", "RevealMap", 0);      /* observer sees the whole map */
     bench_camera = ini_int("Settings", "Camera", -1);        /* follow this house's army front */
+    bench_fleet = ini_int("Settings", "FleetTest", 0);       /* N warships for AI house 1 at frame 300 */
     bench_camera_x = ini_int("Settings", "CameraX", 0);      /* or watch one cell */
     bench_camera_y = ini_int("Settings", "CameraY", 0);
     bench_force_island = ini_int("Settings", "ForceIsland", 0);
@@ -138,6 +141,7 @@ static void bench_sample(void)
     int timeout = bench_limit && CURRENT_FRAME >= bench_limit;
     if (sides <= 1 || timeout) {
         bench_over = 1;
+        bench_kills_dump();
         fprintf(bench_file, "result,%d,%s,%d\n", CURRENT_FRAME, timeout && sides > 1 ? "timeout" : "win",
                 n ? FIELD(alive[0], 0x30, int) : -1);
         fclose(bench_file);

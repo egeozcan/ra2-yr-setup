@@ -48,7 +48,7 @@ UNIT_OVERRIDES = {
     "CrateGoodie": "no",                 # crates must not give it to other countries
     "Primary": "ATankBolt",
     "ElitePrimary": "ATankBoltE",
-    "Strength": "1500",                  # 300
+    "Strength": "750",                   # 300; halved from 1500 on 2026-10-01
     "Speed": "2",                        # 6; halved twice from the earlier 9 (Speed is an integer)
     "Sight": "10",                       # 8
     "ROT": "8",                          # 5

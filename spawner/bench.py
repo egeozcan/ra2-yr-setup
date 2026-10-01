@@ -77,8 +77,9 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
             if os.path.exists(p):
                 shutil.copy2(p, backup)
     result = os.path.join(spawn.GAME, "yspawn-bench.csv")
-    if os.path.exists(result):
-        os.remove(result)
+    for stale in (result, os.path.join(spawn.GAME, "yspawn-kills.csv")):
+        if os.path.exists(stale):
+            os.remove(stale)
     try:
         ini = write_ini(map_file, ais, human_start, frames, speed, seed or int(time.time()) & 0x7FFFFFFF, extra)
         with open(os.path.join(outdir, "yspawn.ini"), "w") as f:
@@ -93,7 +94,7 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         if spawn.running():
             subprocess.run(["pkill", "-x", "gamemd-spawn.ex"])
             time.sleep(3)
-        for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv"):
+        for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv"):
             p = os.path.join(spawn.GAME, f)
             if os.path.exists(p) and os.path.getmtime(p) >= began - 1:
                 shutil.move(p, os.path.join(outdir, f)) if f != "yspawn.log" else shutil.copy2(p, outdir)
@@ -132,6 +133,70 @@ def outcome(outdir):
     if abs(mine - theirs) * 5 < max(mine, theirs):
         return "draw"
     return "win" if mine > theirs else "loss"
+
+
+def faction_result(outdir):
+    """(countries in the match, winner country or 'draw') scored like outcome(), per country."""
+    path = os.path.join(outdir, "yspawn-bench.csv")
+    if not os.path.exists(path):
+        return None
+    rows = list(csv.reader(open(path)))
+    header, body = rows[0], rows[1:]
+    result = next((r for r in body if r[0] == "result"), None)
+    last = {}
+    for r in body:
+        if r[0] != "result":
+            last[r[2]] = dict(zip(header, r))
+    ais = {h: d for h, d in last.items() if d["human"] == "0"}
+    countries = sorted(d["country"] for d in ais.values())
+    if result and result[2] == "win":
+        return countries, ais[result[3]]["country"]
+    score = {h: int(d["buildings"]) * 1000 + int(d["cost_infantry"]) + int(d["cost_vehicles"])
+             + int(d["cost_aircraft"]) for h, d in ais.items()}
+    ranked = sorted(score, key=score.get, reverse=True)
+    if len(ranked) < 2 or (score[ranked[0]] - score[ranked[1]]) * 5 < score[ranked[0]]:
+        return countries, "draw"
+    return countries, ais[ranked[0]]["country"]
+
+
+def factions(dirs):
+    """Wins per country, and per pairing."""
+    wins, played, pairs = {}, {}, {}
+    for d in dirs:
+        r = faction_result(d)
+        if not r:
+            continue
+        countries, winner = r
+        for c in countries:
+            played[c] = played.get(c, 0) + 1
+        if winner != "draw":
+            wins[winner] = wins.get(winner, 0) + 1
+        key = " vs ".join(countries)
+        pairs.setdefault(key, []).append(winner)
+    lines = [f"{c}: {wins.get(c, 0)} wins of {n}" for c, n in sorted(played.items())]
+    lines += [f"{k}: " + ", ".join(v) for k, v in sorted(pairs.items())]
+    return "\n".join(lines)
+
+
+def units(dirs, top=40):
+    """Kill statistics summed over matches: per unit type, value destroyed against value lost."""
+    stats = {}
+    for d in dirs:
+        path = os.path.join(d, "yspawn-kills.csv")
+        if not os.path.exists(path):
+            continue
+        for r in csv.DictReader(open(path)):
+            s = stats.setdefault(r["type"], {"cost": int(r["cost"]), "kills": 0, "killed": 0, "deaths": 0, "lost": 0})
+            s["kills"] += int(r["kills"])
+            s["killed"] += int(r["killed_value"])
+            s["deaths"] += int(r["deaths"])
+            s["lost"] += int(r["lost_value"])
+    rows = sorted(stats.items(), key=lambda kv: -kv[1]["killed"])[:top]
+    out = [f"{'type':10} {'cost':>5} {'kills':>6} {'destroyed':>10} {'deaths':>6} {'lost':>9} {'ratio':>6}"]
+    for t, s in rows:
+        ratio = s["killed"] / s["lost"] if s["lost"] else float("inf")
+        out.append(f"{t:10} {s['cost']:5} {s['kills']:6} {s['killed']:10} {s['deaths']:6} {s['lost']:9} {ratio:6.2f}")
+    return "\n".join(out)
 
 
 def tally(dirs):
@@ -226,7 +291,13 @@ HELDOUT2 = [
     ("Potomac.mmx", 5, [(8, 0, 1, 0), (0, 1, 0, 0), (9, 2, 0, 0), (3, 3, 0, 0)], None),
     ("PowdrKeg.mmx", 7, [(0, 0, 1, 0), (8, 1, 0, 0), (9, 2, 0, 0), (6, 3, 0, 0), (2, 4, 0, 0), (1, 5, 0, 0)], None),
 ]
-SUITES = {"tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD}
+# Faction balance: director against director, so both sides play equally well. Each pairing of
+# America (0), Russia (8) and Yuri (9) on four 2-player maps, with the starts swapped.
+BALANCE = [(m, 3, [(a, s, 1, 0), (b, 1 - s, 1, 0)], None)
+           for m in ("Arena.mmx", "Hills.mmx", "Tower.mmx", "Lostlake.mmx")
+           for a, b in ((0, 8), (0, 9), (8, 9))
+           for s in (0, 1)]
+SUITES = {"tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
 
 
 def suite_list(outdir, matches, frames=60000):
@@ -256,7 +327,7 @@ def suite(outdir, filt=None, frames=60000):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if not args or args[0] not in ("run", "summary", "suite", "restore"):
+    if not args or args[0] not in ("run", "summary", "suite", "restore", "factions", "units"):
         raise SystemExit(__doc__)
     if args[0] == "restore":
         restore()
@@ -267,6 +338,12 @@ if __name__ == "__main__":
             suite_list(args[1], SUITES[name])
         else:
             suite(args[1], None if name == "tune" else name)
+        raise SystemExit
+    if args[0] == "units":
+        print(units(args[1:]))
+        raise SystemExit
+    if args[0] == "factions":
+        print(factions(args[1:]))
         raise SystemExit
     if args[0] == "summary":
         for d in args[1:]:

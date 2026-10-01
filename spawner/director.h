@@ -68,6 +68,9 @@ typedef struct {
     int rally_frame;
     int third_party, last_attack_end, next_repick;          /* other enemies' units near the target's base */
     int naval_threat, want_navy;                            /* enemy ships near our buildings */
+    int navy_state, navy_launch, navy_best, navy_progress, navy_bad_count, last_navy_log;   /* fleet attacks */
+    BYTE *navy_target, *navy_bad[8];
+    CellXY navy_target_at;
     int next_unstick, last_regroup_log;                                    /* units walled in by our own buildings */
     int refinery_queued, refinery_count, refinery_fails, refinery_backoff;
     BYTE *bunker_unit[8], *bunker_site[8];                  /* tanks sent into tank bunkers */
@@ -648,8 +651,35 @@ static int dir_recent_order(BYTE *unit, BYTE *what, int hold)
     return 0;
 }
 
+/* Benchmark diagnostics: units given many orders while barely moving (wiggling in place). */
+static const char *dir_why = "other";
+static struct { BYTE *unit; CellXY at; int frame, count; const char *last; int logged; } dir_churn[1024];
+
+static void dir_note_order(BYTE *unit)
+{
+    if (!bench_file)
+        return;
+    unsigned k = ((DWORD)unit >> 3) % 1024;
+    CellXY at = object_cell(unit);
+    if (dir_churn[k].unit != unit || CURRENT_FRAME - dir_churn[k].frame > 600 || dir_dist2(dir_churn[k].at, at) > 3 * 3) {
+        dir_churn[k].unit = unit;
+        dir_churn[k].at = at;
+        dir_churn[k].frame = CURRENT_FRAME;
+        dir_churn[k].count = 0;
+        dir_churn[k].logged = 0;
+    }
+    dir_churn[k].count++;
+    if (dir_churn[k].count >= 12 && !dir_churn[k].logged) {
+        dir_churn[k].logged = 1;
+        logmsg("director: frame %d: %.24s at %d,%d got %d orders in %d frames without moving (last: %s, mission %d)",
+               CURRENT_FRAME, (char *)dir_type(unit) + T_ID, at.X, at.Y, dir_churn[k].count,
+               CURRENT_FRAME - dir_churn[k].frame, dir_why, FIELD(unit, COMBAT_MISSION, int));
+    }
+}
+
 static void dir_order(BYTE *unit, int mission, BYTE *target, BYTE *cell)
 {
+    dir_note_order(unit);
     ((char (GTHISCALL *)(BYTE *, int, BYTE *, BYTE *, BYTE *))VFUNC(unit, VT_CLICKEDMISSION))(
         unit, mission, target, cell, NULL);
 }
@@ -710,9 +740,18 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
         return;
     /* Area guard around a cell is the engine's own attack-move: the unit heads for its Focus and
      * fights what it meets there. A plain move order gets reset by the AI's idle-unit handling. */
-    if (FIELD(unit, T_FOCUS, BYTE *) == cell && FIELD(unit, COMBAT_MISSION, int) == MISSION_AREA_GUARD)
+    int guarding = FIELD(unit, COMBAT_MISSION, int) == MISSION_AREA_GUARD;
+    BYTE *focus = FIELD(unit, T_FOCUS, BYTE *);
+    if (guarding && (focus == cell || dir_dist2(at, goal) <= 4 * 4
+                     || (focus && is_cell(focus) && dir_dist2(FIELD(focus, C_MAPCOORDS, CellXY), goal) <= 4 * 4)))
+        return;   /* a goal that drifts a few cells (a defence point on a moving raider) is the same order */
+    /* The engine moves Focus while it guards, so Focus alone can't tell an order already given:
+     * re-queueing every tick restarted the unit, which wiggled in place. Our own order memory
+     * leaves it to work for a while (it may be fighting on the way). */
+    if (dir_recent_order(unit, cell, 450))
         return;
     FIELD(unit, T_FOCUS, BYTE *) = cell;
+    dir_note_order(unit);
     ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(unit, VT_QUEUEMISSION))(unit, MISSION_AREA_GUARD, 1);
 }
 
@@ -1126,6 +1165,7 @@ static void dir_army(BYTE *house, DirState *d)
                         theirs += dir_enemies[k].value;
                 if (dir_should_regroup(ours, theirs, ahead, group_value)) {
                     regrouping++;
+                    dir_why = "regroup";
                     dir_command(pool[i], body, NULL, 0);
                     continue;
                 }
@@ -1133,6 +1173,7 @@ static void dir_army(BYTE *house, DirState *d)
         }
         if (hold > 0 && !FIELD(pool[i], O_TARGET, BYTE *) && dir_dist2(c, d->objective_at) < hold) {
             held++;
+            dir_why = "cohesion hold";
             dir_command(pool[i], c, NULL, engage);   /* area-guard where it stands */
             continue;
         }
@@ -1143,11 +1184,13 @@ static void dir_army(BYTE *house, DirState *d)
             waiting++;
             if (dir_flags & DIR_F_UNSTICK)   /* waiting is no proof of being free: test for a pocket */
                 dir_track_stuck(house, d, pool[i], c, d->objective_at);
+            dir_why = "wait at rally";
             dir_command(pool[i], d->rally, NULL, 1);
             continue;
         }
         if (d->state != DIR_DEFEND && (dir_flags & DIR_F_UNSTICK))
             dir_track_stuck(house, d, pool[i], c, goal);
+        dir_why = d->state == DIR_ATTACK ? "attack" : d->state == DIR_DEFEND ? "defend" : d->state == DIR_RETREAT ? "retreat" : "gather";
         dir_command(pool[i], goal, d->state == DIR_ATTACK ? d->objective : NULL, engage);
     }
     if (bench_file && CURRENT_FRAME == d->last_log && d->state == DIR_ATTACK)
@@ -1371,6 +1414,7 @@ static int dir_object_listed(DynVec *v, BYTE *obj)
  * enemy tech building (oil derrick first) near our army or base once no armed enemy guards it. */
 static void dir_engineers(BYTE *house, DirState *d)
 {
+    dir_why = "engineer";
     BYTE *job = d->repair_hut;
     int alive = job && dir_object_listed(OIL_BUILDING_ARRAY, job) && oil_live(job);
     int done = !alive || (d->repair_mode == 0 ? !dir_bridge_down(job) : FIELD(job, O_OWNER, BYTE *) == house
@@ -1634,6 +1678,7 @@ static int dir_zone(CellXY c)
 
 static void dir_ferry(BYTE *house, DirState *d)
 {
+    dir_why = "ferry";
     int side = FIELD(house, OIL_H_SIDE, int);
     if (!(d->island || d->blocked) || side < 0 || side > 2)
         return;
@@ -1724,40 +1769,217 @@ static void dir_ferry(BYTE *house, DirState *d)
  * Stock AI leaves its ships to trigger teams, which rarely answer ships shelling the base. While
  * enemy ships are near our buildings, every armed ship of ours attacks the nearest one it can hit,
  * and the yard builds warships until our fleet matches them. */
+/* Within r cells of open water: a structure ships can shell. */
+static int dir_near_water(CellXY c, int r)
+{
+    for (int dy = -r; dy <= r; dy += 2)
+        for (int dx = -r; dx <= r; dx += 2) {
+            BYTE *cell = dir_cell((CellXY){ (short)(c.X + dx), (short)(c.Y + dy) });
+            if (cell && FIELD(cell, C_LANDTYPE, int) == 2)
+                return 1;
+        }
+    return 0;
+}
+
+/* Open water the fleet can sail to: a flood fill over water cells from a ship's own cell. */
+static unsigned char dir_sea[512 * 512 / 8];
+static int dir_sea_queue[512 * 512], dir_sea_log = -100000;
+
+static int dir_is_sea(CellXY c)
+{
+    return c.X > 0 && c.Y > 0 && c.X < 512 && c.Y < 512 && (dir_sea[(c.Y * 512 + c.X) >> 3] >> (c.X & 7) & 1);
+}
+
+static void dir_fill_sea(CellXY from)
+{
+    memset(dir_sea, 0, sizeof dir_sea);
+    BYTE *start = dir_cell(from);
+    if (!start)
+        return;
+    int head = 0, tail = 0;
+    dir_sea_queue[tail++] = from.Y * 512 + from.X;
+    dir_sea[(from.Y * 512 + from.X) >> 3] |= 1 << (from.X & 7);
+    while (head < tail) {
+        int i = dir_sea_queue[head++], x = i % 512, y = i / 512;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                CellXY n = { (short)(x + dx), (short)(y + dy) };
+                BYTE *cell = dir_cell(n);
+                if (!cell || dir_is_sea(n) || FIELD(cell, C_LANDTYPE, int) != 2)
+                    continue;
+                dir_sea[(n.Y * 512 + n.X) >> 3] |= 1 << (n.X & 7);
+                dir_sea_queue[tail++] = n.Y * 512 + n.X;
+            }
+    }
+    if (bench_file && CURRENT_FRAME - dir_sea_log > 3000) {
+        dir_sea_log = CURRENT_FRAME;
+        logmsg("director: frame %d: sea from %d,%d (land %d): %d water cells", CURRENT_FRAME, from.X, from.Y,
+               FIELD(start, C_LANDTYPE, int), tail);
+    }
+}
+
+static int dir_near_sea(CellXY c, int r)
+{
+    for (int dy = -r; dy <= r; dy++)
+        for (int dx = -r; dx <= r; dx++)
+            if (dx * dx + dy * dy <= r * r && dir_is_sea((CellXY){ (short)(c.X + dx), (short)(c.Y + dy) }))
+                return 1;
+    return 0;
+}
+
+/* The fleet's next target: the nearest enemy ship on our water, else the target enemy's (then
+ * anyone's) structure within gun range of it. Targets it could not get at are skipped. */
+static DirEnemy *dir_navy_pick(DirState *d, CellXY from, CellXY ship)
+{
+    dir_fill_sea(ship);
+    DirEnemy *best = NULL;
+    int best_score = 0x7FFFFFFF;
+    for (int pass = 0; pass < 3 && !best; pass++)
+        for (int i = 0; i < dir_enemy_count; i++) {
+            DirEnemy *e = &dir_enemies[i];
+            int bad = 0;
+            for (int k = 0; k < d->navy_bad_count; k++)
+                bad |= d->navy_bad[k] == e->obj;
+            if (bad || e->air || e->capturable)
+                continue;
+            if (pass == 0 ? !e->naval || !dir_near_sea(e->at, 2)
+                : !e->building || (pass == 1 && FIELD(e->obj, O_OWNER, BYTE *) != d->enemy) || !dir_near_sea(e->at, 6))
+                continue;
+            int score = dir_dist2(from, e->at);
+            if (score < best_score) {
+                best_score = score;
+                best = e;
+            }
+        }
+    return best;
+}
+
 static void dir_navy(BYTE *house, DirState *d)
 {
-    int fleet = 0, ordered = 0;
+    dir_why = "navy";
+    dir_flags = director_enabled(house);
+    BYTE *ships[64];
+    int n = 0, fleet = 0, sx = 0, sy = 0;
     DynVec *v = OIL_TECHNO_ARRAY;
-    for (int i = 0; i < v->Count; i++) {
+    for (int i = 0; i < v->Count && n < 64; i++) {
         BYTE *o = v->Items[i];
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 1 || !dir_naval(o)
             || !dir_armed(o))
             continue;
+        ships[n++] = o;
         fleet += dir_cost(dir_type(o));
-        if (d->naval_threat < 600)
-            continue;
-        dir_take_from_team(o);
-        CellXY at = object_cell(o);
-        DirEnemy *best = NULL;
-        int best_d = 0x7FFFFFFF;
-        for (int k = 0; k < dir_enemy_count; k++) {
-            DirEnemy *e = &dir_enemies[k];
-            int dd = dir_dist2(at, e->at);
-            if (e->threat && e->naval && dd < best_d && dir_can_fire_at(o, e->obj)) {
-                best_d = dd;
-                best = e;
-            }
-        }
-        if (best && FIELD(o, O_TARGET, BYTE *) != best->obj && !dir_recent_order(o, best->obj, 150)) {
-            dir_order(o, MISSION_ATTACK, best->obj, NULL);
-            ordered++;
-        }
+        CellXY c = object_cell(o);
+        sx += c.X;
+        sy += c.Y;
     }
+    CellXY centre = n ? (CellXY){ (short)(sx / n), (short)(sy / n) } : d->base;
     int want = d->naval_threat >= 600 && fleet < d->naval_threat;
-    if (want != d->want_navy || (ordered && CURRENT_FRAME - d->last_log > 600))
-        logmsg("director: house %d frame %d: enemy ships %d near the base, fleet %d, %d ordered%s",
-               FIELD(house, 0x30, int), CURRENT_FRAME, d->naval_threat, fleet, ordered, want ? ", building warships" : "");
+    if (want != d->want_navy)
+        logmsg("director: house %d frame %d: enemy ships %d near the base, fleet %d%s", FIELD(house, 0x30, int),
+               CURRENT_FRAME, d->naval_threat, fleet, want ? ", building warships" : "");
     d->want_navy = want;
+
+    /* Defence first: ships shelling the base. */
+    if (d->naval_threat >= 600) {
+        for (int i = 0; i < n; i++) {
+            BYTE *o = ships[i];
+            dir_take_from_team(o);
+            CellXY at = object_cell(o);
+            DirEnemy *best = NULL;
+            int best_d = 0x7FFFFFFF;
+            for (int k = 0; k < dir_enemy_count; k++) {
+                DirEnemy *e = &dir_enemies[k];
+                int dd = dir_dist2(at, e->at);
+                if (e->threat && e->naval && dd < best_d && dir_can_fire_at(o, e->obj)) {
+                    best_d = dd;
+                    best = e;
+                }
+            }
+            if (best && FIELD(o, O_TARGET, BYTE *) != best->obj && !dir_recent_order(o, best->obj, 150))
+                dir_order(o, MISSION_ATTACK, best->obj, NULL);
+        }
+        return;
+    }
+
+    /* Offence: a fleet of three or more that outvalues the enemy ships around the target goes
+     * hunting ships, then shells structures by the water. */
+    if (d->navy_state == 0) {
+        int enemy_ships = 0;
+        CellXY target_base = d->enemy ? dir_house_center(d->enemy) : centre;
+        for (int k = 0; k < dir_enemy_count; k++)
+            if (dir_enemies[k].naval && dir_enemies[k].armed
+                && (FIELD(dir_enemies[k].obj, O_OWNER, BYTE *) == d->enemy || dir_dist2(dir_enemies[k].at, target_base) <= 30 * 30))
+                enemy_ships += dir_enemies[k].value;
+        if (n < 3 || fleet < 3000 || (long long)fleet * 10 < (long long)enemy_ships * 12)
+            return;
+        DirEnemy *t = dir_navy_pick(d, centre, object_cell(ships[0]));
+        if (!t)
+            return;
+        d->navy_state = 1;
+        d->navy_launch = fleet;
+        d->navy_target = t->obj;
+        d->navy_target_at = t->at;
+        d->navy_best = 0x7FFFFFFF;
+        d->navy_progress = CURRENT_FRAME;
+        logmsg("director: house %d frame %d: fleet of %d (%d) sails for %.24s at %d,%d", FIELD(house, 0x30, int),
+               CURRENT_FRAME, n, fleet, (char *)dir_type(t->obj) + T_ID, t->at.X, t->at.Y);
+    }
+    if (n == 0 || fleet * 10 < d->navy_launch * 4) {   /* bled out: home to the yard */
+        logmsg("director: house %d frame %d: fleet down to %d of %d, returning", FIELD(house, 0x30, int), CURRENT_FRAME,
+               fleet, d->navy_launch);
+        d->navy_state = 0;
+        for (int i = 0; i < n; i++)
+            dir_command(ships[i], d->base, NULL, 0);
+        return;
+    }
+    int alive = 0;
+    for (int k = 0; k < dir_enemy_count; k++)
+        alive |= dir_enemies[k].obj == d->navy_target;
+    if (!alive || CURRENT_FRAME % 300 < 15) {
+        DirEnemy *t = dir_navy_pick(d, centre, object_cell(ships[0]));
+        if (!t) {
+            d->navy_state = 0;
+            return;
+        }
+        if (t->obj != d->navy_target)
+            d->navy_best = 0x7FFFFFFF;
+        d->navy_target = t->obj;
+        d->navy_target_at = t->at;
+    }
+    /* progress: the closest ship gets closer, or ships are fighting near the target */
+    int dd = 0x7FFFFFFF, fighting = 0;
+    for (int i = 0; i < n; i++) {
+        int u = dir_dist2(object_cell(ships[i]), d->navy_target_at);
+        dd = u < dd ? u : dd;
+        fighting |= FIELD(ships[i], O_TARGET, BYTE *) != NULL && u <= 20 * 20;
+    }
+    if (fighting || (long long)dd * 10 < (long long)d->navy_best * 9) {
+        d->navy_best = dd < d->navy_best ? dd : d->navy_best;
+        d->navy_progress = CURRENT_FRAME;
+    } else if (CURRENT_FRAME - d->navy_progress > 1500) {
+        logmsg("director: house %d frame %d: fleet can't reach %.24s at %d,%d", FIELD(house, 0x30, int), CURRENT_FRAME,
+               (char *)dir_type(d->navy_target) + T_ID, d->navy_target_at.X, d->navy_target_at.Y);
+        d->navy_bad[d->navy_bad_count++ % 8] = d->navy_target;
+        if (d->navy_bad_count > 8)
+            d->navy_bad_count = 8;
+        d->navy_target = NULL;
+        d->navy_progress = CURRENT_FRAME;
+        d->navy_best = 0x7FFFFFFF;
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        dir_take_from_team(ships[i]);
+        /* ships that can hit the target attack it; the rest (subs against buildings) escort and
+         * fight what they meet */
+        int can = dir_can_fire_at(ships[i], d->navy_target);
+        dir_command(ships[i], d->navy_target_at, can ? d->navy_target : NULL, 1);
+    }
+    if (CURRENT_FRAME - d->last_navy_log > 1500) {
+        d->last_navy_log = CURRENT_FRAME;
+        logmsg("director: house %d frame %d: fleet %d ships (%d) attacking %.24s at %d,%d, closest %d cells",
+               FIELD(house, 0x30, int), CURRENT_FRAME, n, fleet, (char *)dir_type(d->navy_target) + T_ID,
+               d->navy_target_at.X, d->navy_target_at.Y, dir_isqrt(dd));
+    }
 }
 
 /* Benchmark diagnostics: our units next to a protected human's buildings, and why they are there. */
@@ -1818,6 +2040,7 @@ static const char *dir_bunker_tanks = "MTNK,TNKD,FV,HTNK,APOC,HTK,LTNK,YTNK";
 
 static void dir_bunkers(BYTE *house, DirState *d)
 {
+    dir_why = "bunker";
     if (CURRENT_FRAME < d->next_bunker)
         return;
     d->next_bunker = CURRENT_FRAME + 150;
@@ -1904,6 +2127,26 @@ static void dir_bunkers(BYTE *house, DirState *d)
     }
 }
 
+/* Benchmark fixture: warships for the first AI house on the open water nearest its base. */
+static void dir_fleet_fixture(BYTE *house, DirState *d)
+{
+    static const char *ships[3] = { "DEST", "HYD", "BSUB" };
+    int side = FIELD(house, OIL_H_SIDE, int);
+    BYTE *type = side >= 0 && side <= 2 ? find_type(UNITTYPE_ARRAY, ships[side]) : NULL;
+    int placed = 0;
+    for (int r = 4; r < 60 && placed < bench_fleet && type; r++)
+        for (int dy = -r; dy <= r && placed < bench_fleet; dy += 2)
+            for (int dx = -r; dx <= r && placed < bench_fleet; dx += 2) {
+                if (abs(dx) != r && abs(dy) != r)
+                    continue;
+                CellXY c = { (short)(d->base.X + dx), (short)(d->base.Y + dy) };
+                BYTE *cell = dir_cell(c);
+                if (cell && FIELD(cell, C_LANDTYPE, int) == 2 && dir_near_water(c, 2) && put_object(type, house, c.X, c.Y, 0))
+                    placed++;
+            }
+    logmsg("director: fleet fixture: %d %s for house %d", placed, type ? ships[side] : "-", FIELD(house, 0x30, int));
+}
+
 static void dir_update(BYTE *house)
 {
     if (!dir_active(house) || !(director_enabled(house) & DIR_F_ARMY))
@@ -1913,6 +2156,10 @@ static void dir_update(BYTE *house)
         return;
     d->next_think = CURRENT_FRAME + 15;
     d->base = dir_house_center(house);
+    if (bench_fleet && CURRENT_FRAME >= 300 && FIELD(house, 0x30, int) == 1) {
+        dir_fleet_fixture(house, d);
+        bench_fleet = 0;
+    }
     if (!d->enemy || !dir_hostile(house, d->enemy) || !dir_house_alive(d->enemy)) {
         d->enemy = dir_pick_enemy(house, d->base);
         d->unreachable_count = 0;
@@ -1988,6 +2235,8 @@ static void dir_update(BYTE *house)
     }
 }
 
+static void bench_kills_install(void);
+
 static void patch_director(void)
 {
     const BYTE unit[] = { 0x81, 0xEC, 0xDC, 0x04, 0x00, 0x00 };
@@ -2010,6 +2259,7 @@ static void patch_director(void)
     patch(DIR_INF_PRODUCTION + 5, (const BYTE[]){ 0x90 }, 1);
     patch_rel(DIR_INF_PRODUCTION, 0xE9, (DWORD)dir_inf_production);
     logmsg("director: production patches applied (Brutal skirmish only)");
+    bench_kills_install();
 }
 
 /* Benchmark CSV tail: war factories, current vehicle and infantry orders, director state and army. */
@@ -2040,4 +2290,87 @@ static void bench_camera_update(void)
     Coord at = { c.X * 256 + 128, c.Y * 256 + 128, 0 };
     at.Z = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &at);
     ((void (GTHISCALL *)(void *, Coord *))0x6D6070)(*(void **)0x887324, &at);
+}
+
+/* ---- benchmark kill statistics ----
+ * Every destroyed object reports its destroyer through ObjectClass::RegisterDestruction (vtable 0xE0;
+ * TechnoClass 0x702D40, UnitClass 0x744720). In benchmark matches a wrapper credits the victim's cost
+ * to the killer's type, and the loss to the victim's type; yspawn-kills.csv gets the totals. */
+#define VT_REGISTER_DESTRUCTION 0xE0
+static struct { BYTE *type; int kills, killed_value, deaths, lost_value; } kill_stats[512];
+static void *kill_original[4];
+
+static int kill_slot(BYTE *type)
+{
+    for (int i = 0; i < 512; i++) {
+        if (kill_stats[i].type == type)
+            return i;
+        if (!kill_stats[i].type) {
+            kill_stats[i].type = type;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void kill_note(BYTE *victim, BYTE *destroyer)
+{
+    BYTE *vt = victim && (FIELD(victim, 0x14, DWORD) & 1) ? dir_type(victim) : NULL;
+    if (!vt)
+        return;
+    int cost = dir_cost(vt), v = kill_slot(vt);
+    if (v >= 0) {
+        kill_stats[v].deaths++;
+        kill_stats[v].lost_value += cost;
+    }
+    BYTE *kt = destroyer && (FIELD(destroyer, 0x14, DWORD) & 1) ? dir_type(destroyer) : NULL;
+    BYTE *owner = destroyer ? FIELD(destroyer, O_OWNER, BYTE *) : NULL;
+    if (!kt || !owner || owner == FIELD(victim, O_OWNER, BYTE *))
+        return;
+    int k = kill_slot(kt);
+    if (k >= 0) {
+        kill_stats[k].kills++;
+        kill_stats[k].killed_value += cost;
+    }
+}
+
+#define KILL_WRAP(n) \
+static void GTHISCALL kill_wrap_##n(BYTE *self, BYTE *destroyer) \
+{ \
+    kill_note(self, destroyer); \
+    ((void (GTHISCALL *)(BYTE *, BYTE *))kill_original[n])(self, destroyer); \
+}
+KILL_WRAP(0)
+KILL_WRAP(1)
+KILL_WRAP(2)
+KILL_WRAP(3)
+#undef KILL_WRAP
+
+static void bench_kills_install(void)
+{
+    if (!ini_int("Settings", "Benchmark", 0))
+        return;
+    static const DWORD vtables[4] = { 0x7E22A4, 0x7E3EBC, 0x7EB058, 0x7F5C70 };   /* aircraft, building, infantry, unit */
+    static const DWORD expected[4] = { 0x702D40, 0x702D40, 0x702D40, 0x744720 };
+    void *wraps[4] = { kill_wrap_0, kill_wrap_1, kill_wrap_2, kill_wrap_3 };
+    for (int i = 0; i < 4; i++)
+        if (!patch_checked("benchmark kill stats", vtables[i] + VT_REGISTER_DESTRUCTION, (BYTE *)&expected[i], 4))
+            return;
+    for (int i = 0; i < 4; i++) {
+        kill_original[i] = (void *)expected[i];
+        patch(vtables[i] + VT_REGISTER_DESTRUCTION, (BYTE *)&wraps[i], 4);
+    }
+    logmsg("benchmark: kill statistics on");
+}
+
+static void bench_kills_dump(void)
+{
+    FILE *f = fopen("yspawn-kills.csv", "w");
+    if (!f)
+        return;
+    fputs("type,cost,kills,killed_value,deaths,lost_value\n", f);
+    for (int i = 0; i < 512 && kill_stats[i].type; i++)
+        fprintf(f, "%.24s,%d,%d,%d,%d,%d\n", (char *)kill_stats[i].type + T_ID, dir_cost(kill_stats[i].type),
+                kill_stats[i].kills, kill_stats[i].killed_value, kill_stats[i].deaths, kill_stats[i].lost_value);
+    fclose(f);
 }
