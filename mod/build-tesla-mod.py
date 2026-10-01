@@ -48,7 +48,7 @@ UNIT_OVERRIDES = {
     "CrateGoodie": "no",                 # crates must not give it to other countries
     "Primary": "ATankBolt",
     "ElitePrimary": "ATankBoltE",
-    "Strength": "750",                   # 300; halved from 1500 on 2026-10-01
+    "Strength": "375",                   # 300; halved from 1500, then from 750 (2026-10-01)
     "Speed": "2",                        # 6; halved twice from the earlier 9 (Speed is an integer)
     "Sight": "10",                       # 8
     "ROT": "8",                          # 5
@@ -65,7 +65,7 @@ NEW_SECTIONS = f"""
 ; ===== Liberator mod (Allied-only Tesla tank) =====
 [ATankBolt]
 Damage=300
-ROF=70
+ROF=140
 Range=7
 Speed=100
 Warhead=LibertyElectric
@@ -75,7 +75,7 @@ IsElectricBolt=true
 
 [ATankBoltE]
 Damage=450
-ROF=50
+ROF=100
 Range=8
 Speed=100
 Warhead=LibertyElectric

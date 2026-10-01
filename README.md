@@ -242,9 +242,9 @@ It shares no geometry with the Tesla tank.
   afterwards overwrites it with the custom model again.
 
 Stats compared with the stock Tesla tank:
-- 750 HP (stock 300; halved from 1500 on 2026-10-01), speed 2 (stock 6; was 9, then 4, halved again on 2026-09-30 because it was too strong), self-healing, immune to mind control and radiation.
-- Weapon: 300 damage, range 7, ROF 70; elite: 450 damage, range 8, ROF 50. The bolt chains between targets.
-  Fire rate halved on 2026-10-01 (ROF was 35 and 25; ROF is the delay between shots).
+- 375 HP (stock 300; halved twice on 2026-10-01, from 1500 to 750 to 375), speed 2 (stock 6; was 9, then 4, halved again on 2026-09-30 because it was too strong), self-healing, immune to mind control and radiation.
+- Weapon: 300 damage, range 7, ROF 140; elite: 450 damage, range 8, ROF 100. The bolt chains between targets.
+  Fire rate halved twice on 2026-10-01 (ROF 35/25, then 70/50; ROF is the delay between shots).
 - Warhead `LibertyElectric` does full damage to buildings.
 - Requires an Allied War Factory and an Allied Battle Lab (`GAWEAP,GATECH`). The Battle Lab
   itself needs an Air Force Command. Cost 3000 (was 1500). Crates can't grant it.
@@ -1018,6 +1018,30 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   between buildings. The director now leaves a guarding unit alone once it is within 4 cells of
   the goal, when its goal moved less than 4 cells, or when it got the same order in the last 450
   frames. Churn fell from 980 to 17 events per match.
+- **Civilian buildings.** The civilian houses (`MultiplayPassive`, HouseType +0x1A6) are no
+  longer enemies. The army used to shoot their garrisonable buildings as plain targets; now it
+  leaves them alone, though their tech buildings stay capturable by engineers. Every 300 frames
+  the director instead garrisons empty civilian buildings within 30 cells of home or the rally:
+  - one soldier each (`Occupier=yes` infantry: GI, Conscript, Initiate and the like), at most two
+    orders per pass and six buildings held;
+  - never into a building that armed enemies are within 8 cells of;
+  - the order is the enter click (`ClickedMission(Enter)` with the building as the destination),
+    and the soldier stays out of the army until it is inside;
+  - a building nobody got into is skipped for 9000 frames.
+
+  Offsets read from the INI loaders: `CanBeOccupied` +0x157B, `MaxNumberOccupants` +0x1580,
+  `Occupier` +0xEB4. The occupant count is BuildingClass +0x694. Tested on *Rockets Red Glare*:
+  three buildings garrisoned by frame 11,856.
+- **Air defence.** Enemy aircraft within 25 cells of our buildings or army front are tracked, with a
+  slowly decaying memory. While they're worth 1500+ and outvalue our anti-air units, every side
+  answers the same way:
+  - anti-air vehicles override stock picks: IFV, Flak Track, Gatling Tank;
+  - anti-air infantry too: Guardian GI, Flak Trooper;
+  - an anti-air defence is queued at home every 3000 frames: Patriot, Flak Cannon, Gatling
+    Cannon.
+
+  It was added because Kirovs (10× value destroyed vs lost) and Floating Discs (3×) led the kill
+  table against AIs that hardly built anti-air.
 - **Walled-in units.** A unit that hasn't moved for 3000 frames, with nothing in its sights and its goal
   far away, is checked with a flood fill of the cells within 14. When the fill can't leave that box
   past buildings, water or rock, the unit is in a pocket, and the director sells the cheapest
@@ -1098,6 +1122,12 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
   Kirov 3.6, Mirage 1.8, Liberator 1.8, Initiate 1.7, Gatling Tank 1.4, Rhino 1.0, Grizzly 0.7,
   Lasher 0.7, Tesla Trooper 0.7, GI 0.3.
 - These are AI-vs-AI numbers, so they mix unit strength with what the director builds for each side.
+- Second run, under the user's settings (tier-3 bases, superweapons off), Liberator at 750 HP and ROF 70:
+  - **Wins:** Yuri 10, America 6, Russia 6 of 16.
+  - **Value destroyed / value lost:** Kirov 10.2, Floating Disc 2.9, Liberator 2.1 (also the top
+    damage dealer, 592k), Rhino 0.9, Grizzly 0.4.
+  - The Liberator was then halved again, to 375 HP and ROF 140/100, and the AIs got the air-defence
+    answer above.
 
 Balance tools:
 - `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every

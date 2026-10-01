@@ -68,6 +68,7 @@ typedef struct {
     int rally_frame;
     int third_party, last_attack_end, next_repick;          /* other enemies' units near the target's base */
     int naval_threat, want_navy;                            /* enemy ships near our buildings */
+    int air_near, air_seen, own_aa, want_aa, next_aa_defense;   /* enemy aircraft near home or the army */
     int navy_state, navy_launch, navy_best, navy_progress, navy_bad_count, last_navy_log;   /* fleet attacks */
     BYTE *navy_target, *navy_bad[8];
     CellXY navy_target_at;
@@ -76,7 +77,9 @@ typedef struct {
     BYTE *bunker_unit[8], *bunker_site[8];                  /* tanks sent into tank bunkers */
     int bunker_frame[8], next_bunker;
     BYTE *bunker_failed[8];                                 /* tanks that could not get in: skip a while */
-    int bunker_failed_frame[8], bunker_failed_next, last_veto_log;
+    int bunker_failed_frame[8], bunker_failed_next, last_veto_log, last_pick_log, next_garrison;
+    BYTE *garrison_unit[24], *garrison_site[24];                               /* infantry on their way into civilian buildings */
+    int garrison_frame[24], garrison_next, garrison_held;
 } DirState;
 static DirState dir_state[32];
 
@@ -135,9 +138,18 @@ static BYTE *dir_cell(CellXY c)
     return cells ? cells[c.Y * 512 + c.X] : NULL;
 }
 
+#define HT_MULTIPLAY_PASSIVE 0x1A6   /* HouseTypeClass::MultiplayPassive: Neutral, Special (civilians) */
+
+/* A civilian house: never an enemy to fight, though its tech buildings can be captured. */
+static int dir_passive(BYTE *owner)
+{
+    BYTE *type = owner ? FIELD(owner, 0x34, BYTE *) : NULL;
+    return type && type[HT_MULTIPLAY_PASSIVE];
+}
+
 static int dir_hostile(BYTE *house, BYTE *owner)
 {
-    if (!owner || owner == house || owner[OIL_H_DEFEATED])
+    if (!owner || owner == house || owner[OIL_H_DEFEATED] || dir_passive(owner))
         return 0;
     int side = FIELD(owner, OIL_H_SIDE, int);
     if (side < 0 || side > 2 || (human_in_peace && owner[H_ISHUMAN]))
@@ -215,6 +227,10 @@ static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
 static const char *dir_blocked_main[3] = { "ROBO", "SCHP,ZEP", "DISK" };   /* Siege Choppers before Kirovs */
 static const char *dir_infantry[3] = { "GGI,E1", "SHK,E2", "BRUTE,INIT" };
 static const char *dir_warships[3] = { "DEST", "SUB,HYD", "BSUB" };   /* navy answers enemy ships */
+/* Anti-air answers to Kirovs, Discs, Harriers and Rocketeers, the same way for every side. */
+static const char *dir_aa_vehicles[3] = { "FV", "HTK", "YTNK" };
+static const char *dir_aa_infantry[3] = { "GGI", "FLAKT", "" };
+static const char *dir_aa_defenses[3] = { "NASAM", "NAFLAK", "YAGGUN" };   /* the Allied Patriot is NASAM */
 
 static int dir_type_index(DynVec *v, BYTE *type)
 {
@@ -298,6 +314,14 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
         available[r] = pick[r] != NULL;
     }
     int role = dir_pick_role(shares, have, available);
+    if (bench_file && CURRENT_FRAME - d->last_pick_log > 1500) {
+        d->last_pick_log = CURRENT_FRAME;
+        logmsg("director: house %d frame %d pick: cash %d shares %d/%d/%d/%d have %d/%d/%d/%d picks %s %s %s %s -> %d",
+               FIELD(house, 0x30, int), CURRENT_FRAME, FIELD(house, OIL_H_CASH, int), shares[0], shares[1], shares[2],
+               shares[3], have[0], have[1], have[2], have[3],
+               pick[0] ? (char *)pick[0] + T_ID : "-", pick[1] ? (char *)pick[1] + T_ID : "-",
+               pick[2] ? (char *)pick[2] + T_ID : "-", pick[3] ? (char *)pick[3] + T_ID : "-", role);
+    }
     if (role < 0)
         return;
     int index = dir_type_index(UNITTYPE_ARRAY, pick[role]);
@@ -327,6 +351,8 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
     int side0 = FIELD(house, OIL_H_SIDE, int);
     BYTE *warship = d->want_navy && side0 >= 0 && side0 <= 2
         ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_warships[side0], 1000) : NULL;
+    if (!warship && d->want_aa && side0 >= 0 && side0 <= 2)   /* the air raid outranks stock picks too */
+        warship = dir_first_buildable(house, UNITTYPE_ARRAY, dir_aa_vehicles[side0], 0);
     BYTE *urgent = d->want_mcv ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_mcvs, 0)
         : (d->island || d->blocked) && !d->ferry && side0 >= 0 && side0 <= 2
         ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side0], 1000) : warship;
@@ -370,8 +396,17 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
     (void)unused;
     int result = dir_inf_original(house);
     DirState *dd = dir_get(house);
-    if (dd && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION))
+    if (dd && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)) {
         dir_veto_production(house, dd);   /* right after the stock pick, before a factory takes it */
+        int s0 = FIELD(house, OIL_H_SIDE, int);
+        BYTE *aa = dd->want_aa && s0 >= 0 && s0 <= 2 && *dir_aa_infantry[s0]
+            ? dir_first_buildable(house, INFANTRYTYPE_ARRAY, dir_aa_infantry[s0], 0) : NULL;
+        int index = aa ? dir_type_index(INFANTRYTYPE_ARRAY, aa) : -1;
+        if (index >= 0) {   /* an air raid: anti-air infantry instead of the stock pick */
+            FIELD(house, H_PRODUCING_INF, int) = index;
+            return result;
+        }
+    }
     /* cut off by water, infantry can't reach the enemy beyond a ferry load or two: keep a garrison */
     int cap = dd && (dd->blocked || dd->island) ? 16 : 30;
     if (!dir_active(house) || !(director_enabled(house) & DIR_F_PRODUCTION) || FIELD(house, H_PRODUCING_INF, int) != -1
@@ -444,23 +479,29 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
     }
     dir_enemy_count = 0;
     d->enemy_army = d->enemy_air = d->enemy_inf = d->enemy_armor = d->enemy_def = d->target_army = 0;
-    d->threat_value = d->naval_threat = d->third_party = 0;
+    d->threat_value = d->naval_threat = d->third_party = d->air_near = 0;
     CellXY target_base = d->enemy ? dir_house_center(d->enemy) : (CellXY){ 0, 0 };
     int threat_best = 0x7FFFFFFF;
     DynVec *v = OIL_TECHNO_ARRAY;
     for (int i = 0; i < v->Count && dir_enemy_count < MAX_ENEMY; i++) {
         BYTE *o = v->Items[i];
-        if (!oil_live(o) || !dir_hostile(house, FIELD(o, O_OWNER, BYTE *)))
+        BYTE *owner0 = oil_live(o) ? FIELD(o, O_OWNER, BYTE *) : NULL;
+        int neutral = dir_passive(owner0);
+        if (!owner0 || (!neutral && !dir_hostile(house, owner0)))
             continue;
         int what = dir_whatami(o);
         BYTE *type = dir_type(o);
         if (!type)
             continue;
+        /* civilians: only their tech buildings matter (engineers capture them); the army leaves
+         * their houses alone, so infantry can garrison them instead */
+        if (neutral && (what != 6 || !in_list("CAOILD,CAAIRP,CATHOSP,CAOUTP,CAMACH,CAPOWR", (char *)type + T_ID)))
+            continue;
         DirEnemy *e = &dir_enemies[dir_enemy_count++];
         e->obj = o;
         e->at = object_cell(o);
         e->value = dir_cost(type);
-        e->armed = dir_armed(o);
+        e->armed = !neutral && dir_armed(o);
         e->range = e->armed ? dir_weapon_cells(o) : 0;
         e->building = what == 6;
         /* tech buildings are worth more captured: derricks pay forever, the others give units/repair */
@@ -487,6 +528,8 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
                                            * rest of the map's armies are not this attack's business */
         if (e->air)
             d->enemy_air += e->value;
+        if (e->air && (dir_near_own_building(house, e->at, 25) || dir_dist2(e->at, d->front) <= 25 * 25))
+            d->air_near += e->value;
         else if (e->infantry)
             d->enemy_inf += e->value;
         else
@@ -892,9 +935,11 @@ static void dir_army(BYTE *house, DirState *d)
         BYTE *o = v->Items[i];
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !dir_poolable(o, dir_whatami(o)))
             continue;
-        int bound = 0;   /* on its way into a tank bunker */
+        int bound = 0;   /* on its way into a tank bunker or a civilian building */
         for (int k = 0; k < 8; k++)
             bound |= d->bunker_unit[k] == o;
+        for (int k = 0; k < 24; k++)
+            bound |= d->garrison_unit[k] == o && CURRENT_FRAME - d->garrison_frame[k] < 900;
         if (bound)
             continue;
         if ((d->blocked || d->island) && !dir_crosses(o)) {
@@ -1417,8 +1462,9 @@ static void dir_engineers(BYTE *house, DirState *d)
     dir_why = "engineer";
     BYTE *job = d->repair_hut;
     int alive = job && dir_object_listed(OIL_BUILDING_ARRAY, job) && oil_live(job);
-    int done = !alive || (d->repair_mode == 0 ? !dir_bridge_down(job) : FIELD(job, O_OWNER, BYTE *) == house
-                                                                    || !dir_hostile(house, FIELD(job, O_OWNER, BYTE *)));
+    BYTE *job_owner = alive ? FIELD(job, O_OWNER, BYTE *) : NULL;
+    int done = !alive || (d->repair_mode == 0 ? !dir_bridge_down(job) : job_owner == house
+                          || (!dir_hostile(house, job_owner) && !dir_passive(job_owner)));
     if (job && (done || CURRENT_FRAME - d->repair_frame > 4000)) {
         if (!done) {   /* out of reach (e.g. the hut is across the water): leave it for a while */
             d->failed_job = job;
@@ -2032,6 +2078,114 @@ static void dir_veto_production(BYTE *house, DirState *d)
         FIELD(house, H_PRODUCING_INF, int) = -1;
 }
 
+/* ---- air defence ----
+ * Kirovs and Floating Discs ran up the best kill ratios of all because the AIs facing them built
+ * little anti-air. Enemy aircraft near home or the army are remembered for a while (1% decay per
+ * tick); while they outvalue our anti-air units, every side answers the same way: anti-air vehicles
+ * and infantry in place of stock picks, and an anti-air defence at home every 3000 frames. */
+static void dir_air_defense(BYTE *house, DirState *d)
+{
+    int side = FIELD(house, OIL_H_SIDE, int);
+    if (side < 0 || side > 2)
+        return;
+    d->air_seen = d->air_near > d->air_seen - d->air_seen / 100 ? d->air_near : d->air_seen - d->air_seen / 100;
+    d->own_aa = 0;
+    DynVec *v = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *o = v->Items[i], *type;
+        if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && (type = dir_type(o))
+            && (in_list(dir_aa_vehicles[side], (char *)type + T_ID) || in_list(dir_aa_infantry[side], (char *)type + T_ID)))
+            d->own_aa += dir_cost(type);
+    }
+    int want = d->air_seen >= 1500 && (long long)d->own_aa * 10 < (long long)d->air_seen * 12;
+    if (want != d->want_aa)
+        logmsg("director: house %d frame %d: enemy air %d nearby, our anti-air %d: %s", FIELD(house, 0x30, int),
+               CURRENT_FRAME, d->air_seen, d->own_aa, want ? "building anti-air" : "enough anti-air");
+    d->want_aa = want;
+    if (!want || d->air_near < 1500 || CURRENT_FRAME < d->next_aa_defense || FIELD(house, OIL_H_PRODUCING, int) != -1)
+        return;
+    BYTE *type = find_type(BUILDINGTYPE_ARRAY, dir_aa_defenses[side]);
+    if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
+        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+        FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+        d->next_aa_defense = CURRENT_FRAME + 3000;
+        logmsg("director: house %d frame %d: queued %s against air", FIELD(house, 0x30, int), CURRENT_FRAME,
+               dir_aa_defenses[side]);
+    }
+}
+
+/* ---- civilian buildings ----
+ * Garrisoned, a civilian building is a free bunker for whoever holds it; shooting it down only
+ * denies it. Every 300 frames the director sends the nearest idle garrison infantry (Occupier=yes)
+ * into empty civilian buildings within 30 cells of home or the rally, one soldier each, up to six.
+ * The order is a player's enter click: Enter with the building as the destination. */
+#define BT_CAN_BE_OCCUPIED 0x157B       /* BuildingTypeClass::CanBeOccupied (INI loader 0x4600CB) */
+#define B_OCCUPANT_COUNT 0x694          /* BuildingClass::Occupants.Count (KillOccupants 0x4585D9) */
+#define IT_OCCUPIER 0xEB4               /* InfantryTypeClass::Occupier (INI loader 0x5244CE) */
+
+static void dir_garrison(BYTE *house, DirState *d)
+{
+    dir_why = "garrison";
+    if (CURRENT_FRAME < d->next_garrison)
+        return;
+    d->next_garrison = CURRENT_FRAME + 300;
+    DynVec *bv = OIL_BUILDING_ARRAY, *tv = OIL_TECHNO_ARRAY;
+    int held = 0, sent = 0;
+    for (int i = 0; i < bv->Count; i++) {
+        BYTE *b = bv->Items[i], *type = FIELD(b, B_TYPE, BYTE *);
+        held += oil_live(b) && type && type[BT_CAN_BE_OCCUPIED] && FIELD(b, O_OWNER, BYTE *) == house
+            && FIELD(b, B_OCCUPANT_COUNT, int) > 0;
+    }
+    if (held != d->garrison_held) {
+        logmsg("director: house %d frame %d: %d civilian buildings garrisoned", FIELD(house, 0x30, int), CURRENT_FRAME, held);
+        d->garrison_held = held;
+    }
+    for (int i = 0; i < bv->Count && held + sent < 6 && sent < 2; i++) {
+        BYTE *b = bv->Items[i], *type = FIELD(b, B_TYPE, BYTE *);
+        if (!oil_live(b) || !type || !type[BT_CAN_BE_OCCUPIED] || !dir_passive(FIELD(b, O_OWNER, BYTE *))
+            || FIELD(b, B_OCCUPANT_COUNT, int) > 0)
+            continue;
+        CellXY at = object_cell(b);
+        if (dir_dist2(at, d->base) > 30 * 30 && dir_dist2(at, d->rally) > 30 * 30)
+            continue;
+        /* one soldier per building: someone is on the way, or one went and never got in (out of
+         * reach); a building that was taken is no longer civilian */
+        int pending = 0;
+        for (int k = 0; k < 24; k++)
+            pending |= d->garrison_site[k] == b && CURRENT_FRAME - d->garrison_frame[k] < 9000;
+        if (pending)
+            continue;
+        int threatened = 0;   /* not into a building the enemy is already contesting */
+        for (int k = 0; k < dir_enemy_count && !threatened; k++)
+            threatened = dir_enemies[k].armed && dir_dist2(dir_enemies[k].at, at) <= 8 * 8;
+        if (threatened)
+            continue;
+        BYTE *best = NULL;
+        int best_d = 25 * 25 + 1;
+        for (int k = 0; k < tv->Count; k++) {
+            BYTE *o = tv->Items[k], *ot;
+            if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 15 || !(ot = dir_type(o))
+                || !ot[IT_OCCUPIER] || !dir_poolable(o, 15) || FIELD(o, O_TARGET, BYTE *))
+                continue;
+            int dd = dir_dist2(object_cell(o), at);
+            if (dd < best_d) {
+                best_d = dd;
+                best = o;
+            }
+        }
+        if (!best || dir_recent_order(best, b, 900))
+            continue;
+        sent++;
+        int g = d->garrison_next++ % 24;
+        d->garrison_unit[g] = best;   /* out of the army until it is inside */
+        d->garrison_site[g] = b;
+        d->garrison_frame[g] = CURRENT_FRAME;
+        dir_order(best, MISSION_ENTER, NULL, b);
+        logmsg("director: house %d frame %d: %.24s garrisons the %.24s at %d,%d (%d held)", FIELD(house, 0x30, int),
+               CURRENT_FRAME, (char *)dir_type(best) + T_ID, (char *)type + T_ID, at.X, at.Y, held);
+    }
+}
+
 /* ---- tank bunkers ----
  * Yuri's base plan (ThirdBaseDefenses) builds Tank Bunkers, but no AI ever drives a tank into one,
  * so they stood empty. Between attacks the director garrisons each empty bunker with the nearest
@@ -2211,13 +2365,17 @@ static void dir_update(BYTE *house)
     }
     if (bench_file && human_in_peace && CURRENT_FRAME % 600 < 15)
         dir_report_intruders(house);
-    if (director_enabled(house) & DIR_F_PRODUCTION)
+    if (director_enabled(house) & DIR_F_PRODUCTION) {
         dir_veto_production(house, d);
+        dir_air_defense(house, d);
+    }
     if (director_enabled(house) & DIR_F_NAVY)
         dir_navy(house, d);
     dir_army(house, d);
-    if (director_enabled(house) & DIR_F_BUNKERS)
+    if (director_enabled(house) & DIR_F_BUNKERS) {
         dir_bunkers(house, d);
+        dir_garrison(house, d);
+    }
     if (CURRENT_FRAME % 150 < 15 && (director_enabled(house) & DIR_F_ENGINEERS))
         dir_engineers(house, d);
     dir_economy(house, d);

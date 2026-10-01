@@ -293,7 +293,8 @@ HELDOUT2 = [
 ]
 # Faction balance: director against director, so both sides play equally well. Each pairing of
 # America (0), Russia (8) and Yuri (9) on four 2-player maps, with the starts swapped.
-BALANCE = [(m, 3, [(a, s, 1, 0), (b, 1 - s, 1, 0)], None)
+# Played as the user plays: tier-3 starting bases, superweapons off.
+BALANCE = [(m, 3, [(a, s, 1, 0), (b, 1 - s, 1, 0)], {"StartBase": "3", "Superweapons": "0"})
            for m in ("Arena.mmx", "Hills.mmx", "Tower.mmx", "Lostlake.mmx")
            for a, b in ((0, 8), (0, 9), (8, 9))
            for s in (0, 1)]
