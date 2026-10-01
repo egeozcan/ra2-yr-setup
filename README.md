@@ -1059,8 +1059,12 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   orders. They pack up when nothing armed has been within range + 5 for 150 frames, at once when
   the army retreats, and never on a bridge. Deploy and pack-up are at least 300 frames apart.
   The deployed state is read from `InfantryClass::SequenceAnim` (+0x6C4, 27–30).
-- **Dodging Kirovs.** A unit that can't shoot at a nearby Kirov or Floating Disc moves out from
-  under it: toward our nearest anti-air within 20 cells, or 8 cells straight away.
+- **Dodging and kiting Kirovs.** A unit that can't shoot at a nearby Kirov or Floating Disc moves
+  out from under it: toward our nearest anti-air within 20 cells, or 8 cells straight away. A unit
+  that can shoot it kites. When the aircraft closes within 3 cells it steps back to just inside its
+  own range (at least 5 cells), then fires again. Kirovs bomb straight down and are slower than
+  the anti-air chasing them. Tested with three Kirovs placed by an American base: GIs and IFVs
+  stepped out and shot all three down.
 - **Order churn.** Each unit remembers the last cell it was sent to; a goal that drifts by under
   6 cells within 450 frames is the same order. A current target is swapped only for one scoring 30
   more, and engagement orders are at least 60 frames apart. Units no longer get restarted by small

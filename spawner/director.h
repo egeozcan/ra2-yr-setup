@@ -959,8 +959,35 @@ static int dir_dodge_air(BYTE *house, BYTE *unit, CellXY at)
             air = e;
         }
     }
-    if (!air || dir_can_fire_at(unit, air->obj))
+    if (!air)
         return 0;
+    /* units that can shoot it kite: fire while it is in range, step out from under it when it
+     * closes in (it bombs straight down and is slower than they are), then fire again */
+    if (dir_can_fire_at(unit, air->obj)) {
+        if (best > 3 * 3)
+            return 0;
+        int step = dir_weapon_cells(unit) - 1;
+        step = step < 5 ? 5 : step;
+        int dx = at.X - air->at.X, dy = at.Y - air->at.Y, len = dir_isqrt(dx * dx + dy * dy);
+        if (!len) {
+            dx = 1;
+            len = 1;
+        }
+        BYTE *cell = dir_cell((CellXY){ (short)(at.X + dx * step / len), (short)(at.Y + dy * step / len) });
+        if (!cell || FIELD(cell, C_LANDTYPE, int) == 2)
+            return 0;
+        dir_why = "kite air";
+        static int last_kite_log;
+        if (CURRENT_FRAME - last_kite_log > 600) {
+            last_kite_log = CURRENT_FRAME;
+            logmsg("director: frame %d: %.24s at %d,%d steps out from under %.24s", CURRENT_FRAME,
+                   (char *)dir_type(unit) + T_ID, at.X, at.Y, (char *)dir_type(air->obj) + T_ID);
+        }
+        dir_order(unit, MISSION_MOVE, NULL, cell);
+        dir_dodge[k].unit = unit;
+        dir_dodge[k].until = CURRENT_FRAME + 60;
+        return 1;
+    }
     CellXY to = { 0, 0 };
     int side = FIELD(house, OIL_H_SIDE, int), cover = 20 * 20 + 1;
     DynVec *v = OIL_TECHNO_ARRAY;

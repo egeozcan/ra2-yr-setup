@@ -806,6 +806,8 @@ static void spawn_units(void)
             continue;
         }
         BYTE *type = find_type(UNITTYPE_ARRAY, type_id), *house = find_house(country);
+        if (!type)
+            type = find_type((DynVec *)0xA8B218, type_id);   /* AircraftTypeClass::Array (Kirovs etc.) */
         int building = !type && (type = find_type(BUILDINGTYPE_ARRAY, type_id));
         if (!type || !house) {
             logmsg("units: %s: no %s", line, type ? "house" : "vehicle or building type");
