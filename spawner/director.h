@@ -266,6 +266,19 @@ static int dir_owned_of(BYTE *house, BYTE *type)
     return n;
 }
 
+static int dir_naval(BYTE *obj);
+
+static int dir_armed_vehicles(BYTE *house)
+{
+    int n = 0;
+    DynVec *v = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *o = v->Items[i];
+        n += oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 1 && dir_armed(o) && !dir_naval(o);
+    }
+    return n;
+}
+
 /* First type in the list the house can build now, within budget and caps. */
 static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, int reserve)
 {
@@ -287,7 +300,9 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
                 && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
                 && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 2)    /* slow and costly: a pair at most */
-                && (_stricmp(id, "ZEP") || dir_owned_of(house, type) < 4))     /* Kirovs: slow and costly */
+                && (_stricmp(id, "ZEP") || dir_owned_of(house, type) < 4)      /* Kirovs: slow and costly */
+                /* Tank Destroyers only hurt vehicles: a third of the tanks at most, never the army */
+                && (_stricmp(id, "TNKD") || dir_owned_of(house, type) * 3 < dir_armed_vehicles(house) + 3))
                 return type;
         }
         p += n + (p[n] == ',');
@@ -3353,6 +3368,29 @@ static void dir_update(BYTE *house)
     if (director_enabled(house) & DIR_F_NAVY)
         dir_navy(house, d);
     dir_army(house, d);
+    /* every engineer of ours, stock team members included: none walks into the hut of a bridge
+     * that is whole, or of one that can't be mended (barrier-gated bridges) */
+    if (CURRENT_FRAME % 90 < 15) {
+        DynVec *tv = OIL_TECHNO_ARRAY;
+        for (int i = 0; i < tv->Count; i++) {
+            BYTE *o = tv->Items[i];
+            if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 15 || !dir_is_engineer(o))
+                continue;
+            BYTE *goal = FIELD(o, COMBAT_DESTINATION, BYTE *);
+            if (!goal || is_cell(goal))
+                goal = FIELD(o, O_TARGET, BYTE *);
+            BYTE *gt = goal && !is_cell(goal) && dir_object_listed(OIL_BUILDING_ARRAY, goal) ? FIELD(goal, B_TYPE, BYTE *) : NULL;
+            if (!gt || !gt[BT_BRIDGE_HUT] || (dir_bridge_down(goal) && !dir_hut_hopeless(goal)))
+                continue;
+            CellXY c = object_cell(goal);
+            logmsg("director: house %d frame %d: engineer called off the hut at %d,%d (bridge %s)", FIELD(house, 0x30, int),
+                   CURRENT_FRAME, c.X, c.Y, dir_bridge_down(goal) ? "can't be mended" : "is whole");
+            dir_why = "engineer home";
+            dir_command(o, d->base, NULL, 0);
+            if (o == d->repair_engineer)
+                d->repair_hut = d->repair_engineer = NULL;
+        }
+    }
     /* every unit of ours, team members included: standing on a bridge deck never helps anyone */
     if (CURRENT_FRAME % 150 < 15) {
         DynVec *tv = OIL_TECHNO_ARRAY;

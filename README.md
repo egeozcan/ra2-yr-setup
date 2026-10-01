@@ -1116,6 +1116,13 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
 - **Closed bridges.** Bridges that already read "destroyed" when the match starts (map-closed,
   barrier-gated ones no engineer can open) are no repair job and no sign of a cut route. A bridge
   that two engineers entered without effect is left alone too.
+- **Engineer guard.** Every engineer the house owns, including stock-team ones, is checked every
+  90 frames. One heading into the hut of a bridge that is whole, or that can't be mended, is
+  called home. The director itself sent no engineer to a bridge in the regression suite; the ones
+  seen entering barrier-gated bridges were stock AI engineers.
+- **Tank Destroyers capped.** Tank Destroyers only hurt vehicles: at most a third of the house's
+  armed vehicles, so a German AI without a Battle Lab builds Grizzlies alongside them instead of
+  an army of Tank Destroyers.
 - **Engineers called home.** When a bridge-repair job ends (mended by someone else, or timed out),
   an engineer still walking to the hut is sent home instead of entering a hut whose bridge is
   already whole.
