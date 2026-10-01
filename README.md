@@ -1090,6 +1090,15 @@ Bench-only `[Settings]` keys, for tests:
 - Every benchmark match also writes `yspawn-kills.csv`: per unit type, kills and the value destroyed
   (credited through `RegisterDestruction`, vtable 0xE0), deaths and the value lost.
 
+First balance run (2026-10-01, director vs director, 24 matches, the Liberator already at speed 2,
+750 HP and half fire rate):
+- **Wins:** Yuri 13 of 16 (7–1 against Russia, 6–2 against America); America 7 of 16 (5–3 against
+  Russia); Russia 4 of 16.
+- **Value destroyed / value lost:** Floating Disc 9.1, Yuri Gatling Cannon 4.6, Apocalypse 3.7,
+  Kirov 3.6, Mirage 1.8, Liberator 1.8, Initiate 1.7, Gatling Tank 1.4, Rhino 1.0, Grizzly 0.7,
+  Lasher 0.7, Tesla Trooper 0.7, GI 0.3.
+- These are AI-vs-AI numbers, so they mix unit strength with what the director builds for each side.
+
 Balance tools:
 - `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every
   pairing on four 2-player maps with the starts swapped (24 matches).
