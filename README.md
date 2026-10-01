@@ -425,7 +425,7 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   human's buildings too (added 2026-10-01): before that, AI teams ferried terrorists and engineers into
   the human's base and left them standing there.
   The option defaults off, is saved with settings and presets, and writes `HumanInPeace=1` to the match INI.
-  Install the updated DLL with `python3 spawner/spawn.py install` while the game is closed. All 34 engine
+  Install the updated DLL with `python3 spawner/spawn.py install` while the game is closed. All 35 engine
   guards must match the executable before any peace guard is installed; a mismatch refuses the match and
   reports the problem in `yspawn.log`.
   `spawner/test_human_peace.py` checks settings and executes the compiled 32-bit guards against the installed
