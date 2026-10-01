@@ -65,7 +65,7 @@ NEW_SECTIONS = f"""
 ; ===== Liberator mod (Allied-only Tesla tank) =====
 [ATankBolt]
 Damage=300
-ROF=35
+ROF=70
 Range=7
 Speed=100
 Warhead=LibertyElectric
@@ -75,7 +75,7 @@ IsElectricBolt=true
 
 [ATankBoltE]
 Damage=450
-ROF=25
+ROF=50
 Range=8
 Speed=100
 Warhead=LibertyElectric

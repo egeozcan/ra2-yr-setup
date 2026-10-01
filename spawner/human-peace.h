@@ -215,6 +215,24 @@ static void __attribute__((naked)) peace_dominator_candidate(void)
         "1: pushl $0x53b364\n\tret\n\t");
 }
 
+/* Team scripts "Move to / Attack enemy structure" (actions 46/47) pick the building with the finder
+ * at 0x6EEBD0, which accepts any non-allied owner: an AI team would ferry terrorists or engineers
+ * into the protected human's base and then stand there, its attack refused. Skip those buildings
+ * the way the finder skips a building of the wrong type. */
+static int __attribute__((used)) peace_skip_team_building(BYTE *unit, BYTE *building)
+{
+    return peace_target(unit, building);
+}
+static void __attribute__((naked)) peace_team_building(void)
+{
+    __asm__ volatile (
+        "jne 1f\n\t"   /* the replaced jne: wrong building type */
+        "pushal\n\tpushl %esi\n\tpushl 8(%ebp)\n\tcall _peace_skip_team_building\n\taddl $8, %esp\n\t"
+        "testl %eax, %eax\n\tpopal\n\tjnz 1f\n\t"
+        "pushl $0x6eec3a\n\tret\n\t"
+        "1: pushl $0x6eee45\n\tret\n\t");
+}
+
 static int patch_human_peace(void)
 {
     static const struct {
@@ -234,6 +252,7 @@ static int patch_human_peace(void)
         {0x471D40, {0x8B,0x44,0x24,0x04,0x83,0xEC,0x18}, 7, peace_capture, &peace_capture_original},
         {0x4FD616, {0x8B,0x56,0x34,0x8A,0x82,0xA6,0x01,0,0}, 9, peace_house_candidate, NULL},
         {0x53B276, {0x8B,0x86,0xC0,0x02,0,0}, 6, peace_dominator_candidate, NULL},
+        {0x6EEC34, {0x0F,0x85,0x0B,0x02,0,0}, 6, peace_team_building, NULL},
     };
     static const DWORD vtables[] = {0x7E22A4, 0x7E3EBC, 0x7EB058, 0x7F5C70};
     static const int slots[] = {0x16C, 0x3C8, 0x3CC, 0x3D4, 0x3C0, 0x480};
@@ -278,6 +297,6 @@ static int patch_human_peace(void)
             peace_original[i][j] = (void *)expected[i][j];
             patch(vtables[i] + slots[j], (BYTE *)&wrappers[i][j], 4);
         }
-    logmsg("human in peace: all 34 guards applied; teams unchanged");
+    logmsg("human in peace: all 35 guards applied; teams unchanged");
     return 1;
 }

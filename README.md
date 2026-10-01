@@ -243,7 +243,8 @@ It shares no geometry with the Tesla tank.
 
 Stats compared with the stock Tesla tank:
 - 1500 HP (stock 300), speed 2 (stock 6; was 9, then 4, halved again on 2026-09-30 because it was too strong), self-healing, immune to mind control and radiation.
-- Weapon: 300 damage, range 7; elite: 450 damage, range 8. The bolt chains between targets.
+- Weapon: 300 damage, range 7, ROF 70; elite: 450 damage, range 8, ROF 50. The bolt chains between targets.
+  Fire rate halved on 2026-10-01 (ROF was 35 and 25; ROF is the delay between shots).
 - Warhead `LibertyElectric` does full damage to buildings.
 - Requires an Allied War Factory and an Allied Battle Lab (`GAWEAP,GATECH`). The Battle Lab
   itself needs an Air Force Command. Cost 3000 (was 1500). Crates can't grant it.
@@ -420,6 +421,9 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   launches within 32 cells on either axis of a human object are suppressed to protect nearby bases from
   splash damage and storm scatter. Delayed Psychic Dominator capture also skips human objects. With only
   the human left as an opponent, AI superweapon targeting stops. Actual teams and alliances are unchanged.
+  Team scripts that move to or attack an enemy structure (actions 46/47, finder at 0x6EEBD0) skip the
+  human's buildings too (added 2026-10-01): before that, AI teams ferried terrorists and engineers into
+  the human's base and left them standing there.
   The option defaults off, is saved with settings and presets, and writes `HumanInPeace=1` to the match INI.
   Install the updated DLL with `python3 spawner/spawn.py install` while the game is closed. All 34 engine
   guards must match the executable before any peace guard is installed; a mismatch refuses the match and
@@ -1018,6 +1022,20 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   click does (`FootClass::ClickedAction`, Action::Enter, 0x4D76F6): `ClickedMission(Enter)` with
   the bunker as the *destination*, not the target. A tank that doesn't get in within 900 frames goes
   back to the army and isn't picked again for 6000 frames.
+- **Stranded harvesters.** Stock harvesters only look for ore near where they are. Once that runs
+  out they sit at the refinery on guard, or stay in Harvest with nowhere to go. A harvester that
+  hasn't moved for 900 frames, isn't docked or standing on ore, and has no destination is sent to the
+  richest ore within 60 cells: ore value minus distance, away from enemy buildings. The order is a
+  player's click on ore: `ClickedMission(Harvest, NULL, cell)`, from `FootClass::ClickedAction`
+  at 0x4D7E8E. A field it still couldn't reach is skipped for 9000 frames, and a harvester that
+  stays stuck gets the walled-in check below. Stranded harvesters also count as idle for the
+  refinery and expansion decisions.
+- **Production vetoes.** The stock teams' own picks are cancelled in two cases. A Kirov is cancelled
+  once four are out, or while the base is being hit; Kirovs are aircraft, which the director's
+  vehicle picker never buys. Infantry is cancelled when the enemy is cut off by water and the
+  house already has 24, because they can only wait at home. In that mode the director itself stops
+  at 16, its hover/air pick puts Siege Choppers before Kirovs, and while the base is under attack it
+  builds ground units instead.
 - **Stalled attacks.** An attack on a structure with no land route fails silently: the attack order
   is dropped and the army stays at home. That used to count as progress whenever any unit was
   shooting something, so a big army could sit at home "attacking" for the rest of the match. Now

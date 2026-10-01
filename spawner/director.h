@@ -17,6 +17,8 @@
 #define H_PRODUCING_UNIT 0x5650
 #define H_PRODUCING_INF 0x5654
 #define INFANTRYTYPE_ARRAY ((DynVec *)0xA8E348)
+#define AIRCRAFTTYPE_ARRAY ((DynVec *)0xA8B218)
+#define H_PRODUCING_AIR 0x5658
 #define F_TEAM 0x5D4                   /* FootClass::Team (Destination 0x5A4 + 0x30) */
 #define O_HEALTH 0x6C
 #define VT_GETTYPE 0x88                /* ObjectClass::GetType; ObjectTypeClass::Strength at +0xA0 */
@@ -71,7 +73,7 @@ typedef struct {
     BYTE *bunker_unit[8], *bunker_site[8];                  /* tanks sent into tank bunkers */
     int bunker_frame[8], next_bunker;
     BYTE *bunker_failed[8];                                 /* tanks that could not get in: skip a while */
-    int bunker_failed_frame[8], bunker_failed_next;
+    int bunker_failed_frame[8], bunker_failed_next, last_veto_log;
 } DirState;
 static DirState dir_state[32];
 
@@ -207,7 +209,7 @@ static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
     { "MIND,LTNK", "YTNK", "TELE", "YTNK" },
 };
 /* Enemy out of reach by land: Robot Tanks hover over water, Kirovs, Siege Choppers and Discs fly. */
-static const char *dir_blocked_main[3] = { "ROBO", "ZEP,SCHP", "DISK" };
+static const char *dir_blocked_main[3] = { "ROBO", "SCHP,ZEP", "DISK" };   /* Siege Choppers before Kirovs */
 static const char *dir_infantry[3] = { "GGI,E1", "SHK,E2", "BRUTE,INIT" };
 static const char *dir_warships[3] = { "DEST", "SUB,HYD", "BSUB" };   /* navy answers enemy ships */
 
@@ -251,7 +253,8 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
             if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
                 && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
-                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 4))   /* slow: a few, not the army */
+                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 4)    /* slow: a few, not the army */
+                && (_stricmp(id, "ZEP") || dir_owned_of(house, type) < 4))     /* Kirovs: slow and costly */
                 return type;
         }
         p += n + (p[n] == ',');
@@ -285,8 +288,10 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
             have[dir_role_of(side, (char *)type + T_ID)] += dir_cost(type);
     }
     for (int r = 0; r < ROLE_COUNT; r++) {
-        pick[r] = dir_first_buildable(house, UNITTYPE_ARRAY, (d->blocked || d->island) && r == ROLE_MAIN
-                                      ? dir_blocked_main[side] : dir_vehicle_roles[side][r], 2500);
+        /* cut off by water: hover/air units carry the attack, unless the base is being hit, when
+         * ground units defend it first */
+        int cross = (d->blocked || d->island) && r == ROLE_MAIN && d->threat_value < 1500;
+        pick[r] = dir_first_buildable(house, UNITTYPE_ARRAY, cross ? dir_blocked_main[side] : dir_vehicle_roles[side][r], 2500);
         available[r] = pick[r] != NULL;
     }
     int role = dir_pick_role(shares, have, available);
@@ -355,12 +360,19 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
     return result;
 }
 
+static void dir_veto_production(BYTE *house, DirState *d);
+
 static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
 {
     (void)unused;
     int result = dir_inf_original(house);
+    DirState *dd = dir_get(house);
+    if (dd && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION))
+        dir_veto_production(house, dd);   /* right after the stock pick, before a factory takes it */
+    /* cut off by water, infantry can't reach the enemy beyond a ferry load or two: keep a garrison */
+    int cap = dd && (dd->blocked || dd->island) ? 16 : 30;
     if (!dir_active(house) || !(director_enabled(house) & DIR_F_PRODUCTION) || FIELD(house, H_PRODUCING_INF, int) != -1
-        || (FIELD(house, H_OWNED_INFANTRY, int) >= 30 && !(dir_get(house) && dir_get(house)->want_engineer)))
+        || (FIELD(house, H_OWNED_INFANTRY, int) >= cap && !(dd && dd->want_engineer)))
         return result;
     int side = FIELD(house, OIL_H_SIDE, int);
     if (side < 0 || side > 2)
@@ -1150,6 +1162,7 @@ static void dir_army(BYTE *house, DirState *d)
 
 /* ---- economy ---- */
 static int dir_idle_harvesters(BYTE *house);
+static int dir_watch_harvester(BYTE *house, BYTE *o);
 static void dir_economy(BYTE *house, DirState *d)
 {
     int side = FIELD(house, OIL_H_SIDE, int);
@@ -1218,9 +1231,111 @@ static int dir_idle_harvesters(BYTE *house)
             || !in_list("HARV,CMIN,SMIN", (char *)type + T_ID))
             continue;
         int m = FIELD(o, COMBAT_MISSION, int);
-        idle += m != 10 && m != 7 && m != 12 && m != 16 && m != 2;   /* harvest, enter, return, unload, move */
+        int stranded = dir_watch_harvester(house, o);
+        idle += stranded || (m != 10 && m != 7 && m != 12 && m != 16 && m != 2);   /* harvest, enter, return, unload, move */
     }
     return idle;
+}
+
+/* ---- stranded harvesters ----
+ * Stock harvesters only look for ore near where they are. Once that is mined out they sit at the
+ * refinery on guard, or stay in Harvest with nowhere to go, for the rest of the match. A harvester
+ * that has not moved for 900 frames, is not docked and has no destination is sent to the richest ore
+ * within 60 cells (by value, minus distance, away from enemy buildings), as a player's click on ore
+ * would (FootClass::ClickedAction on a cell, 0x4D7E8E: ClickedMission(Harvest, NULL, cell)). A field
+ * it still could not reach is skipped for 9000 frames. */
+#define RADIO_CONTACT 0x65AD30            /* RadioClass::GetRadioContact(index) */
+#define MISSION_HARVEST 10
+#define CELL_ORE_VALUE 0x485020            /* CellClass::GetContainedTiberiumValue */
+static struct { BYTE *unit; CellXY at, sent; int frame, sent_frame; } dir_harv[256];
+static struct { BYTE *house; CellXY at; int frame; } dir_bad_ore[32];
+static int dir_bad_ore_next;
+static int dir_ore_near(CellXY c, int r);
+
+static int dir_ore_blocked(BYTE *house, CellXY c)
+{
+    for (int i = 0; i < 32; i++)
+        if (dir_bad_ore[i].house == house && CURRENT_FRAME - dir_bad_ore[i].frame < 9000
+            && dir_dist2(dir_bad_ore[i].at, c) <= 8 * 8)
+            return 1;
+    DynVec *bv = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < bv->Count; i++) {
+        BYTE *b = bv->Items[i];
+        if (oil_live(b) && dir_hostile(house, FIELD(b, O_OWNER, BYTE *)) && dir_dist2(object_cell(b), c) <= 12 * 12)
+            return 1;
+    }
+    return 0;
+}
+
+static int dir_find_ore(BYTE *house, CellXY from, CellXY *out)
+{
+    int best = 0;
+    for (int dy = -60; dy <= 60; dy += 3)
+        for (int dx = -60; dx <= 60; dx += 3) {
+            CellXY c = { (short)(from.X + dx), (short)(from.Y + dy) };
+            BYTE *cell = dir_cell(c);
+            if (!cell || dx * dx + dy * dy > 60 * 60 || ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(cell) <= 0)
+                continue;
+            int score = dir_ore_near(c, 2) - 40 * dir_isqrt(dx * dx + dy * dy);
+            if (score > best && !dir_ore_blocked(house, c)) {
+                best = score;
+                *out = c;
+            }
+        }
+    return best > 0;
+}
+
+/* Returns 1 when the harvester is stranded (counts as idle for refinery and expansion decisions). */
+static int dir_watch_harvester(BYTE *house, BYTE *o)
+{
+    unsigned h = ((DWORD)o >> 3) % 256, k = h;
+    for (int i = 0; i < 8; i++) {
+        unsigned j = (h + i) % 256;
+        if (dir_harv[j].unit == o || !dir_harv[j].unit || CURRENT_FRAME - dir_harv[j].frame > 20000) {
+            k = j;
+            break;
+        }
+    }
+    CellXY at = object_cell(o);
+    int m = FIELD(o, COMBAT_MISSION, int);
+    if (dir_harv[k].unit != o || dir_dist2(dir_harv[k].at, at) > 1 || (m != 5 && m != 10 && m != 11 && m != 0)
+        || FIELD(o, COMBAT_DESTINATION, BYTE *) || ((BYTE *(GTHISCALL *)(BYTE *, int))RADIO_CONTACT)(o, 0)
+        || (dir_cell(at) && ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(dir_cell(at)) > 0)) {   /* mining */
+        /* moving, docked, or busy with a real job: not stranded */
+        if (dir_harv[k].unit != o)
+            dir_harv[k].sent_frame = 0;
+        dir_harv[k].unit = o;
+        dir_harv[k].at = at;
+        dir_harv[k].frame = CURRENT_FRAME;
+        return 0;
+    }
+    if (CURRENT_FRAME - dir_harv[k].frame < 900)
+        return 0;
+    if (dir_harv[k].sent_frame && CURRENT_FRAME - dir_harv[k].sent_frame < 1500)
+        return 1;   /* give the last order time */
+    if (dir_harv[k].sent_frame) {   /* sent there and never left: that field is out of reach... */
+        int f = dir_bad_ore_next++ % 32;
+        dir_bad_ore[f].house = house;
+        dir_bad_ore[f].at = dir_harv[k].sent;
+        dir_bad_ore[f].frame = CURRENT_FRAME;
+        /* ...or the harvester is walled in by our own buildings */
+        DirState *d = dir_get(house);
+        if (d && CURRENT_FRAME >= d->next_unstick && (director_enabled(house) & DIR_F_UNSTICK))
+            dir_unstick(house, d, o, at);
+    }
+    CellXY ore;
+    if (!(director_enabled(house) & DIR_F_ECONOMY) || !dir_find_ore(house, at, &ore)) {
+        dir_harv[k].sent_frame = CURRENT_FRAME;   /* nothing to send it to: ask again later */
+        dir_harv[k].sent = (CellXY){ -100, -100 };
+        return 1;
+    }
+    dir_harv[k].sent = ore;
+    dir_harv[k].sent_frame = CURRENT_FRAME;
+    logmsg("director: house %d frame %d: %.24s at %d,%d stranded (mission %d) for %d frames, sent to ore at %d,%d",
+           FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(o) + T_ID, at.X, at.Y, m,
+           CURRENT_FRAME - dir_harv[k].frame, ore.X, ore.Y);
+    dir_order(o, MISSION_HARVEST, NULL, dir_cell(ore));
+    return 1;
 }
 
 /* ---- bridges ----
@@ -1376,7 +1491,6 @@ static CellXY dir_pick_rally(DirState *d)
  * When harvesters stand idle (ore gone or cut off), look for reachable ore away from our refineries
  * and enemy structures, build an MCV and deploy it there. An AI construction yard re-centres the
  * base plan on itself (UnitClass deploy, 0x7398CE-0x739926), so new refineries follow the ore. */
-#define CELL_ORE_VALUE 0x485020            /* CellClass::GetContainedTiberiumValue */
 
 static int dir_ore_near(CellXY c, int r)
 {
@@ -1646,6 +1760,56 @@ static void dir_navy(BYTE *house, DirState *d)
     d->want_navy = want;
 }
 
+/* Benchmark diagnostics: our units next to a protected human's buildings, and why they are there. */
+static void dir_report_intruders(BYTE *house)
+{
+    DynVec *bv = OIL_BUILDING_ARRAY, *tv = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < tv->Count; i++) {
+        BYTE *o = tv->Items[i];
+        int what;
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || ((what = dir_whatami(o)) != 1 && what != 15))
+            continue;
+        CellXY at = object_cell(o);
+        for (int k = 0; k < bv->Count; k++) {
+            BYTE *b = bv->Items[k], *owner = FIELD(b, O_OWNER, BYTE *);
+            if (!oil_live(b) || !owner || !owner[H_ISHUMAN] || dir_dist2(object_cell(b), at) > 6 * 6)
+                continue;
+            BYTE *team = FIELD(o, F_TEAM, BYTE *), *dest = FIELD(o, COMBAT_DESTINATION, BYTE *);
+            BYTE *tt = team ? FIELD(team, TEAM_TYPE, BYTE *) : NULL, *script = team ? FIELD(team, TEAM_SCRIPT, BYTE *) : NULL;
+            BYTE *st = tt ? FIELD(tt, TT_SCRIPT, BYTE *) : NULL;
+            CellXY dc = dest && is_cell(dest) ? FIELD(dest, C_MAPCOORDS, CellXY) : dest ? object_cell(dest) : (CellXY){ -1, -1 };
+            logmsg("director: house %d frame %d: %.24s at %d,%d in the human base: mission %d dest %d,%d team %.24s "
+                   "script %.24s line %d", FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(o) + T_ID, at.X,
+                   at.Y, FIELD(o, COMBAT_MISSION, int), dc.X, dc.Y, tt ? (char *)tt + T_ID : "-",
+                   st ? (char *)st + T_ID : "-", script ? FIELD(script, SCRIPT_LINE, int) : -1);
+            break;
+        }
+    }
+}
+
+/* Stock trigger teams pick their own production. Two picks are vetoed: more Kirovs once four are
+ * out or while the base is being hit (slow and costly, they left bases undefended), and more
+ * infantry when the enemy is cut off by water (they can only wait at home). */
+static void dir_veto_production(BYTE *house, DirState *d)
+{
+    int air = FIELD(house, H_PRODUCING_AIR, int);
+    DynVec *at = AIRCRAFTTYPE_ARRAY;
+    if (air >= 0 && air < at->Count && !_stricmp((char *)at->Items[air] + T_ID, "ZEP")
+        && (d->threat_value >= 1500 || dir_owned_of(house, at->Items[air]) >= 4)) {
+        FIELD(house, H_PRODUCING_AIR, int) = -1;
+        if (CURRENT_FRAME - d->last_veto_log > 1500) {
+            d->last_veto_log = CURRENT_FRAME;
+            logmsg("director: house %d frame %d: no more Kirovs (%s)", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   d->threat_value >= 1500 ? "base under attack" : "four out already");
+        }
+    }
+    int inf = FIELD(house, H_PRODUCING_INF, int);
+    DynVec *it = INFANTRYTYPE_ARRAY;
+    if ((d->blocked || d->island) && inf >= 0 && inf < it->Count && FIELD(house, H_OWNED_INFANTRY, int) >= 24
+        && !d->want_engineer && !in_list("ENGINEER,SENGINEER,YENGINEER", (char *)it->Items[inf] + T_ID))
+        FIELD(house, H_PRODUCING_INF, int) = -1;
+}
+
 /* ---- tank bunkers ----
  * Yuri's base plan (ThirdBaseDefenses) builds Tank Bunkers, but no AI ever drives a tank into one,
  * so they stood empty. Between attacks the director garrisons each empty bunker with the nearest
@@ -1798,6 +1962,10 @@ static void dir_update(BYTE *house)
         d->rally = dir_pick_rally(d);
         d->home_zone = dir_zone(d->rally);   /* the rally is clear land, unlike a built-over base centre */
     }
+    if (bench_file && human_in_peace && CURRENT_FRAME % 600 < 15)
+        dir_report_intruders(house);
+    if (director_enabled(house) & DIR_F_PRODUCTION)
+        dir_veto_production(house, d);
     if (director_enabled(house) & DIR_F_NAVY)
         dir_navy(house, d);
     dir_army(house, d);
