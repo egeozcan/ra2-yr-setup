@@ -1053,6 +1053,12 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
     included, is walked to the nearest land along its own, perhaps broken, span.
   - **Stranded:** units stuck beyond a fallen bridge, far from home and the rally, guard where they
     stand instead of pathing at an impossible goal. Engineers mend the bridge nearest them first.
+- **GIs deploy.** GIs and Guardian GIs in the army deploy behind sandbags when an armed ground
+  enemy is within weapon range + 2, as a player's deploy click does (`ClickedMission(Unload)`,
+  from `FootClass::ClickedAction` Self_Deploy at 0x4D75E1). While deployed they take no army
+  orders. They pack up when nothing armed has been within range + 5 for 150 frames, at once when
+  the army retreats, and never on a bridge. Deploy and pack-up are at least 300 frames apart.
+  The deployed state is read from `InfantryClass::SequenceAnim` (+0x6C4, 27–30).
 - **Dodging Kirovs.** A unit that can't shoot at a nearby Kirov or Floating Disc moves out from
   under it: toward our nearest anti-air within 20 cells, or 8 cells straight away.
 - **Order churn.** Each unit remembers the last cell it was sent to; a goal that drifts by under

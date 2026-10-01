@@ -875,6 +875,70 @@ static int dir_on_bridge(CellXY c)
 /* The nearest land off the bridge deck a unit stands on, following its own (perhaps broken) span. */
 static int dir_off_bridge(CellXY at, CellXY *out);
 
+/* ---- deployable infantry ----
+ * GIs and Guardian GIs fight far better behind sandbags; the AI never deploys them. In a fight
+ * (an armed ground enemy within weapon range + 2) they deploy, as a player's deploy click does
+ * (FootClass::ClickedAction Self_Deploy, 0x4D75E1: ClickedMission(Unload)), and stay out of the
+ * army's orders while deployed. With nothing armed within range + 5 for 150 frames they pack up
+ * the same way and rejoin. Deploy and undeploy are at least 300 frames apart. */
+#define I_SEQUENCE 0x6C4                /* InfantryClass::SequenceAnim: 27..30 deploying/deployed */
+#define MISSION_UNLOAD 16
+static const char *dir_deployers = "E1,GGI";
+static struct { BYTE *unit; int toggled, last_enemy; } dir_deploy[1024];
+
+static int dir_deployed(BYTE *unit)
+{
+    int seq = FIELD(unit, I_SEQUENCE, int);
+    return seq >= 27 && seq <= 30;
+}
+
+static int dir_infantry_deploy(BYTE *unit, CellXY at, int may_deploy)
+{
+    BYTE *type = dir_type(unit);
+    if (dir_whatami(unit) != 15 || !type || !in_list(dir_deployers, (char *)type + T_ID))
+        return 0;
+    unsigned k = ((DWORD)unit >> 3) % 1024;
+    if (dir_deploy[k].unit != unit) {
+        dir_deploy[k].unit = unit;
+        dir_deploy[k].toggled = dir_deploy[k].last_enemy = -100000;
+    }
+    int reach = dir_weapon_cells(unit), enemy = 0;
+    for (int i = 0; i < dir_enemy_count && !enemy; i++) {
+        DirEnemy *e = &dir_enemies[i];
+        int r = dir_deployed(unit) ? reach + 5 : reach + 2;
+        enemy = e->armed && !e->air && dir_dist2(e->at, at) <= r * r;
+    }
+    if (enemy)
+        dir_deploy[k].last_enemy = CURRENT_FRAME;
+    int settled = CURRENT_FRAME - dir_deploy[k].toggled >= 300;
+    if (dir_deployed(unit)) {
+        /* pack up when the fight is over, or at once when the army retreats */
+        if (settled && (!may_deploy || (!enemy && CURRENT_FRAME - dir_deploy[k].last_enemy >= 150))) {
+            dir_why = "undeploy";
+            static int last_undeploy_log;
+            if (CURRENT_FRAME - last_undeploy_log > 600) {
+                last_undeploy_log = CURRENT_FRAME;
+                logmsg("director: frame %d: %.24s at %d,%d packs up", CURRENT_FRAME, (char *)type + T_ID, at.X, at.Y);
+            }
+            dir_order(unit, MISSION_UNLOAD, NULL, NULL);
+            dir_deploy[k].toggled = CURRENT_FRAME;
+        }
+        return 1;   /* deployed (or packing up): no army orders meanwhile */
+    }
+    if (enemy && may_deploy && settled) {
+        dir_why = "deploy";
+        static int last_log;
+        if (CURRENT_FRAME - last_log > 600) {
+            last_log = CURRENT_FRAME;
+            logmsg("director: frame %d: %.24s at %d,%d deploys for a fight", CURRENT_FRAME, (char *)type + T_ID, at.X, at.Y);
+        }
+        dir_order(unit, MISSION_UNLOAD, NULL, NULL);
+        dir_deploy[k].toggled = CURRENT_FRAME;
+        return 1;
+    }
+    return CURRENT_FRAME - dir_deploy[k].toggled < 60;   /* let the deploy start */
+}
+
 /* Kirovs are slow: a unit that can't shoot back gets out from under one instead of sitting there,
  * toward our nearest anti-air if any is close, else straight away from it. Returns 1 while dodging. */
 static struct { BYTE *unit; int until; } dir_dodge[512];
@@ -1411,7 +1475,8 @@ static void dir_army(BYTE *house, DirState *d)
     int regrouping = 0, held = 0, waiting = 0;
     for (int i = 0; i < n; i++) {
         CellXY c = object_cell(pool[i]);
-        if (dir_bridge_evac(pool[i], c) || dir_dodge_air(house, pool[i], c))
+        if (dir_bridge_evac(pool[i], c) || dir_dodge_air(house, pool[i], c)
+            || dir_infantry_deploy(pool[i], c, d->state != DIR_RETREAT && !dir_on_bridge(c)))
             continue;
         if (dir_stranded(pool[i])) {
             dir_why = "stranded";
