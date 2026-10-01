@@ -1100,6 +1100,22 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
     3000 frames ends it.
   - **Tested:** a derrick given to Korea on *Crocodile* got a refinery by the ore, pillboxes and a
     Patriot by frame 4,640.
+- **Colonising islands.** A civilian tech building (oil derrick first) within 90 cells that ground
+  units can't reach is taken by sea:
+  - **How:** an engineer boards an amphibious transport (Amphibious Transport, Hover Transport,
+    Yuri Hovercraft; one is built if needed), which drives over, unloads beside it and goes home
+    while the engineer captures it.
+  - **Fortifying:** the outpost logic then fortifies the holding; on an island without ore it builds
+    the two defences only.
+  - **Reachability:** a flood fill over land and bridge decks from the rally.
+  - **Limits:** each step has 3000 frames; a target given up on is skipped later.
+  - **Tested:** on Lostlake the Soviet AI shipped an engineer over at frame 6,960, held the island
+    derrick by 7,952, and later fortified it with a Sentry Gun and a Flak Cannon.
+- **Battle Fortresses manned.** Every American (Allied) Battle Fortress is kept full of GIs and
+  Guardian GIs; the nearest idle ones within 25 cells board it, as onto a ferry.
+- **Closed bridges.** Bridges that already read "destroyed" when the match starts (map-closed,
+  barrier-gated ones no engineer can open) are no repair job and no sign of a cut route. A bridge
+  that two engineers entered without effect is left alone too.
 - **Engineers called home.** When a bridge-repair job ends (mended by someone else, or timed out),
   an engineer still walking to the hut is sent home instead of entering a hut whose bridge is
   already whole.
@@ -1200,6 +1216,11 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
   - **Results** over Yuri's 16 matches: 8 wins instead of 13. Russia now leads Yuri 5–3, and
     America trails it 2–5 with 1 draw.
   - **Ratios:** the Disc fell to 0.54, the Gatling Tank to 1.47.
+- Fifth run (all 24, after the Yuri price rise, infantry posts, full bunkers and standing anti-air):
+  Yuri 9, America 6, Russia 5 of 16.
+  - **Head to head:** America against Russia 3–3 with 2 draws, America against Yuri 4–4, Yuri
+    against Russia 4–2 with 2 draws.
+  - **Ratios:** Grizzly 1.11, Guardian GI 1.07.
 - **Stat change:** the Grizzly got Rhino-level armour (`MTNK` Strength 300 → 400), listed in
   `BALANCE` in `mod/build-tesla-mod.py`. America's 16 matches afterwards: still 2 wins, though the
   Grizzly's ratio rose from 0.49 to 0.67. America's army is as large as the others (49k at frame
