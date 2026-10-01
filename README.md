@@ -406,7 +406,10 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
 - **Settings:**
   - your name;
   - a players table, with a row for you and one per opponent. Each row has country, colour, team (none or A–D) and
-    start position (random or 1 to the map's player count), plus difficulty for opponents;
+    start position (random or 1 to the map's player count), plus a level for opponents:
+    **1** Easy, **2** Medium, **3** Brutal (stock), **4** Brutal with the strategy director (hover shows which).
+    Level 4 writes `Director=1` to the AI's section and level 3 `Director=0`. Opponents saved as Hard
+    before the levels existed open as level 4;
   - up to 7 opponents, but only as many as the map allows;
   - speed, starting base, credits, starting units and tech level;
   - the rule switches: bases, short game, superweapons, human in peace, crates, MCV repacks, build off ally, bridges.
@@ -978,7 +981,7 @@ What it does, per Brutal house:
 
 ### Settings
 
-`[AIn]` keys in `yspawn.ini` (the launcher writes none, so the defaults apply):
+`[AIn]` keys in `yspawn.ini` (Skirmish Setup writes `Director` from the AI's level; 3 is 0, 4 is 1):
 
 - `Director=0` turns the director off for that AI (stock Brutal).
 - `DirectorFlags=N` keeps only some features. Bits: 1 production, 2 army, 4 team takeover,

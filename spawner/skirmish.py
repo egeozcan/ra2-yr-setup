@@ -32,7 +32,8 @@ RANDOM = -1
 COUNTRIES = ["America", "Korea", "France", "Germany", "Britain", "Libya", "Iraq", "Cuba", "Russia", "Yuri"]
 COLORS = [("Gold", "#e8c43a"), ("Red", "#d02a2a"), ("Blue", "#3160d8"), ("Green", "#35a53a"),
           ("Orange", "#ee8a24"), ("Sky blue", "#43c4e8"), ("Purple", "#8a45c9"), ("Pink", "#f070b4")]
-DIFFICULTIES = ["Hard", "Medium", "Easy"]          # yspawn.ini: 0 hard, 1 medium, 2 easy
+# AI level shown as 1..4: (yspawn.ini Difficulty, Director, tooltip). Level 4 adds the strategy director.
+LEVELS = {1: (2, 0, "Easy"), 2: (1, 0, "Medium"), 3: (0, 0, "Brutal (stock)"), 4: (0, 1, "Brutal + strategy director")}
 TEAMS = ["None", "A", "B", "C", "D"]               # yspawn.ini Team: -1 none, 0..3 = A..D
 SPEEDS = ["Fastest", "Faster", "Fast", "Normal", "Slow", "Slower", "Slowest"]   # GameSpeed 0..6
 SWITCHES = [("Bases", "Start with a base (MCV)"), ("ShortGame", "Short game"),
@@ -70,7 +71,18 @@ def normalize(saved):
     for p in [s] + s["AI"]:   # settings saved before start positions and teams existed
         p.setdefault("Start", RANDOM)
         p.setdefault("Team", RANDOM)
+    for ai in s["AI"]:        # saved before levels: Hard already ran with the director
+        ai.setdefault("Director", 1)
     return s
+
+
+def ai_level(ai):
+    """The 1..4 level for an AI's Difficulty and Director settings."""
+    return {2: 1, 1: 2}.get(ai["Difficulty"], 4 if ai.get("Director", 1) else 3)
+
+
+def set_ai_level(ai, level):
+    ai["Difficulty"], ai["Director"], _ = LEVELS[level]
 
 
 def read_json(path):
@@ -155,7 +167,7 @@ def build_config(s):
         ini["Settings"][key] = "1" if s[key] else "0"
     for i, ai in enumerate(s["AI"], 1):
         ini[f"AI{i}"] = {"Country": pick(ai["Country"]), "Color": colors[i], "Difficulty": ai["Difficulty"],
-                         "Start": ai["Start"], "Team": ai["Team"]}
+                         "Director": LEVELS[ai_level(ai)][1], "Start": ai["Start"], "Team": ai["Team"]}
     if s["StartBase"]:
         ini["Settings"]["Bases"] = "1"   # the bases replace the MCVs
         countries = dict.fromkeys(startbase.country_name(ini[sec]["Country"]) for sec in ini.sections())
@@ -214,10 +226,10 @@ def dropdown(model, selected, on_change, factory=None):
 
 
 def pills(options, selected, on_change):
-    """A pill-shaped segmented control, one toggle per (label, value) left to right."""
+    """A pill-shaped segmented control, one toggle per (label, value[, tooltip]) left to right."""
     g = Adw.ToggleGroup(css_classes=["round"], valign=Gtk.Align.CENTER, can_shrink=False)
-    for label, value in options:
-        g.add(Adw.Toggle(label=label, name=str(value)))
+    for label, value, *tip in options:
+        g.add(Adw.Toggle(label=label, name=str(value), tooltip=tip[0] if tip else ""))
     g.set_active_name(str(selected))
     g.connect("notify::active-name", lambda w, _: w.get_active_name() and on_change(int(w.get_active_name())))
     return g
@@ -336,7 +348,7 @@ class Window(Adw.ApplicationWindow):
             grid.remove(child)
         info = self.current_map()
         starts = info["max"] if info else 8
-        for col, text in enumerate(["", "Country", "Colour", "Team", "Start", "Difficulty"]):
+        for col, text in enumerate(["", "Country", "Colour", "Team", "Start", "Level"]):
             grid.attach(Gtk.Label(label=text, xalign=0, css_classes=["caption-heading", "dim-label"]), col, 0, 1, 1)
         for row, p in enumerate([self.s] + self.s["AI"], 1):
             human = p is self.s
@@ -355,8 +367,8 @@ class Window(Adw.ApplicationWindow):
             if human:
                 cells.append(Gtk.Label(label="Human", xalign=0, css_classes=["dim-label"]))
             else:
-                cells.append(pills([(d, i) for i, d in enumerate(DIFFICULTIES)][::-1], p["Difficulty"],
-                                   upd("Difficulty", 0)))
+                cells.append(pills([(str(n), n, tip) for n, (*_, tip) in LEVELS.items()], ai_level(p),
+                                   lambda n, p=p: (set_ai_level(p, n), self.refresh())))
                 remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
                                     tooltip_text="Remove opponent", css_classes=["flat"])
                 remove.connect("clicked", lambda _, p=p: self.remove_ai(p))
@@ -553,7 +565,8 @@ class Window(Adw.ApplicationWindow):
             return
         used = {self.s["Color"]} | {a["Color"] for a in self.s["AI"]}
         color = next((c for c in range(len(COLORS)) if c not in used), RANDOM)
-        self.s["AI"].append({"Country": RANDOM, "Color": color, "Difficulty": 2, "Start": RANDOM, "Team": RANDOM})
+        self.s["AI"].append({"Country": RANDOM, "Color": color, "Difficulty": 2, "Director": 0, "Start": RANDOM,
+                           "Team": RANDOM})
         self.rebuild_players()
         self.refresh()
 
@@ -658,8 +671,8 @@ class Window(Adw.ApplicationWindow):
             self.toast(f"Could not start: {e}")
             return
         st = ini["Settings"]
-        who = ", ".join(f"{COUNTRIES[int(ini[s]['Country'])]} ({DIFFICULTIES[int(ini[s]['Difficulty'])].lower()})"
-                        for s in ini.sections() if s.startswith("AI"))
+        who = ", ".join(f"{COUNTRIES[int(ai['Country'])]} (level {ai_level({k: int(ai[k]) for k in ('Difficulty', 'Director')})})"
+                        for ai in (ini[s] for s in ini.sections() if s.startswith("AI")))
         verb = "Wrote yspawn.ini (dry run)" if self.dry_run else "Starting"
         self.toast(f"{verb}: {COUNTRIES[int(st['Country'])]} vs {who}")
         if not self.dry_run:
