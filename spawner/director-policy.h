@@ -7,22 +7,41 @@ enum { DIR_GATHER, DIR_ATTACK, DIR_DEFEND, DIR_RETREAT };
 /* [AIn] DirectorFlags bits, for ablation runs; all are on by default. */
 enum { DIR_F_PRODUCTION = 1, DIR_F_ARMY = 2, DIR_F_TAKEOVER = 4, DIR_F_FOCUS = 8, DIR_F_ECONOMY = 16,
        DIR_F_ANSWER = 32, DIR_F_DEFENSES_FIRST = 64, DIR_F_COHESION = 128, DIR_F_ENGINEERS = 256,
-       DIR_F_EXPANSION = 512, DIR_F_ALL = 1023,
+       DIR_F_EXPANSION = 512, DIR_F_REGROUP = 1024, DIR_F_NAVY = 2048, DIR_F_UNSTICK = 4096,
+       DIR_F_BUNKERS = 8192, DIR_F_ALL = 16383,
        /* defenses-first objectives lost 3 of 4 director-vs-director ablation matches: off */
        DIR_F_DEFAULT = DIR_F_ALL & ~DIR_F_DEFENSES_FIRST };
 enum { ROLE_MAIN, ROLE_AA, ROLE_SIEGE, ROLE_SUPPORT, ROLE_COUNT };
 
 /* Launch once the army can beat what the enemy fields (its mobile army plus half its static
- * defenses), with a floor that rises over time. A maxed-out army goes regardless. */
-static int dir_should_launch(int army_value, int army_count, int enemy_army_value, int enemy_defense, int frame)
+ * defenses), with a floor that rises over time. A maxed-out army goes regardless, and the longer
+ * the army has waited the smaller the edge it asks for: a stalemate is a loss in slow motion. */
+static int dir_should_launch(int army_value, int army_count, int enemy_army_value, int enemy_defense, int frame,
+                             int waited)
 {
     if (army_count < 6)
         return 0;
     if (army_value >= 60000)
         return 1;
     int floor = frame < 12000 ? 5000 : frame < 24000 ? 8000 : 12000;
+    int edge = waited >= 12000 ? 8 : waited >= 6000 ? 10 : 12;
     long long opposition = enemy_army_value + enemy_defense / 2;
-    return army_value >= floor && (long long)army_value * 10 >= opposition * 12;
+    return army_value >= floor && (long long)army_value * 10 >= opposition * edge;
+}
+
+/* Which enemy to fight: near and weak beats far and weak or near and strong. strength is the
+ * house's mobile army plus half its defenses; each cell of distance counts as 150 credits. */
+static int dir_enemy_score(int distance_cells, int strength)
+{
+    return strength + 150 * distance_cells;
+}
+
+/* A forward section meeting overwhelming force falls back to the main body, when the body is
+ * well behind it and the army as a whole could win that fight together. */
+static int dir_should_regroup(int local_ours, int local_enemy, int cells_ahead, int group_value)
+{
+    return cells_ahead >= 8 && local_enemy > 1500 && local_enemy > local_ours * 2
+        && group_value * 10 > local_enemy * 12;
 }
 
 /* Fall back when the fight at the front is being lost after real losses, or when the attack

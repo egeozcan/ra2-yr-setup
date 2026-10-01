@@ -19,15 +19,29 @@ class PolicyTests(unittest.TestCase):
         #include "director-policy.h"
         int main(void) {
             /* launch: needs a real army and an edge over the enemy, but never waits forever */
-            assert(!dir_should_launch(70000, 5, 0, 0, 30000));
-            assert(!dir_should_launch(4999, 10, 0, 0, 1000));
-            assert(dir_should_launch(5000, 10, 4000, 0, 1000));
-            assert(!dir_should_launch(5000, 10, 4500, 0, 1000));
-            assert(!dir_should_launch(5000, 10, 3000, 3000, 1000));   /* defenses count half */
-            assert(!dir_should_launch(7000, 10, 0, 0, 13000));
-            assert(dir_should_launch(8000, 10, 0, 0, 13000));
-            assert(!dir_should_launch(30000, 60, 90000, 0, 13000));   /* no count override */
-            assert(dir_should_launch(60000, 10, 90000, 0, 13000));
+            assert(!dir_should_launch(70000, 5, 0, 0, 30000, 0));
+            assert(!dir_should_launch(4999, 10, 0, 0, 1000, 0));
+            assert(dir_should_launch(5000, 10, 4000, 0, 1000, 0));
+            assert(!dir_should_launch(5000, 10, 4500, 0, 1000, 0));
+            assert(!dir_should_launch(5000, 10, 3000, 3000, 1000, 0));   /* defenses count half */
+            assert(!dir_should_launch(7000, 10, 0, 0, 13000, 0));
+            assert(dir_should_launch(8000, 10, 0, 0, 13000, 0));
+            assert(!dir_should_launch(30000, 60, 90000, 0, 13000, 0));   /* no count override */
+            assert(dir_should_launch(60000, 10, 90000, 0, 13000, 0));
+            /* a long wait lowers the edge the army asks for, never below 0.8 of the opposition */
+            assert(!dir_should_launch(40000, 50, 40000, 0, 30000, 5999));
+            assert(dir_should_launch(40000, 50, 40000, 0, 30000, 6000));
+            assert(!dir_should_launch(40000, 50, 50001, 0, 30000, 12000));
+            assert(dir_should_launch(40000, 50, 50000, 0, 30000, 12000));
+            /* enemy choice: a weak neighbour before a strong one, but not across the whole map */
+            assert(dir_enemy_score(40, 20000) < dir_enemy_score(40, 40000));
+            assert(dir_enemy_score(40, 30000) < dir_enemy_score(150, 15000));
+            /* regroup: a forward section outgunned 2:1, with the body behind able to win together */
+            assert(dir_should_regroup(2000, 5000, 10, 20000));
+            assert(!dir_should_regroup(3000, 5000, 10, 20000));   /* not overwhelming */
+            assert(!dir_should_regroup(2000, 5000, 4, 20000));    /* it is the body */
+            assert(!dir_should_regroup(2000, 5000, 10, 6000));    /* the whole army is losing: retreat */
+            assert(!dir_should_regroup(200, 1000, 10, 20000));    /* a skirmish */
             /* retreat: losing at the front after losses, or bled out against resistance */
             assert(!dir_should_retreat(1000, 10000, 1000, 0));
             assert(dir_should_retreat(2900, 10000, 2900, 100));

@@ -979,6 +979,50 @@ What it does, per Brutal house:
   there and deploys it. The engine then re-centres the AI's base plan on the new yard, so new
   refineries follow the ore.
 
+Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Crocodile*:
+
+- **Free-for-all launches.** The launch check used to add a third of *every* enemy's army to the
+  target's. With six enemies that alone was ~55k, so no house ever attacked, and the late game
+  stalled with every army at home. Now only third-party units within 25 cells of the target's base
+  count. Between attacks the director re-picks its target every 3000 frames, by distance plus
+  strength (army plus half of defences; one cell counts as 150 credits). It only switches when the new
+  one scores 25% better. With two or more enemies alive, the edge it asks for drops from 1.2× to
+  1.0× after 6000 frames without an attack, and to 0.8× after 12000.
+- **Regroup.** During an attack, a unit at least 8 cells ahead of the marching body (the median unit),
+  facing armed enemies worth more than twice our units around it (and over 1500), falls back to
+  the body. That only happens when the group as a whole outvalues that enemy; otherwise the normal
+  retreat applies.
+- **Naval defence.** Enemy ships are no longer counted as a base raid, which sent the ground army
+  into the base to stare at the water. While ships are within reach of our buildings (10 cells, or
+  their weapon range), every armed ship we own attacks the nearest one it can hit. The yard builds
+  warships until our fleet matches them: Destroyers, Typhoon subs or Sea Scorpions, Boomers. A land raid's
+  defence point is now the raider nearest the base, not the average of all raiders.
+- **Walled-in units.** A unit that hasn't moved for 3000 frames, with nothing in its sights and its goal
+  far away, is checked with a flood fill of the cells within 14. When the fill can't leave that box
+  past buildings, water or rock, the unit is in a pocket, and the director sells the cheapest
+  building on the pocket's rim that it can spare: a wall, or a power plant while two others remain.
+  Tested with a tank boxed in by eight power plants: it found the pocket and sold one.
+- **Base jams.** Attack teams that were still recruiting held up to 18 units idle among the
+  buildings, waiting for a unit type they never got. The director now takes those too, and marks
+  every unit it takes as unrecruitable (`TechnoClass::RecruitableA`, which
+  `FootClass::CanBeRecruited` returns), so no team pulls it back. The rally was also checked
+  against the wrong house's buildings: it was picked before this house's scan. Base-defence and oil
+  teams keep their units.
+- **Refineries.** After three refinery orders in a row that never appear (nowhere to place them),
+  it stops ordering refineries for 6000 frames.
+- **Tank bunkers.** Yuri's base plan builds Tank Bunkers (`ThirdBaseDefenses=YAGGUN,YAPSYT,NATBNK`),
+  but no AI ever drove a tank into one, so they stood empty. Between attacks the director sends the
+  nearest main battle tank (Grizzly, Tank Destroyer, IFV, Rhino, Apocalypse, Flak Track, Lasher,
+  Gatling) into each empty bunker, up to a third of the army. A tank in a bunker
+  (`TechnoClass::BunkerLinkedItem`, +0x2E4) leaves the army pool. The order is what a player's
+  click does (`FootClass::ClickedAction`, Action::Enter, 0x4D76F6): `ClickedMission(Enter)` with
+  the bunker as the *destination*, not the target. A tank that doesn't get in within 900 frames goes
+  back to the army and isn't picked again for 6000 frames.
+- **Stalled attacks.** An attack on a structure with no land route fails silently: the attack order
+  is dropped and the army stays at home. That used to count as progress whenever any unit was
+  shooting something, so a big army could sit at home "attacking" for the rest of the match. Now
+  fighting only counts near the objective or at a front more than 20 cells from home.
+
 ### Settings
 
 `[AIn]` keys in `yspawn.ini` (Skirmish Setup writes `Director` from the AI's level; 3 is 0, 4 is 1):
@@ -986,7 +1030,7 @@ What it does, per Brutal house:
 - `Director=0` turns the director off for that AI (stock Brutal).
 - `DirectorFlags=N` keeps only some features. Bits: 1 production, 2 army, 4 team takeover,
   8 focus fire, 16 economy, 32 answer fire, 64 defences-first objectives, 128 cohesion,
-  256 engineers, 512 expansion.
+  256 engineers, 512 expansion, 1024 regroup, 2048 navy, 4096 walled-in units, 8192 tank bunkers.
   - The default is everything except 64. Defences-first lost 3 of 4 director-vs-director
     ablation matches.
 
@@ -1006,6 +1050,7 @@ Bench-only `[Settings]` keys, for tests:
 - `RevealMap=1` and `Camera=HOUSE`: what `--camera` sets.
 - `ForceIsland=1`: treat enemies as cut off by water.
 - `ForceExpand=1`: expand without waiting for idle harvesters.
+- `Camera=100+N` follows house N's base; `CameraX`/`CameraY` watch one cell.
 
 Each match writes `yspawn-bench.csv`: per-house snapshots every 300 frames and a result row.
 - The snapshot columns `killed_units`/`killed_buildings` are the house's **losses**.
@@ -1028,6 +1073,9 @@ plus army value, and within 20% count as a draw.
 | 1 director vs 2 allied stock Brutals | v4 build 1W 4L → v8 3W 2L → final 2W 1L, plus 2 where it eliminated one of the two before the cap |
 | 4-AI FFAs, 2 directors vs 2 stock | won by a director every time (v4, v8, final) |
 
+| 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
+| 2026-10-01, 7 directors FFA on *Don't Step on The Crocodile* (user's settings) | old build: no house ever launched an attack by frame 40k; new build: 40–54 attack launches per match, 5 of 7 houses eliminated in each of 5 full-length matches, and one match won outright at frame 48,640 |
+
 - The tuning suite covers 8 stock maps and all three sides, with starts swapped.
 - In the v1 baseline, stock Brutal kept 40–50k credits unspent all match. A director house spends
   its money by frame ~18,000.
@@ -1047,7 +1095,10 @@ plus army value, and within 20% count as a draw.
 ### Known limits
 
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
-  post-v8 behaviours those matches triggered were expansions.
+  post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
+  12W 2L 2D to 16/16 for the same build.
+- Walled-in detection was only tested on a pocket built for the test; no real match has triggered it yet.
+- Ships defend only against enemy ships near the base; the fleet does not attack on its own.
 - The stock AI sometimes sets an expansion MCV to Hunt, so the director keeps re-issuing the deploy.
 
 - The water fallback relies on stall evidence, so a cut-off army first wastes some attack time.
