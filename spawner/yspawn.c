@@ -1027,7 +1027,9 @@ static void start_bases(void)
             else if (!base_spot(type, house, start.X, start.Y, &x, &y))
                 logmsg("start base: %s: no room near %d,%d", id, start.X, start.Y);
             else
-                logmsg("start base: %s at %d,%d: %s", id, x, y, (obj = put_object(type, house, x, y, 0)) ? "placed" : "could not be placed");
+                logmsg("start base: %s at %d,%d (height %+d): %s", id, x, y,
+                       dir_height((CellXY){ (short)x, (short)y }) - dir_height(start),
+                       (obj = put_object(type, house, x, y, 0)) ? "placed" : "could not be placed");
             if (obj && n < (int)(sizeof placed / sizeof *placed) && (n || FIELD(obj, B_TYPE, BYTE *)[B_CONSTRUCTIONYARD]))
                 placed[n++] = obj;
             if (!n)
