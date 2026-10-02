@@ -2602,7 +2602,8 @@ static void dir_breach_fence(BYTE *house, DirState *d)
         BYTE *o = v->Items[i];
         int what, dd;
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || ((what = dir_whatami(o)) != 1 && what != 15)
-            || !dir_armed(o) || dir_naval(o) || dir_is_engineer(o) || (dd = dir_dist2(object_cell(o), gap)) >= dist[1]
+            || !dir_armed(o) || dir_naval(o) || dir_is_engineer(o) || (what == 1 && dir_type(o)[UT_HARVESTER])
+            || (dd = dir_dist2(object_cell(o), gap)) >= dist[1]
             || !(dir_hurts_walls(o) || dir_paths_through(o, crush)) || !dir_team_takeable(o))
             continue;
         if (dd < dist[0]) {
