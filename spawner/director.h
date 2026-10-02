@@ -31,7 +31,8 @@
 #define MISSION_MOVE 2
 #define MISSION_AREA_GUARD 11
 #define T_FOCUS 0x218                  /* TechnoClass::Focus: Area_Guard guards around it when it is a cell */
-#define MAX_POOL 160
+#define MAX_POOL 512   /* 160 cut big armies short: the rest went uncounted and idle, and the enemy's
+                            * full army looked bigger than ours forever (stalemates to the time limit) */
 #define MAP_ZONE 0x56D230          /* MapClass::GetMovementZoneType(cell, MovementZone, bridge) */
 #define T_PASSENGERS 0x114         /* TechnoClass::Passengers.NumPassengers */
 #define MAX_ENEMY 1024
@@ -1641,7 +1642,11 @@ static void dir_army(BYTE *house, DirState *d)
         /* the target's army plus third players' units around its base; patience counts from the
          * last attack (or from frame 15000: the opening is no stalemate) */
         int since = d->last_attack_end > 15000 ? d->last_attack_end : 15000;
-        int waited = CURRENT_FRAME > since && dir_hostile_houses(house) >= 2 ? CURRENT_FRAME - since : 0;
+        int waited = CURRENT_FRAME > since ? CURRENT_FRAME - since : 0;
+        /* a duel waits 9000 frames longer: an army that stays home there is ready for the other's
+         * attack, and patience pays. It still ends: two capped armies sat to the time limit. */
+        if (dir_hostile_houses(house) < 2)
+            waited = waited > 9000 ? waited - 9000 : 0;
         const DirPlanLevers *lv = dir_levers(d);
         int edge = lv->edge - (d->posture == POSTURE_PRESS ? 2 : 0);
         /* the target's army is away from home: what the strike meets is what stayed behind */
