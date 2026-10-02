@@ -44,6 +44,8 @@
 #define CELL_ORE_VALUE 0x485020            /* CellClass::GetContainedTiberiumValue */
 static int dir_is_engineer(BYTE *obj);
 static int dir_wall_cell(BYTE *cell);
+static int dir_height(CellXY c);
+static int dir_blocks_passage(BYTE *type, CellXY tl);
 typedef struct DirState DirState;
 static unsigned dir_next_roll(DirState *d);
 static int dir_ore_blocked(BYTE *house, CellXY c);
@@ -66,6 +68,7 @@ struct DirState {
     CellXY base, rally, threat_at, objective_at, centroid, front;
     BYTE *objective, *enemy, *rally_enemy;
     BYTE *repair_hut, *repair_engineer;       /* bridge repair job */
+    CellXY repair_eng_at;                     /* where the engineer was last seen alive */
     int repair_frame, repair_mode, want_engineer, failed_frame;
     BYTE *failed_job;   /* mode 0 bridge, 1 capture */
     int idle_harvesters, next_economy;
@@ -76,6 +79,8 @@ struct DirState {
     BYTE *ferry[DIR_CONVOY];
     int ferry_state[DIR_CONVOY], ferry_frame[DIR_CONVOY], ferry_aboard[DIR_CONVOY], ferry_aboard_frame[DIR_CONVOY];
     int ferry_docked[DIR_CONVOY], ferry_want, convoy_since, home_ground;
+    CellXY ferry_seen[DIR_CONVOY];      /* where each transport last made headway, and when */
+    int ferry_seen_frame[DIR_CONVOY], dock_frame;
     CellXY landing, dock;
     int rally_frame;
     int third_party, last_attack_end, next_repick;          /* other enemies' units near the target's base */
@@ -98,6 +103,9 @@ struct DirState {
     BYTE *col_target, *col_ferry, *col_eng, *col_failed[8];  /* colonising islands by transport */
     CellXY col_landing;
     int col_state, col_frame, next_col, want_col_ferry, col_failed_count;
+    BYTE *col_return;                   /* a colonising transport sent home after giving up, to unload there */
+    int col_tries;                      /* landing cells tried for this target */
+    int col_return_frame;
     CellXY post_cell[6], post_rally;
     int post_toggled[6], next_posts;
     CellXY outpost_ore;
@@ -588,7 +596,7 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
         static const char *anti_armor[3] = { "GGI,E1", "SHK,E2", "BRUTE,INIT" }, *anti_inf[3] = { "E1", "E2", "INIT" };
         if (dd->inf_defense && s0 >= 0 && s0 <= 2 && FIELD(house, H_OWNED_INFANTRY, int) < 60) {
             BYTE *t = dir_first_buildable(house, INFANTRYTYPE_ARRAY,
-                                          dd->raid_armor >= dd->raid_inf ? anti_armor[s0] : anti_inf[s0], 0);
+                                          dd->raid_armor >= dd->raid_inf ? anti_armor[s0] : anti_inf[s0], 1500);
             index = t ? dir_type_index(INFANTRYTYPE_ARRAY, t) : -1;
             if (index >= 0) {
                 FIELD(house, H_PRODUCING_INF, int) = index;
@@ -1625,9 +1633,17 @@ static void dir_army(BYTE *house, DirState *d)
     if (d->state != previous)
         d->state_frame = CURRENT_FRAME;
     /* Some raids are met with a barracks flood: infantry trains fast and close to the fight. A
-     * draw per raid (two in five) from the house's own stream, so it isn't the same every time. */
+     * draw per raid (one in four), so it isn't the same every time. Its own stream, apart from the
+     * strategy layer's, so every director house does it. */
     if (d->state == DIR_DEFEND && previous != DIR_DEFEND) {
-        d->inf_defense = d->plan_roll && dir_next_roll(d) % 5 < 2;
+        static unsigned inf_roll[32];
+        unsigned *x = &inf_roll[FIELD(house, 0x30, int) & 31];
+        if (!*x)
+            *x = ((unsigned)*GAME_SEED ^ (0x85EBCA6Bu * (unsigned)(FIELD(house, 0x30, int) + 7))) | 1;
+        *x ^= *x << 13;
+        *x ^= *x >> 17;
+        *x ^= *x << 5;
+        d->inf_defense = *x % 4 == 0;
         if (d->inf_defense)
             logmsg("director: house %d frame %d: meeting the raid (%d infantry, %d vehicles) with infantry",
                    FIELD(house, 0x30, int), CURRENT_FRAME, d->raid_inf, d->raid_armor);
@@ -2000,14 +2016,17 @@ static int dir_refinery_place(BYTE *house, DirState *d, BYTE *type, CellXY *out)
         }
     if (!best)
         return 0;
-    int closest = 0x7FFFFFFF;
+    /* on the ore's own level: the nearest spot as the crow flies was at times down a cliff, which
+     * harvesters reach only the long way round (and refineries on the beach blocked its ramp) */
+    int level = dir_height(ore), closest = 0x7FFFFFFF;
     for (int r = 1; r <= 12; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
                 CellXY c = { (short)(ore.X + dx), (short)(ore.Y + dy) };
                 int dd = dx * dx + dy * dy;
-                if ((abs(dx) == r || abs(dy) == r) && dd < closest && dir_cell(c)
-                    && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                if ((abs(dx) == r || abs(dy) == r) && dd < closest && dir_cell(c) && abs(dir_height(c) - level) <= 104
+                    && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)
+                    && !dir_blocks_passage(type, c)) {
                     closest = dd;
                     *out = c;
                 }
@@ -2489,6 +2508,19 @@ static void dir_engineers(BYTE *house, DirState *d)
     /* An engineer gone (inside the hut, or dead) while its bridge still reads down: some map bridges
      * (the barrier-gated ones) read "destroyed" for good and can't be mended. Two such tries and the
      * hut is left alone for the rest of the match. */
+    if (d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))
+        d->repair_eng_at = object_cell(d->repair_engineer);
+    /* gone on the way (killed): no evidence against the bridge, just send another */
+    if (job && alive && !done && d->repair_mode == 0 && d->repair_engineer
+        && !(dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))
+        && dir_dist2(d->repair_eng_at, object_cell(job)) > 3 * 3) {
+        logmsg("director: house %d frame %d: the engineer for the hut at %d,%d was lost on the way at %d,%d",
+               FIELD(house, 0x30, int), CURRENT_FRAME, object_cell(job).X, object_cell(job).Y, d->repair_eng_at.X,
+               d->repair_eng_at.Y);
+        d->repair_engineer = NULL;
+        d->repair_hut = NULL;
+        job = NULL;
+    }
     if (job && alive && !done && d->repair_mode == 0 && d->repair_engineer
         && !(dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))) {
         int k = 0;
@@ -2510,7 +2542,7 @@ static void dir_engineers(BYTE *house, DirState *d)
             d->failed_frame = CURRENT_FRAME;
         }
         if (alive && done)
-            logmsg("director: house %d engineer job done (%s)", FIELD(house, 0x30, int),
+            logmsg("director: house %d frame %d: engineer job done (%s)", FIELD(house, 0x30, int), CURRENT_FRAME,
                    d->repair_mode ? "captured" : "bridge repaired");
         /* an engineer still walking to a hut whose bridge is already whole (mended by someone else,
          * or the job timed out) is called home instead of entering it for nothing */
@@ -2543,6 +2575,11 @@ static void dir_engineers(BYTE *house, DirState *d)
         if (d->stranded_frame && CURRENT_FRAME - d->stranded_frame < 1500 && dir_dist2(c, d->stranded_at) <= 25 * 25)
             dd = 0;   /* our units are cut off behind this one: mend it first, wherever it is */
         if (dd >= best || (b == d->failed_job && CURRENT_FRAME - d->failed_frame < 9000))
+            continue;
+        int guarded = 0;   /* an engineer walking into enemy guns is only lost: the army clears it first */
+        for (int k = 0; k < dir_enemy_count && !guarded; k++)
+            guarded = dir_enemies[k].armed && !dir_enemies[k].building && dir_dist2(dir_enemies[k].at, c) <= 7 * 7;
+        if (guarded)
             continue;
         best = dd;
         target = b;
@@ -2591,7 +2628,8 @@ static void dir_engineers(BYTE *house, DirState *d)
     d->repair_mode = mode;
     dir_order(engineer, mode ? MISSION_CAPTURE : MISSION_ENTER, target, NULL);
     CellXY c = object_cell(target);
-    logmsg("director: house %d sends an engineer to %s %.24s at %d,%d", FIELD(house, 0x30, int),
+    d->repair_eng_at = object_cell(engineer);
+    logmsg("director: house %d frame %d: sends an engineer to %s %.24s at %d,%d", FIELD(house, 0x30, int), CURRENT_FRAME,
            mode ? "capture" : "repair the bridge at", (char *)dir_type(target) + T_ID, c.X, c.Y);
 }
 
@@ -2811,6 +2849,25 @@ static int dir_boardable(BYTE *house, DirState *d, BYTE *o, int *what)
         && !dir_is_ferry(d, o) && !dir_naval(o) && !dir_crosses(o) && dir_armed(o) && !dir_landed(d, object_cell(o));
 }
 
+/* The beach cell nearest `at` (within 30 cells) on land our units can walk to from it, clear of
+ * buildings, with water within 2 cells; `at` itself if there is none. */
+static CellXY dir_beach_near(CellXY at)
+{
+    dir_fill_land(at);
+    for (int r = 0; r <= 30; r++)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                if (abs(dx) != r && abs(dy) != r)
+                    continue;
+                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
+                BYTE *cell = dir_cell(c);
+                if (cell && FIELD(cell, C_LANDTYPE, int) == 6 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
+                    && dir_is_land(c) && dir_near_water(c, 2))
+                    return c;
+            }
+    return at;
+}
+
 static void dir_ferry(BYTE *house, DirState *d)
 {
     dir_why = "ferry";
@@ -2847,7 +2904,13 @@ static void dir_ferry(BYTE *house, DirState *d)
     }
     if (!dir_ferry_count(d))
         return;
-    d->dock = d->rally;   /* amphibious: they drive ashore to the rally, where the troops are */
+    /* The dock: a beach (land type 6, water beside it) near the rally that our ground units can walk
+     * to. Docking at the rally itself wedged transports in among the waiting army on cliff-top
+     * bases, where they never got out to the water again. Re-picked every 3000 frames. */
+    if (!d->dock.X || CURRENT_FRAME >= d->dock_frame) {
+        d->dock_frame = CURRENT_FRAME + 3000;
+        d->dock = dir_beach_near(d->rally);
+    }
     /* a stock team that recruited a transport orders it about too (area guard), and it ignored the
      * sailing order with a full load aboard */
     int docked = 0, ready = 0, coming = 0;
@@ -2859,6 +2922,28 @@ static void dir_ferry(BYTE *house, DirState *d)
             dir_take_from_team(t);
         CellXY at = object_cell(t);
         int passengers = FIELD(t, T_PASSENGERS, int);
+        /* no headway for 900 frames while it should be moving (to the dock, across, home): it is
+         * wedged in. Docking, it loads where it stands; out at sea or homeward, the order is given
+         * again, and after a second stall it unloads (sailing) or counts as home. */
+        int moving = (d->ferry_state[k] == 0 && !d->ferry_docked[k]) || d->ferry_state[k] == 1 || d->ferry_state[k] == 3;
+        if (!moving || dir_dist2(at, d->ferry_seen[k]) > 2 * 2) {
+            d->ferry_seen[k] = at;
+            d->ferry_seen_frame[k] = CURRENT_FRAME;
+        } else if (CURRENT_FRAME - d->ferry_seen_frame[k] > 900) {
+            logmsg("director: house %d frame %d: ferry %d stuck at %d,%d (state %d), %s", FIELD(house, 0x30, int),
+                   CURRENT_FRAME, k, at.X, at.Y, d->ferry_state[k],
+                   d->ferry_state[k] == 0 ? "loading here" : "ordering it again");
+            d->ferry_seen_frame[k] = CURRENT_FRAME;
+            if (d->ferry_state[k] == 0)
+                d->ferry_frame[k] = CURRENT_FRAME - 601;   /* the dock is blocked: load where it stands */
+            else if (d->ferry_state[k] == 1) {
+                if (CURRENT_FRAME - d->ferry_frame[k] > 1800)
+                    d->ferry_frame[k] = CURRENT_FRAME - 4001;   /* unload where it is */
+                else
+                    dir_order(t, MISSION_MOVE, NULL, dir_cell(d->landing));
+            } else
+                d->ferry_frame[k] = CURRENT_FRAME - 6001;   /* call it home */
+        }
         if (bench_file && CURRENT_FRAME % 900 < 15)
             logmsg("director: house %d ferry %d %.24s state %d aboard %d at %d,%d dock %d,%d mission %d",
                    FIELD(house, 0x30, int), k, (char *)dir_type(t) + T_ID, d->ferry_state[k], passengers, at.X, at.Y,
@@ -3503,22 +3588,119 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
  * it for good: no defences, factories or labs again (and no Floating Discs, which need the lab),
  * with the money piling up. Where the planner finds nothing, the nearest spot to our base centre
  * that the engine's own placement check accepts is taken instead. */
-/* The nearest spot to the base centre (2-20 cells) that the engine's placement check accepts. */
+/* Ground height of a cell, in leptons (one level is 104): a cliff is several levels. */
+static int dir_height(CellXY c)
+{
+    Coord at = { c.X * 256 + 128, c.Y * 256 + 128, 0 };
+    return ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &at);
+}
+
+/* A building type's footprint, from BuildingTypeClass::Foundation (+0xEF0, as LoadFromINI stores it at
+ * 0x461248) and YRpp's Foundation enum. */
+#define BT_FOUNDATION 0xEF0
+static void dir_foundation(BYTE *type, int *w, int *h)
+{
+    static const unsigned char size[22][2] = { {1,1}, {2,1}, {1,2}, {2,2}, {2,3}, {3,2}, {3,3}, {3,5}, {4,2}, {3,3},
+        {1,3}, {3,1}, {4,3}, {1,4}, {1,5}, {2,6}, {2,5}, {5,3}, {4,4}, {3,4}, {6,4}, {1,1} };
+    int f = FIELD(type, BT_FOUNDATION, int);
+    if (f < 0 || f >= 22)
+        f = 18;   /* unknown: assume 4x4 */
+    *w = size[f][0];
+    *h = size[f][1];
+}
+
+/* A building at tl would cut a passage: with its cells blocked, the open cells around it no longer
+ * all connect within 10 cells. Buildings put in a ramp or a gap between cliffs sealed bases off
+ * from their beach, and armies from the way out. */
+static int dir_blocks_passage(BYTE *type, CellXY tl)
+{
+    enum { R = 10, W = 2 * R + 1 };
+    static unsigned char seen[W * W];
+    static CellXY queue[W * W];
+    int w, h;
+    dir_foundation(type, &w, &h);
+    CellXY mid = { (short)(tl.X + w / 2), (short)(tl.Y + h / 2) };
+    #define DIR_IN_FOOT(c) ((c).X >= tl.X && (c).X < tl.X + w && (c).Y >= tl.Y && (c).Y < tl.Y + h)
+    #define DIR_OPEN(c, cell) ((cell) && FIELD(cell, C_LANDTYPE, int) != 2 && FIELD(cell, C_LANDTYPE, int) != 3 \
+        && !dir_wall_cell(cell) && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80) && !DIR_IN_FOOT(c))
+    CellXY ring[64];
+    int nring = 0;
+    for (int y = tl.Y - 1; y <= tl.Y + h; y++)
+        for (int x = tl.X - 1; x <= tl.X + w; x++) {
+            CellXY c = { (short)x, (short)y };
+            BYTE *cell = dir_cell(c);
+            if (!DIR_IN_FOOT(c) && DIR_OPEN(c, cell) && nring < 64)
+                ring[nring++] = c;
+        }
+    if (nring < 2)
+        return 0;
+    memset(seen, 0, sizeof seen);
+    int head = 0, tail = 0;
+    queue[tail++] = ring[0];
+    seen[(ring[0].Y - mid.Y + R) * W + ring[0].X - mid.X + R] = 1;
+    while (head < tail) {
+        CellXY c = queue[head++];
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                CellXY n = { (short)(c.X + dx), (short)(c.Y + dy) };
+                int bx = n.X - mid.X + R, by = n.Y - mid.Y + R;
+                if ((!dx && !dy) || bx < 0 || by < 0 || bx >= W || by >= W || seen[by * W + bx])
+                    continue;
+                BYTE *cell = dir_cell(n);
+                if (!DIR_OPEN(n, cell))
+                    continue;
+                seen[by * W + bx] = 1;
+                queue[tail++] = n;
+            }
+    }
+    for (int i = 1; i < nring; i++)
+        if (!seen[(ring[i].Y - mid.Y + R) * W + ring[i].X - mid.X + R])
+            return 1;
+    return 0;
+    #undef DIR_IN_FOOT
+    #undef DIR_OPEN
+}
+
+/* The nearest spot to the base centre (2-20 cells) that the engine's placement check accepts, that
+ * cuts no passage and that is on the base's own level (not down a cliff on the beach below). */
 static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out)
 {
     CellXY base = dir_house_center(house);
+    int level = dir_height(base);
     for (int r = 2; r <= 20; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
                 if (abs(dx) != r && abs(dy) != r)
                     continue;
                 CellXY c = { (short)(base.X + dx), (short)(base.Y + dy) };
-                if (dir_cell(c) && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                if (dir_cell(c) && abs(dir_height(c) - level) <= 104
+                    && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)
+                    && !dir_blocks_passage(type, c)) {
                     *out = c;
                     return 1;
                 }
             }
     return 0;
+}
+
+/* The stock planner's spot would cut a passage (a ramp, a gap between cliffs): the director's own
+ * nearest spot that doesn't, or none (the building waits) when there is no such spot. Walls are
+ * meant to close gaps and are left alone. */
+static void dir_check_passage(BYTE *house, BYTE *type, CellXY *out)
+{
+    if (out->X <= 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
+        || in_list("GAWALL,NAWALL,YAWALL,GAFWLL", (char *)type + T_ID) || !dir_blocks_passage(type, *out))
+        return;
+    CellXY was = *out;
+    if (!dir_fallback_spot(house, type, out))
+        out->X = out->Y = 0;
+    static int last_log[32];
+    int idx = FIELD(house, 0x30, int) & 31;
+    if (CURRENT_FRAME - last_log[idx] > 600) {
+        last_log[idx] = CURRENT_FRAME;
+        logmsg("director: house %d frame %d: %.24s at %d,%d would cut a passage, %s %d,%d", idx, CURRENT_FRAME,
+               (char *)type + T_ID, was.X, was.Y, out->X ? "placed at" : "no other spot", out->X, out->Y);
+    }
 }
 
 static void dir_note_placement(BYTE *house, BYTE *type, CellXY *out)
@@ -3881,12 +4063,38 @@ static void dir_colonize(BYTE *house, DirState *d)
     dir_why = "colonise";
     d->want_col_ferry = 0;
     DynVec *tv = OIL_TECHNO_ARRAY, *bv = OIL_BUILDING_ARRAY;
+    /* a transport sent home after a failed attempt: unload at the rally (an engineer left aboard was lost
+     * to the house, and the transport with it: convoys skip loaded transports) */
+    BYTE *rt = d->col_return;
+    if (rt && (!dir_object_listed(tv, rt) || !oil_live(rt) || !FIELD(rt, T_PASSENGERS, int)
+               || CURRENT_FRAME - d->col_return_frame > 4000)) {
+        if (rt == d->col_ferry)
+            d->col_ferry = NULL;
+        d->col_return = rt = NULL;
+    }
+    if (rt) {
+        if (dir_dist2(object_cell(rt), d->dock) <= 5 * 5) {
+            if (!dir_recent_order(rt, (BYTE *)3, 300))
+                dir_order(rt, MISSION_UNLOAD, NULL, NULL);
+        } else if (!dir_recent_order(rt, dir_cell(d->dock), 450))
+            dir_order(rt, MISSION_MOVE, NULL, dir_cell(d->dock));
+    }
+    BYTE *towner = d->col_target && dir_object_listed(bv, d->col_target) ? FIELD(d->col_target, O_OWNER, BYTE *) : NULL;
     if (d->col_state && (CURRENT_FRAME - d->col_frame > 3000 || !d->col_target
-                         || !dir_object_listed(bv, d->col_target) || !oil_live(d->col_target))) {
+                         || !dir_object_listed(bv, d->col_target) || !oil_live(d->col_target)
+                         || (towner != house && !dir_passive(towner)))) {   /* taken by someone else first */
         logmsg("director: house %d frame %d: colonising given up (step %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
                d->col_state);
         if (d->col_target)
             d->col_failed[d->col_failed_count++ % 8] = d->col_target;
+        BYTE *ft = d->col_ferry;
+        if (ft && dir_object_listed(tv, ft) && oil_live(ft) && FIELD(ft, T_PASSENGERS, int)) {
+            d->col_return = ft;   /* bring the engineer home */
+            d->col_return_frame = CURRENT_FRAME;
+            dir_order(ft, MISSION_MOVE, NULL, dir_cell(d->dock.X ? d->dock : d->rally));
+        } else
+            d->col_ferry = NULL;
+        d->col_eng = NULL;
         d->col_state = 0;
         d->next_col = CURRENT_FRAME + 3000;
         return;
@@ -3920,6 +4128,7 @@ static void dir_colonize(BYTE *house, DirState *d)
         d->col_target = best;
         d->col_ferry = d->col_eng = NULL;
         d->col_state = 1;
+        d->col_tries = 0;
         d->col_frame = CURRENT_FRAME;
         CellXY at = object_cell(best);
         logmsg("director: house %d frame %d: colonising the %.24s at %d,%d across the water", FIELD(house, 0x30, int),
@@ -3995,8 +4204,38 @@ static void dir_colonize(BYTE *house, DirState *d)
         return;
     }
     if (d->col_state == 3) {   /* ashore: capture, and the transport goes home */
-        if (t && FIELD(t, T_PASSENGERS, int))
+        if (t && FIELD(t, T_PASSENGERS, int)) {
+            /* still aboard: the unload order again, and after 900 frames another landing cell (the shore
+             * there was no place to unload); otherwise transports sat by the island, engineer inside */
+            int waited = CURRENT_FRAME - d->col_frame;
+            if (waited > 900 && waited % 900 < 15 && d->col_tries >= 3)
+                d->col_frame = CURRENT_FRAME - 3001;   /* no landing works: give up (and bring it home) */
+            else if (waited > 900 && waited % 900 < 15) {
+                d->col_tries++;
+                CellXY at = object_cell(t), alt = { 0, 0 };
+                int best_d = 0x7FFFFFFF;
+                for (int dy = -5; dy <= 5; dy++)
+                    for (int dx = -5; dx <= 5; dx++) {
+                        CellXY c = { (short)(target.X + dx), (short)(target.Y + dy) };
+                        BYTE *cell = dir_cell(c);
+                        int land = cell ? FIELD(cell, C_LANDTYPE, int) : 2, dd = dir_dist2(c, at);
+                        if (cell && land != 2 && land != 3 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
+                            && dir_dist2(c, d->col_landing) >= 2 * 2 && dd < best_d) {
+                            best_d = dd;
+                            alt = c;
+                        }
+                    }
+                if (alt.X) {
+                    logmsg("director: house %d frame %d: can't unload at %d,%d, trying %d,%d", FIELD(house, 0x30, int),
+                           CURRENT_FRAME, d->col_landing.X, d->col_landing.Y, alt.X, alt.Y);
+                    d->col_landing = alt;
+                    d->col_state = 2;
+                    dir_order(t, MISSION_MOVE, NULL, dir_cell(alt));
+                }
+            } else if (!dir_recent_order(t, (BYTE *)4, 300))
+                dir_order(t, MISSION_UNLOAD, NULL, NULL);
             return;
+        }
         if (e && dir_object_listed(tv, e) && oil_live(e)) {
             dir_order(e, MISSION_CAPTURE, d->col_target, NULL);
             if (t)

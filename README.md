@@ -1385,6 +1385,33 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   unit count, defence value, buildings, plan and posture.
   - The message list holds 12 lines instead of 6 with Reveal map on. The `push 6` at 0x4A8BAF
     before `MessageListClass::Init` is patched; the engine's buffers hold 14.
+- **Placement keeps passages and levels** (from the user's screenshots, Isolation):
+  - A spot is rejected where the building would cut a passage, such as a ramp or a gap between
+    cliffs: with its cells blocked, the open cells around it no longer all connect within 10 cells.
+    Footprints come from `BuildingTypeClass::Foundation` (+0xEF0). It applies to the stock planner's
+    spots for director houses, to the fallback spot and to refineries by the ore; walls are exempt.
+  - Fallback spots must be on the base's level and refinery spots on the ore's level, within one
+    height level (104 leptons). The nearest free spot by distance had been down the cliff on the
+    beach: harvesters had to go the long way round, and the refineries narrowed the ramp.
+- **Convoys dock on a beach** (land type 6, water within 2 cells) near the rally that the army can
+  walk to, re-picked every 3,000 frames. Docking at the rally wedged transports in among the waiting
+  army on cliff-top bases. A transport that makes no headway for 900 frames loads where it stands
+  when docking. At sea or homeward it gets its order again, and if it was sailing for over 1,800
+  frames it unloads where it is.
+- **Colonising transports come back.** One that couldn't unload by the island sat there for good
+  with the engineer inside: convoys skip loaded transports. Now the unload order repeats every 300
+  frames, and after 900 another landing cell is tried, up to 3. When the attempt is given up (also
+  as soon as another house takes the target), the transport drives to the dock and unloads.
+- **Bridge repairs:** an engineer that disappeared on its way to a hut was counted as having gone
+  in, so two killed engineers marked a repairable bridge as unmendable for the rest of the match.
+  The army then waited for a stock engineer to fix it. Now only an engineer last seen within 3 cells
+  of the hut counts. One lost on the way is replaced, and none is sent while armed enemy units are
+  within 7 cells of the hut. Repair log lines now carry frame numbers.
+- **Magnetron victims left hanging** (all Magnetrons, stock AI ones included): a vehicle hovering or
+  cruising in place on the jumpjet locomotor a Magnetron gave it, with no Magnetron attached, is
+  set to come down. Types that fly by design are left alone (`JumpJet=` +0xD94, `BalloonHover=`
+  +0xD6A on the type). The fix used to require the victim to still be flagged as attacked by a
+  Magnetron, which the stock drops clear.
 - **Bench:**
   - A crash report (`except.txt`) newer than the match ends it at once. Before, the hung game sat
     out the one-hour timeout.

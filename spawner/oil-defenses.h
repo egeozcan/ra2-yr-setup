@@ -230,6 +230,7 @@ static int GFASTCALL oil_build_update(BYTE *house, void *unused)
 
 static int dir_outpost_place(BYTE *house, BYTE *type, CellXY *out);   /* director.h */
 static void dir_note_placement(BYTE *house, BYTE *type, CellXY *out);   /* director.h */
+static void dir_check_passage(BYTE *house, BYTE *type, CellXY *out);   /* director.h */
 
 static CellXY *GFASTCALL oil_find_location(BYTE *house, void *unused, CellXY *out,
                                           BYTE *type, void *callback, DWORD extra)
@@ -252,6 +253,7 @@ static CellXY *GFASTCALL oil_find_location(BYTE *house, void *unused, CellXY *ou
     }
     /* Lost oil or blocked terrain: finish at a normal base location. */
     CellXY *r = oil_place_original(house, out, type, callback, extra);
+    dir_check_passage(house, type, out);   /* a spot that cuts a passage: another one */
     dir_note_placement(house, type, out);
     return r;
 }

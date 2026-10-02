@@ -384,6 +384,9 @@ static char GFASTCALL spawn_start(char unused)
 #define J_DEST        0x3C    /* CoordStruct DestinationCoords */
 #define J_ISMOVING    0x48
 #define J_STATE       0x4C    /* 2 hovering, 3 cruising, 4 descending */
+#define U_TYPE        0x6C4   /* UnitClass: UnitTypeClass* */
+#define TT_JUMPJET    0xD94   /* TechnoTypeClass: JumpJet= (stored at 0x715200 by LoadFromINI) */
+#define TT_BALLOONHOVER 0xD6A /* TechnoTypeClass: BalloonHover= (stored at 0x714DA9) */
 
 typedef struct { int X, Y, Z; } Coord;
 typedef void (GTHISCALL *release_fn)(BYTE *, char);
@@ -595,8 +598,19 @@ static void carry_update(BYTE *unit)
     /* Every drop from the carry hover lands here (Stop, the Magnetron dying, ...): ReleaseLocomotor unlinks the
      * victim, but the Jumpjet Process (0x54AEC0) skips a locomotor that is Hovering and not moving, so neither the
      * fall nor the landing would run. Descending with IsMoving set is what the stock arrival drop leaves behind. */
-    if (FIELD(unit, O_ATTACKEDBYLOCO, char) && !FIELD(unit, O_LOCOSOURCE, BYTE *) && (loco = victim_jumpjet(unit))
-        && FIELD(loco, J_STATE, int) == 2 && !FIELD(loco, J_ISMOVING, char)) {
+    /* The same for AI Magnetrons' victims (stock pull and drop) and for victims a Magnetron let go of in other
+     * ways: hovering or cruising in place on the Jumpjet locomotor a Magnetron gave them, with no Magnetron, and
+     * no longer flagged as attacked by one. They hung in the air for good. Units that fly by design (JumpJet= or
+     * BalloonHover= on the type: Rocketeers, Siege Choppers, Kirovs) are left alone. */
+    BYTE *utype = FIELD(unit, U_TYPE, BYTE *);
+    if (!FIELD(unit, O_LOCOSOURCE, BYTE *) && utype && !utype[TT_JUMPJET] && !utype[TT_BALLOONHOVER]
+        && (loco = victim_jumpjet(unit)) && (FIELD(loco, J_STATE, int) == 2 || FIELD(loco, J_STATE, int) == 3)
+        && !FIELD(loco, J_ISMOVING, char)) {
+        static int last_log;
+        if (CURRENT_FRAME - last_log > 300) {
+            last_log = CURRENT_FRAME;
+            logmsg("magnetron: a %s left hanging in the air drops (state %d)", (char *)utype + 0x24, FIELD(loco, J_STATE, int));
+        }
         FIELD(loco, J_STATE, int) = 4;
         FIELD(loco, J_ISMOVING, char) = 1;
     }
