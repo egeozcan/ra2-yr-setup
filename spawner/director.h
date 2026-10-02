@@ -3364,7 +3364,10 @@ static void dir_ferry(BYTE *house, DirState *d)
                 ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_AREA_GUARD, 1);
             }
     }
-    if (bench_file && npool > 2 * nlate + 4) {   /* called but not walking over: what they do instead */
+    if (nlate && bench_file)
+        logmsg("director: house %d frame %d: %d left walking to board, at%s (dock %d,%d, rally %d,%d)",
+               FIELD(house, 0x30, int), CURRENT_FRAME, nlate, late, d->dock.X, d->dock.Y, d->rally.X, d->rally.Y);
+    if (bench_file && npool > 2 * nlate + 4) {   /* left on this side: what they do */
         len = 0;
         for (int n = 0; n < npool && n < 6 && len < 150; n++) {
             BYTE *o = pool[n];
@@ -3373,11 +3376,8 @@ static void dir_ferry(BYTE *house, DirState *d)
             CellXY c = object_cell(o);
             len += sprintf(late + len, " %.6s@%d,%d/m%d", (char *)dir_type(o) + T_ID, c.X, c.Y, FIELD(o, COMBAT_MISSION, int));
         }
-        logmsg("director: house %d frame %d: %d called stay put:%s", FIELD(house, 0x30, int), CURRENT_FRAME, npool, late);
+        logmsg("director: house %d frame %d: %d left in the pool, nearest:%s", FIELD(house, 0x30, int), CURRENT_FRAME, npool, late);
     }
-    if (nlate && bench_file)
-        logmsg("director: house %d frame %d: %d left walking to board, at%s (dock %d,%d, rally %d,%d)",
-               FIELD(house, 0x30, int), CURRENT_FRAME, nlate, late, d->dock.X, d->dock.Y, d->rally.X, d->rally.Y);
 }
 
 /* ---- navy ----
