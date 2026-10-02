@@ -3234,7 +3234,8 @@ static void dir_ferry(BYTE *house, DirState *d)
     if (!d->convoy_since)
         d->convoy_since = CURRENT_FRAME;
     /* Call the nearest idle ground units on this side, each to the docked transport with the most room. */
-    int called = 0, distant = 0, busy = 0, room = 0;
+    int called = 0, distant = 0, busy = 0, room = 0, npool = 0, pool_dist[256];
+    BYTE *pool[256];
     for (int k = 0; k < DIR_CONVOY; k++)
         if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k])
             room += 8 - FIELD(d->ferry[k], T_PASSENGERS, int);
@@ -3252,12 +3253,26 @@ static void dir_ferry(BYTE *house, DirState *d)
             continue;
         }
         CellXY c = object_cell(o);
-        if (dir_dist2(c, d->dock) > 40 * 40) {
+        int dist = dir_dist2(c, d->dock);
+        if (dist > 40 * 40) {
             distant++;
             continue;
         }
-        if (called >= room)
-            continue;
+        if (npool < (int)(sizeof pool / sizeof *pool)) {
+            pool[npool] = o;
+            pool_dist[npool++] = dist;
+        }
+    }
+    /* nearest first: called in array order, units from the back of the army pushed through the
+     * rest down a ramp to the beach and the whole crowd jammed there */
+    for (int n = 0; n < npool && called < room; n++) {
+        int pick = n;
+        for (int j = n + 1; j < npool; j++)
+            if (pool_dist[j] < pool_dist[pick])
+                pick = j;
+        BYTE *o = pool[pick];
+        pool[pick] = pool[n];
+        pool_dist[pick] = pool_dist[n];
         BYTE *best = NULL;
         int best_room = 0;
         for (int k = 0; k < DIR_CONVOY; k++) {
@@ -4017,20 +4032,30 @@ static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out)
 /* The stock planner's spot would cut a passage (a ramp, a gap between cliffs): the director's own
  * nearest spot that doesn't, or none (the building waits) when there is no such spot. Walls are
  * meant to close gaps and are left alone. */
+#define BT_FACTORY 0xEB8   /* BuildingTypeClass::Factory, an RTTI (read at 0x450326); 0 for none */
 static void dir_check_passage(BYTE *house, BYTE *type, CellXY *out)
 {
     if (out->X <= 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
-        || in_list("GAWALL,NAWALL,YAWALL,GAFWLL", (char *)type + T_ID) || !dir_blocks_passage(type, *out))
+        || in_list("GAWALL,NAWALL,YAWALL,GAFWLL", (char *)type + T_ID))
+        return;
+    /* A factory (or a plant or lab) down the cliff from the base: new units climbed the ramp
+     * against the army coming down it, and the beach below filled up where transports dock.
+     * Refineries go by the ore, defences where they're put, shipyards on the water. */
+    int off_level = !type[TT_NAVAL] && (FIELD(type, BT_FACTORY, int)
+        || in_list("GAPOWR,NAPOWR,NANRCT,YAPOWR,GATECH,NATECH,YATECH,AMRADR,NARADR,NAPSIS,GAOREP,YAGRND,NACLON",
+                   (char *)type + T_ID))
+        && abs(dir_height(*out) - dir_height(dir_house_center(house))) > 104;
+    if (!off_level && !dir_blocks_passage(type, *out))
         return;
     CellXY was = *out;
     if (!dir_fallback_spot(house, type, out))
-        out->X = out->Y = 0;
+        *out = off_level && !dir_blocks_passage(type, was) ? was : (CellXY){ 0, 0 };   /* off level beats never */
     static int last_log[32];
     int idx = FIELD(house, 0x30, int) & 31;
     if (CURRENT_FRAME - last_log[idx] > 600) {
         last_log[idx] = CURRENT_FRAME;
-        logmsg("director: house %d frame %d: %.24s at %d,%d would cut a passage, %s %d,%d", idx, CURRENT_FRAME,
-               (char *)type + T_ID, was.X, was.Y, out->X ? "placed at" : "no other spot", out->X, out->Y);
+        logmsg("director: house %d frame %d: %.24s at %d,%d would %s, %s %d,%d", idx, CURRENT_FRAME,
+               (char *)type + T_ID, was.X, was.Y, off_level ? "be off the base's level" : "cut a passage", out->X ? "placed at" : "no other spot", out->X, out->Y);
     }
 }
 
