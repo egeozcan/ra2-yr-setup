@@ -1415,6 +1415,33 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
 - **Air cover for Yuri's fleet.** Yuri has no anti-air ship, but the Floating Disc's laser hits
   aircraft (`AA=yes`). While enemy aircraft over Yuri's ships are worth 1,500+, up to three Discs leave
   the army to fly over the fleet; a house without one builds one first.
+- **Construction yards flee.** With MCV repacks on, a director house's construction yard packs up
+  and its MCV drives off to set up elsewhere, when either:
+  - it is under 40% health and the armed enemy units within 10 cells outvalue ours there (and are worth
+    2,000+);
+  - or it is under 70% and they outvalue ours 3 to 1 plus 3,000. Packing up takes a while, and a
+    yard at 40% under a big attack died in the middle of it.
+
+  **Where to:** 20–35 cells off, in the engine's movement zone of the ground beside the yard, as far
+  from armed enemies as can be (at least 15 cells). A yard boxed in by its own base, which no ground
+  unit could leave, stays and fights.
+
+  **How:**
+  - Packing up is the selling mission with the yard's `Focus` set. `Mission_Selling` asks
+    `0x50B730` at five places (0x449D29, 0x44A554, 0x44A802, 0x44A912, 0x44A99D) whether the owner
+    may undeploy. In a multiplayer session that means "is human", so an AI yard would be sold
+    instead; those calls also say yes for a director house's yard that was just told to flee.
+  - `BuildingClass::Sell` does nothing unless +0x6E9 is set. Building setup sets it only when the
+    type's build-up art is there (0x442CCF), so buildings the starting base puts down never had it,
+    and could never be sold or packed up. The director now loads the art and sets the flag first,
+    for every sale (`dir_sell`), the walled-in check's included.
+  - The stock AI deploys a yardless MCV where it stands: `UnitClass::AI` puts it on Hunt (0x73645B,
+    behind the 0x50B730 call at 0x736424), and Hunt deploys. While the house's MCV flees, that call
+    says yes, and `UnitClass::TryToDeploy` (0x7393C0, hooked at its entry) refuses anywhere but the
+    site. The move order is repeated whenever the MCV is on another mission.
+  - **Tested** (bench switch `TestEscape=1`: AI house 1's yard flees at frame 600): the yard packed
+    up at frame 640, the MCV drove 18 cells and the yard stood again by frame 2,080. Before the
+    movement-zone check the chosen spot couldn't be driven to, and the MCV stayed put.
 - **Magnetron victims left hanging** (all Magnetrons, stock AI ones included): a vehicle hovering or
   cruising in place on the jumpjet locomotor a Magnetron gave it, with no Magnetron attached, is
   set to come down. Types that fly by design are left alone (`JumpJet=` +0xD94, `BalloonHover=`

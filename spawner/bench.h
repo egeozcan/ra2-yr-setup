@@ -26,7 +26,7 @@ static void bench_row_extra(BYTE *house);
 static int bench_fleet;
 static int bench_limit, bench_next, bench_over, bench_players, reveal_map, reveal_next, bench_camera = -1, bench_camera_x,
     bench_camera_y;
-static int bench_force_island, bench_force_expand;   /* tests: force ferries / expansion */   /* test: treat every enemy as cut off by water, to exercise ferries */
+static int bench_force_island, bench_force_expand, bench_test_escape;   /* tests: force ferries / expansion */   /* test: treat every enemy as cut off by water, to exercise ferries */
 static void bench_camera_update(void);
 static void bench_kills_dump(void);
 static DWORD bench_start_ms;
@@ -56,6 +56,7 @@ static void bench_init(void)
     bench_camera_y = ini_int("Settings", "CameraY", 0);
     bench_force_island = ini_int("Settings", "ForceIsland", 0);
     bench_force_expand = ini_int("Settings", "ForceExpand", 0);
+    bench_test_escape = ini_int("Settings", "TestEscape", 0);   /* AI house 1's yard flees at frame 600 */
     bench_file = fopen("yspawn-bench.csv", "w");
     if (!bench_file) {
         logmsg("benchmark: could not open yspawn-bench.csv");

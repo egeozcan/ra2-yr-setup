@@ -44,6 +44,9 @@
 #define CELL_ORE_VALUE 0x485020            /* CellClass::GetContainedTiberiumValue */
 static int dir_is_engineer(BYTE *obj);
 static int dir_wall_cell(BYTE *cell);
+static int dir_zone(CellXY c);
+static int dir_is_land(CellXY c);
+static void dir_announce(BYTE *house, const char *fmt, ...);
 static int dir_height(CellXY c);
 static int dir_blocks_passage(BYTE *type, CellXY tl);
 typedef struct DirState DirState;
@@ -125,6 +128,7 @@ struct DirState {
     int enemy_subs;                     /* enemy submarines seen (Typhoons, Boomers) */
     int fleet_air;                      /* enemy aircraft over our ships */
     CellXY fleet_at;                    /* the fleet's centre */
+    int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
     int cover_frame;
 };
@@ -172,6 +176,25 @@ static int dir_factory_cash_pct(BYTE *house)
 {
     int idx = FIELD(house, 0x30, int);
     return idx >= 0 && idx < 32 && dir_state[idx].house == house ? dir_levers(&dir_state[idx])->factory_cash_pct : 100;
+}
+
+/* Sell (or, for a building with UndeploysInto, pack up). BuildingClass::Sell (0x447110) does nothing
+ * unless +0x6E9 is set, which building setup (0x442CCF) sets only when the type's build-up art is
+ * there (type vtable +0xC0, after 0x465AF0 loads it). Buildings the starting base puts down when the
+ * scenario loads miss it, so they could never be sold or packed up: load it and set it the same way. */
+static void dir_sell(BYTE *b)
+{
+    BYTE *type = FIELD(b, B_TYPE, BYTE *);
+    if (!b[0x6E9] && type) {
+        ((void (GTHISCALL *)(BYTE *))0x465AF0)(type);
+        if (((int (GTHISCALL *)(BYTE *))VFUNC(type, 0xC0))(type))
+            b[0x6E9] = 1;
+    }
+    int before = FIELD(b, COMBAT_MISSION, int);
+    ((void (GTHISCALL *)(BYTE *, int))VFUNC(b, VT_SELL))(b, 1);
+    if (bench_file)
+        logmsg("director: sell %.24s: flag %d buildup %d mission %d -> %d", type ? (char *)type + T_ID : "?", b[0x6E9],
+               type ? ((int (GTHISCALL *)(BYTE *))VFUNC(type, 0xC0))(type) : -1, before, FIELD(b, COMBAT_MISSION, int));
 }
 
 static int dir_whatami(BYTE *obj)
@@ -1434,7 +1457,7 @@ static void dir_unstick(BYTE *house, DirState *d, BYTE *unit, CellXY at)
     if (!best)
         return;
     d->next_unstick = CURRENT_FRAME + 2400;
-    ((void (GTHISCALL *)(BYTE *, int))VFUNC(best, VT_SELL))(best, 1);
+    dir_sell(best);
 }
 
 static void dir_track_stuck(BYTE *house, DirState *d, BYTE *unit, CellXY at, CellXY goal)
@@ -2775,6 +2798,171 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
     return 1;
 }
 
+/* ---- construction yards flee ----
+ * With MCV repacks on, a construction yard about to fall packs up and its MCV drives off to set up
+ * again elsewhere. Packing up is the selling mission (BuildingClass::Mission_Selling undeploys a
+ * yard with UndeploysInto when MCVRedeploy is on, its Focus is set and 0x50B730 says the owner may);
+ * 0x50B730 answers "human" in a multiplayer session, so a computer player's yard would be sold
+ * instead. dir_may_undeploy, patched in at that call (0x449D29), also says yes for a director house
+ * whose yard was just told to flee. Mission_Selling asks at five places (patched at each). */
+#define SESSION_MCV_REDEPLOY (*(BYTE *)0xA8B320)
+static int dir_escape_house[32];   /* frame a yard of this house was told to flee */
+
+static char GFASTCALL dir_may_undeploy(BYTE *house, void *unused)
+{
+    (void)unused;
+    if (((char (GTHISCALL *)(BYTE *))0x50B730)(house))
+        return 1;
+    int idx = FIELD(house, 0x30, int);
+    return idx >= 0 && idx < 32 && dir_escape_house[idx] && CURRENT_FRAME - dir_escape_house[idx] < 900;
+}
+
+/* The stock AI deploys a yardless MCV where it stands, at once: the fled yard was back on its old
+ * spot within 80 frames. UnitClass::TryToDeploy (0x7393C0) is hooked at its entry (its first five bytes,
+ * sub esp,18h / push ebx / push ebp, run in a trampoline): a fleeing house's MCV deploys only at its site. */
+#define UNIT_TRY_DEPLOY 0x7393C0
+static char (GTHISCALL *dir_try_deploy_original)(BYTE *);
+static char GFASTCALL dir_try_deploy(BYTE *unit, void *unused)
+{
+    (void)unused;
+    BYTE *house = FIELD(unit, O_OWNER, BYTE *);
+    int idx = house ? FIELD(house, 0x30, int) : -1;
+    if (idx >= 0 && idx < 32 && dir_state[idx].house == house && dir_state[idx].escape_frame
+        && CURRENT_FRAME - dir_state[idx].escape_frame < 6000 && in_list(dir_mcvs, (char *)dir_type(unit) + T_ID)
+        && dir_dist2(object_cell(unit), dir_state[idx].site) > 3 * 3) {
+        if (bench_file && CURRENT_FRAME % 60 < 15)
+            logmsg("director: house %d frame %d: fleeing MCV kept from deploying at %d,%d", idx, CURRENT_FRAME,
+                   object_cell(unit).X, object_cell(unit).Y);
+        return 0;
+    }
+    return dir_try_deploy_original(unit);
+}
+
+/* UnitClass::AI puts a computer player's MCV on Hunt when its house has no construction yard (0x73645B),
+ * and Hunt deploys an MCV where it stands: the fled yard was back on its spot 16 frames later. The rule
+ * skips human players through 0x50B730 (call at 0x736424); while a house's MCV flees, that answers yes
+ * too, until it is set up again at its site. */
+static char GFASTCALL dir_mcv_left_alone(BYTE *house, void *unused)
+{
+    (void)unused;
+    if (((char (GTHISCALL *)(BYTE *))0x50B730)(house))
+        return 1;
+    int idx = FIELD(house, 0x30, int);
+    return idx >= 0 && idx < 32 && dir_state[idx].house == house && dir_state[idx].escape_frame
+        && CURRENT_FRAME - dir_state[idx].escape_frame < 6000;
+}
+
+/* Ground units can get from beside the building to 12+ cells away, around buildings: a yard packed
+ * in among its own base turns into an MCV that can't get out. */
+static int dir_way_out(BYTE *b, int r)
+{
+    enum { R = 20, W = 2 * R + 1 };
+    static unsigned char seen[W * W];
+    static CellXY queue[W * W];
+    memset(seen, 0, sizeof seen);
+    CellXY at = object_cell(b);
+    int head = 0, tail = 0;
+    queue[tail++] = at;
+    seen[R * W + R] = 1;
+    while (head < tail) {
+        CellXY c = queue[head++];
+        if (abs(c.X - at.X) >= r || abs(c.Y - at.Y) >= r)
+            return 1;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                CellXY n = { (short)(c.X + dx), (short)(c.Y + dy) };
+                int bx = n.X - at.X + R, by = n.Y - at.Y + R;
+                if ((!dx && !dy) || bx < 0 || by < 0 || bx >= W || by >= W || seen[by * W + bx])
+                    continue;
+                seen[by * W + bx] = 1;
+                BYTE *cell = dir_cell(n);
+                if (!cell || FIELD(cell, C_LANDTYPE, int) == 2 || FIELD(cell, C_LANDTYPE, int) == 3 || dir_wall_cell(cell))
+                    continue;
+                if ((FIELD(cell, C_OCCUPATION, DWORD) & 0x80) && ((BYTE *(GTHISCALL *)(BYTE *))CELL_GET_BUILDING)(cell) != b)
+                    continue;
+                queue[tail++] = n;
+            }
+    }
+    return 0;
+}
+
+static void dir_yard_escape(BYTE *house, DirState *d)
+{
+
+    if (!SESSION_MCV_REDEPLOY || CURRENT_FRAME < d->next_escape || (d->escape_frame && CURRENT_FRAME - d->escape_frame < 3000))
+        return;
+    d->next_escape = CURRENT_FRAME + 60;
+    DynVec *bv = OIL_BUILDING_ARRAY, *tv = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < bv->Count; i++) {
+        BYTE *b = bv->Items[i], *type;
+        if (!oil_live(b) || FIELD(b, O_OWNER, BYTE *) != house || !(type = dir_type(b))
+            || !in_list("GACNST,NACNST,YACNST", (char *)type + T_ID)
+            || (FIELD(b, O_HEALTH, int) * 10 >= FIELD(type, OT_STRENGTH, int) * 7 && !bench_test_escape))
+            continue;
+        CellXY at = object_cell(b);
+        int theirs = 0, ours = 0;
+        for (int k = 0; k < dir_enemy_count; k++)
+            if (dir_enemies[k].armed && !dir_enemies[k].building && dir_dist2(dir_enemies[k].at, at) <= 10 * 10)
+                theirs += dir_enemies[k].value;
+        for (int k = 0; k < tv->Count; k++) {
+            BYTE *o = tv->Items[k];
+            if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) != 6 && dir_armed(o)
+                && dir_dist2(object_cell(o), at) <= 10 * 10)
+                ours += dir_cost(dir_type(o));
+        }
+        /* under 40%, outgunned; under 70%, hopelessly (packing up takes a while, and a yard at 40% under
+         * a big attack died in the middle of it) */
+        int low = FIELD(b, O_HEALTH, int) * 10 < FIELD(type, OT_STRENGTH, int) * 4;
+        int test = bench_test_escape && CURRENT_FRAME >= 600 && FIELD(house, 0x30, int) == 1;   /* bench test */
+        if (!test && (theirs < 2000 || theirs <= ours || (!low && theirs < ours * 3 + 3000)))
+            continue;
+        bench_test_escape = 0;
+        /* where to: 20-35 cells off, on land reachable from here (and in the engine's movement zone of
+         * the ground beside the yard), as far from armed enemies as can be */
+        dir_fill_land(at);
+        int zone = -1;
+        for (int k = 0; k < 16 && zone < 0; k++) {
+            CellXY c = { (short)(at.X - 2 + k % 6), (short)(at.Y + 3) };
+            BYTE *cell = dir_cell(c);
+            if (cell && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80))
+                zone = dir_zone(c);
+        }
+        CellXY best = { 0, 0 };
+        int best_d = -1;
+        for (int a = 0; a < 16; a++)
+            for (int r = 20; r <= 35; r += 5) {
+                static const signed char dx16[16] = { 10, 9, 7, 4, 0, -4, -7, -9, -10, -9, -7, -4, 0, 4, 7, 9 };
+                static const signed char dy16[16] = { 0, 4, 7, 9, 10, 9, 7, 4, 0, -4, -7, -9, -10, -9, -7, -4 };
+                CellXY c = { (short)(at.X + dx16[a] * r / 10), (short)(at.Y + dy16[a] * r / 10) };
+                BYTE *cell = dir_cell(c);
+                if (!cell || !dir_is_land(c) || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || dir_zone(c) != zone)
+                    continue;
+                int nearest = 0x7FFFFFFF;
+                for (int k = 0; k < dir_enemy_count; k++)
+                    if (dir_enemies[k].armed) {
+                        int dd = dir_dist2(dir_enemies[k].at, c);
+                        nearest = dd < nearest ? dd : nearest;
+                    }
+                if (nearest > best_d) {
+                    best_d = nearest;
+                    best = c;
+                }
+            }
+        if (!best.X || best_d < 15 * 15 || !dir_way_out(b, 12))
+            continue;   /* nowhere safe to go, or boxed in by its own base: it stays and fights */
+        logmsg("director: house %d frame %d: %.24s at %d,%d is falling (%d vs %d), packing up for %d,%d",
+               FIELD(house, 0x30, int), CURRENT_FRAME, (char *)type + T_ID, at.X, at.Y, theirs, ours, best.X, best.Y);
+        dir_announce(house, "construction yard packing up to escape");
+        FIELD(b, T_FOCUS, BYTE *) = dir_cell(best);
+        dir_escape_house[FIELD(house, 0x30, int) & 31] = CURRENT_FRAME;
+        dir_sell(b);
+        d->escape_frame = CURRENT_FRAME;
+        d->site = best;
+        d->deploy_tries = 0;
+        return;
+    }
+}
+
 static void dir_expansion(BYTE *house, DirState *d)
 {
     int yards = combat_building_count(house, "GACNST,NACNST,YACNST");
@@ -2787,7 +2975,15 @@ static void dir_expansion(BYTE *house, DirState *d)
             mcv = o;
     }
     /* Drive an MCV we built to the site and deploy. Without a yard the stock AI redeploys it at home. */
-    if (mcv && yards && d->site.X > 0) {
+    int escaping = d->escape_frame && CURRENT_FRAME - d->escape_frame < 6000;
+    if (escaping && yards && !mcv && CURRENT_FRAME - d->escape_frame > 300) {
+        logmsg("director: house %d frame %d: construction yard set up again near %d,%d", FIELD(house, 0x30, int),
+               CURRENT_FRAME, d->site.X, d->site.Y);
+        d->escape_frame = 0;
+        d->site = (CellXY){ 0, 0 };
+        escaping = 0;
+    }
+    if (mcv && (yards || escaping) && d->site.X > 0) {
         d->want_mcv = 0;
         CellXY at = object_cell(mcv);
         BYTE *cell = dir_cell(d->site);
@@ -2812,8 +3008,13 @@ static void dir_expansion(BYTE *house, DirState *d)
                 logmsg("director: house %d deploying expansion MCV at %d,%d (mission %d)", FIELD(house, 0x30, int),
                        at.X, at.Y, FIELD(mcv, COMBAT_MISSION, int));
             }
-        } else if (cell && !dir_recent_order(mcv, cell, 450))
+        } else if (cell && (!dir_recent_order(mcv, cell, 450) || (escaping && FIELD(mcv, COMBAT_MISSION, int) != MISSION_MOVE))) {
+            /* fleeing, the stock AI tells a yardless MCV to deploy where it stands: on the move again */
             dir_order(mcv, MISSION_MOVE, NULL, cell);
+            if (escaping && bench_file && CURRENT_FRAME % 300 < 15)
+                logmsg("director: house %d frame %d: MCV at %d,%d heading for %d,%d", FIELD(house, 0x30, int), CURRENT_FRAME,
+                       at.X, at.Y, d->site.X, d->site.Y);
+        }
         return;
     }
     if (CURRENT_FRAME < d->next_site)
@@ -3751,6 +3952,17 @@ static int dir_blocks_passage(BYTE *type, CellXY tl)
             if (!DIR_IN_FOOT(c) && DIR_OPEN(c, cell) && nring < 64)
                 ring[nring++] = c;
         }
+    /* by a ramp: walkable ground within 2 cells of it at another height (half a level or more; cliffs
+     * are rock, which isn't walkable). A building at a ramp's top or bottom squeezed the only way down
+     * to a crawl even where it didn't cut it. */
+    int level = dir_height(tl);
+    for (int y = tl.Y - 2; y <= tl.Y + h + 1; y++)
+        for (int x = tl.X - 2; x <= tl.X + w + 1; x++) {
+            CellXY c = { (short)x, (short)y };
+            BYTE *cell = dir_cell(c);
+            if (!DIR_IN_FOOT(c) && DIR_OPEN(c, cell) && abs(dir_height(c) - level) >= 52)
+                return 1;
+        }
     if (nring < 2)
         return 0;
     memset(seen, 0, sizeof seen);
@@ -4441,7 +4653,7 @@ static void dir_slave_miners(BYTE *house, DirState *d)
             continue;
         logmsg("director: house %d frame %d: Slave Miner at %d,%d packs up (ore around it %d, at %d,%d %d)",
                FIELD(house, 0x30, int), CURRENT_FRAME, c.X, c.Y, here, site.X, site.Y, there);
-        ((void (GTHISCALL *)(BYTE *, int))VFUNC(b, VT_SELL))(b, 1);
+        dir_sell(b);
         dir_miner_seen[k].seen = CURRENT_FRAME;
         d->miner_from = c;
         d->miner_site = site;
@@ -4880,8 +5092,10 @@ static void dir_update(BYTE *house)
     if (CURRENT_FRAME % 150 < 15 && (director_enabled(house) & DIR_F_ENGINEERS))
         dir_engineers(house, d);
     dir_economy(house, d);
-    if (director_enabled(house) & DIR_F_ECONOMY)
+    if (director_enabled(house) & DIR_F_ECONOMY) {
         dir_slave_miners(house, d);
+        dir_yard_escape(house, d);
+    }
     dir_expansion(house, d);
     dir_ferry(house, d);
     /* Allies need a Robot Control Center before Robot Tanks can cross water. */
@@ -4904,7 +5118,7 @@ static void patch_director(void)
     if (!patch_checked("director unit production", DIR_UNIT_PRODUCTION, unit, sizeof unit)
         || !patch_checked("director infantry production", DIR_INF_PRODUCTION, unit, sizeof unit))
         return;
-    BYTE *tramp = VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    BYTE *tramp = VirtualAlloc(NULL, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!tramp) {
         logmsg("director: could not allocate trampolines, not patched");
         return;
@@ -4919,6 +5133,24 @@ static void patch_director(void)
     patch_rel(DIR_UNIT_PRODUCTION, 0xE9, (DWORD)dir_unit_production);
     patch(DIR_INF_PRODUCTION + 5, (const BYTE[]){ 0x90 }, 1);
     patch_rel(DIR_INF_PRODUCTION, 0xE9, (DWORD)dir_inf_production);
+    const BYTE hunt_call[5] = { 0xE8, 0x07, 0x53, 0xDD, 0xFF };   /* call 0x50B730 at 0x736424 */
+    if (patch_checked("director escape hunt", 0x736424, hunt_call, sizeof hunt_call))
+        patch_rel(0x736424, 0xE8, (DWORD)dir_mcv_left_alone);
+    const BYTE deploy_entry[] = { 0x83, 0xEC, 0x18, 0x53, 0x55 };
+    if (patch_checked("director escape deploy", UNIT_TRY_DEPLOY, deploy_entry, sizeof deploy_entry)) {
+        memcpy(tramp + 32, deploy_entry, sizeof deploy_entry);
+        patch_rel((DWORD)tramp + 32 + sizeof deploy_entry, 0xE9, UNIT_TRY_DEPLOY + sizeof deploy_entry);
+        dir_try_deploy_original = (char (GTHISCALL *)(BYTE *))(tramp + 32);
+        patch_rel(UNIT_TRY_DEPLOY, 0xE9, (DWORD)dir_try_deploy);
+    }
+    /* every "may the owner undeploy" call in Mission_Selling (0x449C30) */
+    static const DWORD undeploy_calls[] = { 0x449D29, 0x44A554, 0x44A802, 0x44A912, 0x44A99D };
+    for (unsigned i = 0; i < sizeof undeploy_calls / sizeof undeploy_calls[0]; i++) {
+        DWORD at = undeploy_calls[i], rel = 0x50B730 - (at + 5);
+        const BYTE call[5] = { 0xE8, (BYTE)rel, (BYTE)(rel >> 8), (BYTE)(rel >> 16), (BYTE)(rel >> 24) };
+        if (patch_checked("director yard escape", at, call, sizeof call))
+            patch_rel(at, 0xE8, (DWORD)dir_may_undeploy);
+    }
     const BYTE pick_call[] = { 0xE8, 0x4E, 0xBA, 0x0A, 0x00 };   /* call 0x4FBD80 */
     if (patch_checked("director naval yard orders", DIR_FACTORY_PICK_CALL, pick_call, sizeof pick_call))
         patch_rel(DIR_FACTORY_PICK_CALL, 0xE8, (DWORD)dir_factory_pick);

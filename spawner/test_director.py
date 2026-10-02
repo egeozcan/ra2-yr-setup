@@ -177,6 +177,14 @@ class HookTests(unittest.TestCase):
                          bytes([0x8B, 0x96, 0x20, 0x05, 0, 0, 0x8B, 0x8E, 0x1C, 0x02, 0, 0, 0x53,
                                 0x8B, 0x82, 0xB8, 0x0E, 0, 0, 0x50, 0xE8, 0x4E, 0xBA, 0x0A, 0x00]))
         self.assertEqual(image[0x4FBDC3 - base:0x4FBDC6 - base], bytes([0xC2, 0x08, 0x00]))
+        # Construction yards fleeing: every "may the owner undeploy" call in Mission_Selling and the AI's
+        # yardless-MCV Hunt rule call 0x50B730 (owner in ECX); TryToDeploy starts sub esp,18h / push ebx / push ebp
+        for site in (0x449D29, 0x44A554, 0x44A802, 0x44A912, 0x44A99D, 0x736424):
+            rel = (0x50B730 - (site + 5)) & 0xFFFFFFFF
+            self.assertEqual(image[site - base:site + 5 - base], bytes([0xE8]) + rel.to_bytes(4, 'little'), hex(site))
+        self.assertEqual(image[0x7393C0 - base:0x7393C5 - base], bytes([0x83, 0xEC, 0x18, 0x53, 0x55]))
+        # BuildingClass::Sell does nothing unless +0x6E9 (build-up art present) is set
+        self.assertEqual(image[0x447113 - base:0x447119 - base], bytes([0x8A, 0x86, 0xE9, 0x06, 0, 0]))
 
 
 if __name__ == '__main__':
