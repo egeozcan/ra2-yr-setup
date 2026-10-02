@@ -1068,6 +1068,47 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   capacity with garrison infantry. The order gives the bunker as both target and destination; the
   destination alone, which works for civilian buildings, left them empty. With no garrison infantry
   free, the barracks trains some (GI, Conscript, Initiate).
+  - **No friendly fire.** A soldier that reached a full bunker left the Enter mission but kept the
+    bunker as its target, and shot at it. It also stayed out of the garrison order for good,
+    because units with a target are skipped. Now every unit of ours that aims at one of our own
+    garrisonable buildings drops the target and guards, unless it is still entering one with room
+    left. Recent garrison orders are
+    checked every tick, after a 90-frame grace period. All units are checked every 300 frames.
+  - A soldier now counts as on the way only while it is alive, outside and still entering. The old
+    600-frame window let slow walkers lapse, so extra soldiers were sent after them. A soldier
+    stuck outside stops counting after 1,800 frames.
+- **Islands from the start.** Every 600 frames a flood fill over land and bridge decks runs from
+  our base. When no building of the target enemy stands on that land, the enemy is cut off by
+  water at once. Before, it took five failed attacks (frame 18,912 in a 7-AI island game), and
+  everything built until then was a land army. If another enemy can be reached on foot, the
+  director fights that one instead. With no base of ours on the map yet, or no enemy buildings,
+  the fill decides nothing.
+- **Production while cut off.** Siege picks also go to hover/air units now, not only main picks.
+  Ground vehicles are capped at 16 on our side of the water, counting both the director's own
+  picks and stock team picks: enough to defend home and feed the ferry. Transports, harvesters,
+  MCVs, ships, hover/air units and anti-air during a raid are always allowed. The cap is lifted
+  while the base is under attack.
+- **Ferry.**
+  - It never takes the colonising transport. Both used to grab the same one and order it about,
+    so it went nowhere: the "1 aboard" in its sailings was the colonising engineer. Nor does it
+    take a transport with someone still aboard.
+  - A transport recruited by a stock team is taken out of the team. Otherwise the team's area guard
+    could hold it at the dock with a full load.
+  - The loading clock starts at the dock, not on the way there. It sails when full, when nobody
+    else is coming (after 300 frames), when nobody has boarded for 450 frames with 3 or more
+    aboard (four tanks fill it by size) or for 900 frames otherwise, and after 3,000 frames at
+    most. Soldiers walk over in a straggling line and board one by one.
+  - Units still on their way in are released when it sails. They held it at the dock.
+  - The landing spot from the engine's zone lookup is rejected when it lies on our own land. The
+    fallback is the shore cell off our land nearest the enemy base. Before, a failed lookup kept
+    the ferry at the dock for the whole game.
+  - Each sailing logs how many units were left behind: still coming, more than 40 cells away, or
+    busy.
+  - **Tested** on Isolation, a 2–8 player island map, director against director. Every house
+    knew it was cut off by frame 608. Ferries made 20 trips in 45,000 frames with 7 AIs; most
+    carried 4–6, though some still left with one after 900 frames without boarders. Hills, Tower
+    and Lostlake raised no false island. Yuri, with ground tanks capped, piled up 70k unspent:
+    one war factory turns out Floating Discs too slowly to spend it.
 - **Standing anti-air.** From frame 9000, every side keeps at least two anti-air defences at home
   (Patriot, Flak Cannon, Gatling Cannon) once it can spare the price plus 2000, besides the ones
   queued during air raids.
