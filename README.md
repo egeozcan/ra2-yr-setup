@@ -1407,6 +1407,14 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   The army then waited for a stock engineer to fix it. Now only an engineer last seen within 3 cells
   of the hut counts. One lost on the way is replaced, and none is sent while armed enemy units are
   within 7 cells of the hut. Repair log lines now carry frame numbers.
+- **Submarines break off from aircraft.** A Typhoon or Boomer of a director house with enemy aircraft
+  within 7 cells (worth 1,000+), and less friendly anti-air than that within 8 cells, drops its target
+  and moves 9 cells away from the aircraft, turned 60°. Moving, it dives. For 450 frames it gets no
+  fleet orders, then attacks again from the new angle. Surfaced to fire missiles, a Boomer had sat
+  under Siege Choppers until it sank.
+- **Air cover for Yuri's fleet.** Yuri has no anti-air ship, but the Floating Disc's laser hits
+  aircraft (`AA=yes`). While enemy aircraft over Yuri's ships are worth 1,500+, up to three Discs leave
+  the army to fly over the fleet; a house without one builds one first.
 - **Magnetron victims left hanging** (all Magnetrons, stock AI ones included): a vehicle hovering or
   cruising in place on the jumpjet locomotor a Magnetron gave it, with no Magnetron attached, is
   set to come down. Types that fly by design are left alone (`JumpJet=` +0xD94, `BalloonHover=`

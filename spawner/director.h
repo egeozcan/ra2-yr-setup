@@ -123,6 +123,10 @@ struct DirState {
     int breach_frame;
     int fleet_value, sea;               /* armed ships' value; our sea reaches enemy buildings */
     int enemy_subs;                     /* enemy submarines seen (Typhoons, Boomers) */
+    int fleet_air;                      /* enemy aircraft over our ships */
+    CellXY fleet_at;                    /* the fleet's centre */
+    BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
+    int cover_frame;
 };
 static DirState dir_state[32];
 
@@ -485,6 +489,8 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_warships[side0], 1000) : NULL;
     if (!warship && d->want_aa && side0 >= 0 && side0 <= 2)   /* the air raid outranks stock picks too */
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, dir_aa_vehicles[side0], 0);
+    if (!warship && side0 == 2 && d->fleet_air >= 1500 && !dir_owned_of(house, find_type(UNITTYPE_ARRAY, "DISK")))
+        warship = dir_first_buildable(house, UNITTYPE_ARRAY, "DISK", 0);   /* air cover for the fleet */
     if (!warship && d->want_col_ferry && side0 >= 0 && side0 <= 2)   /* a transport to colonise an island */
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side0], 1000);
     BYTE *urgent = d->want_mcv ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_mcvs, 0)
@@ -1528,6 +1534,8 @@ static void dir_army(BYTE *house, DirState *d)
             bound |= d->post_unit[k] == o;
         for (int k = 0; k < 2; k++)
             bound |= d->breach_unit[k] == o && CURRENT_FRAME - d->breach_frame < 600;
+        for (int k = 0; k < 3; k++)
+            bound |= d->cover_unit[k] == o && CURRENT_FRAME - d->cover_frame < 600;
         if (bound)
             continue;
         if ((d->blocked || d->island) && !dir_crosses(o)) {
@@ -3224,6 +3232,88 @@ static void dir_navy(BYTE *house, DirState *d)
     }
     CellXY centre = n ? (CellXY){ (short)(sx / n), (short)(sy / n) } : d->base;
     d->fleet_value = fleet;
+    d->fleet_at = centre;
+    /* Submarines caught on the surface by aircraft with no anti-air about break off: they dive and
+     * come round at an angle, then attack again from there. Surfaced to fire, a Boomer sat under
+     * Siege Choppers until it sank. */
+    static struct { BYTE *unit; int until; } evade[64];
+    int m = 0;
+    d->fleet_air = 0;
+    for (int i = 0; i < n; i++) {
+        BYTE *o = ships[i];
+        CellXY at = object_cell(o);
+        int air = 0, ax = 0, ay = 0, na = 0, aa = 0;
+        for (int k = 0; k < dir_enemy_count; k++)
+            if (dir_enemies[k].air && dir_enemies[k].armed && dir_dist2(dir_enemies[k].at, at) <= 7 * 7) {
+                air += dir_enemies[k].value;
+                ax += dir_enemies[k].at.X;
+                ay += dir_enemies[k].at.Y;
+                na++;
+            }
+        d->fleet_air += air;
+        int slot = -1, busy = 0;
+        for (int k = 0; k < 64; k++) {
+            if (evade[k].unit == o)
+                slot = k, busy = CURRENT_FRAME < evade[k].until;
+            else if (slot < 0 && CURRENT_FRAME >= evade[k].until)
+                slot = k;
+        }
+        if (busy)
+            continue;   /* breaking off: no fleet orders */
+        if (na && air >= 1000 && in_list("SUB,BSUB", (char *)dir_type(o) + T_ID) && slot >= 0) {
+            DynVec *tv = OIL_TECHNO_ARRAY;
+            for (int k = 0; k < tv->Count; k++) {
+                BYTE *u = tv->Items[k], *ut;
+                if (oil_live(u) && FIELD(u, O_OWNER, BYTE *) == house && (ut = dir_type(u))
+                    && in_list("AEGIS,HYD,DISK,FV,HTK,YTNK,GGI,FLAKT", (char *)ut + T_ID)
+                    && dir_dist2(object_cell(u), at) <= 8 * 8)
+                    aa += dir_cost(ut);
+            }
+            if (aa < air) {
+                /* away from the aircraft, turned 60 degrees, 9 cells: the first water cell found */
+                int vx = at.X - ax / na, vy = at.Y - ay / na, len = dir_isqrt(vx * vx + vy * vy);
+                if (!len)
+                    vx = 1, vy = 0, len = 1;
+                int sign = (CURRENT_FRAME / 450) & 1 ? 1 : -1;
+                int rx = (vx * 500 - sign * vy * 866) / 1000, ry = (vy * 500 + sign * vx * 866) / 1000;
+                for (int r = 9; r >= 4; r--) {
+                    CellXY to = { (short)(at.X + rx * r / len), (short)(at.Y + ry * r / len) };
+                    BYTE *cell = dir_cell(to);
+                    if (cell && FIELD(cell, C_LANDTYPE, int) == 2) {
+                        dir_why = "sub evades";
+                        ((void (GTHISCALL *)(BYTE *, BYTE *))VFUNC(o, 0x3C8))(o, NULL);   /* stop firing */
+                        dir_order(o, MISSION_MOVE, NULL, cell);
+                        evade[slot].unit = o;
+                        evade[slot].until = CURRENT_FRAME + 450;
+                        logmsg("director: house %d frame %d: %.24s under air attack (%d, anti-air %d) dives toward %d,%d",
+                               FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(o) + T_ID, air, aa, to.X, to.Y);
+                        break;
+                    }
+                }
+                if (evade[slot].unit == o && CURRENT_FRAME < evade[slot].until)
+                    continue;
+            }
+        }
+        ships[m++] = o;
+    }
+    n = m;
+    /* Yuri has no anti-air ship: Floating Discs, whose lasers hit aircraft, fly cover over the fleet */
+    if (FIELD(house, OIL_H_SIDE, int) == 2 && d->fleet_air >= 1500 && CURRENT_FRAME - d->cover_frame > 150) {
+        d->cover_frame = CURRENT_FRAME;
+        DynVec *tv = OIL_TECHNO_ARRAY;
+        int k = 0;
+        for (int i = 0; i < tv->Count && k < 3; i++) {
+            BYTE *u = tv->Items[i];
+            if (oil_live(u) && FIELD(u, O_OWNER, BYTE *) == house && !_stricmp((char *)dir_type(u) + T_ID, "DISK")
+                && dir_whatami(u) == 1) {
+                d->cover_unit[k++] = u;
+                dir_why = "fleet cover";
+                dir_command(u, centre, NULL, 1);
+            }
+        }
+        while (k < 3)
+            d->cover_unit[k++] = NULL;
+    }
     int want = d->naval_threat >= 600 && fleet < d->naval_threat;
     if (want != d->want_navy)
         logmsg("director: house %d frame %d: enemy ships %d near the base, fleet %d%s", FIELD(house, 0x30, int),
