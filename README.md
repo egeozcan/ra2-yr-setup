@@ -433,6 +433,18 @@ It must run with `/usr/bin/python3`; the linuxbrew `python3` on PATH has no GTK 
   (use `-O2 -fno-inline` and output `spawner/yspawn-test.dll`, or set `PEACE_TEST_DLL` to its path).
   Run `python3 -m unittest discover -s spawner -p test_human_peace.py -v`. This is engine emulation;
   a full live match has not yet been verified with this option.
+- **Reveal the whole map** (added 2026-10-02): under **Rules**, for watching AI matches. It writes
+  `RevealMap=1`, and the DLL then reveals the map for the human player with `MapClass::Reveal`
+  (0x577D90), the Spy Satellite's own call. That call is one-shot and Gap Generators shroud their
+  area again, so it repeats every 150 frames. It is not tied to the benchmark and runs in every
+  launch with the switch on.
+  - It defaults to the Human in peace setting for settings saved before the switch existed.
+  - It is better than giving the observer a Spy Satellite, radar and power plants. Those buildings
+    would take room at the observer's start, and AIs could attack them; a Spy Satellite is also
+    gap-shrouded.
+  - The minimap shows the whole map once the observer has a radar. A tier 2 or 3 starting base
+    includes one. With an MCV start the panel stays closed, but the main view is fully revealed.
+  - Checked on Isolation with 7 AIs: the whole map and the minimap were visible.
 - **Starting base** (added 2026-09-26): MCV, Tier 1, Tier 2 or Tier 3; see below. Anything but MCV turns the
   bases switch on and locks it.
 - **Random:** Random country or colour is picked when you press Start. Random colours never repeat a colour
@@ -1217,14 +1229,120 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   shooting something, so a big army could sit at home "attacking" for the rest of the match. Now
   fighting only counts near the objective or at a front more than 20 cells from home.
 
+### Strategy: plans and posture (2026-10-02)
+
+Each director house now plays to a plan chosen for the map and setup, and bends it to the state
+of the game (`DIR_F_STRATEGY`, flag 16384, on by default). Code: `dir_choose_plan`,
+`dir_update_posture` and `dir_levers` in `director.h`; the numbers and rules are in
+`director-policy.h`.
+
+- **What it reads at the start:**
+  - the walking distance to the nearest enemy base, a breadth-first search over land and bridge
+    decks (straight-line distance lies on river maps), or "none" when every enemy is across water;
+  - how many enemies there are;
+  - the starting base: MCV, tier 1, 2 or 3;
+  - whether our sea reaches an enemy: water within 15 cells of home whose flood fill comes within
+    6 cells of an enemy building.
+- **The draw:** each plan gets a weight from the setup, and the house draws one with its own random
+  stream (the match seed mixed with the house index). The same setup can bring different plans,
+  and a rerun with the same seed brings the same ones. `yspawn.log` has a `plan` line per house
+  with the inputs and weights.
+
+  | Plan | Fits | What changes |
+  |---|---|---|
+  | balanced | always (weight 30) | the director as it was |
+  | rush | a short walk to the enemy (weight 35 under 70 cells, 15 under 110); a third as likely with 3+ enemies and again from a tier 2–3 base, never across water | launches at under half the usual army floor and a 1.0x edge, goes for refineries, factories and yards first, adds war factories at half the cash; ends with its first attack or at frame 14,000 |
+  | boom | long walks, 3+ enemies, islands | an extra refinery, the refinery schedule 3,000 frames early, an expansion from frame 4,500 without waiting for idle harvesters, a first strike only at 1.6x the floor; hands over at frame 20,000 |
+  | siege | tier 2–3 starts | 15 points more siege in the unit mix (V3, Prism Tank, Magnetron) |
+  | naval | our sea reaches an enemy (weight 35 across water, 10 otherwise) | warships kept at 40% of the army's value (Carriers and Destroyers, Dreadnoughts, Boomers); the fleet sails once it is worth 8,000 |
+
+- **Posture**, re-checked every 450 frames, kept for at least 900 frames unless home is threatened:
+  - **press**: our army is at least 1.6x the target's army plus half its defences. Launches need
+    an edge 0.2 smaller, and fresh units reinforce the front instead of waiting at the rally.
+  - **hold**: armed enemy units within 35 cells of home are worth more than 1.5x our army (and over
+    4,000). No launch while they are near, no expansion, and a ground defence at home every 2,400
+    frames while money lasts: Prism Tower or Pillbox, Tesla Coil or Sentry Gun, Gatling Cannon.
+  - **opportunity**: only with two or more enemies. The target's army is away from its base (under
+    35% of it within 30 cells) and not near ours, so it is fighting someone else. The launch weighs
+    what stayed at home, not its whole army. In duels this fired while the target's army was marching
+    on us, and the strike went into a base while an army twice ours went into our own. The first
+    A/B run lost 4 matches that way, so it is free-for-all only now.
+- **Re-planning:** when a rush or boom runs out, and every 9,000 frames, the house draws again from
+  the state of the game:
+  - siege is weighted 40 against a target whose defences are over 4,000 and over half its army;
+  - boom is weighted 30 while the strongest enemy has more refineries;
+  - naval as at the start;
+  - balanced 30;
+  - never rush.
+
+  A rush lasts 14,000 frames or until its first attack ends; a boom lasts 20,000 frames.
+- **Watching:** with Reveal map on, each AI's plan, re-plans and posture changes show in the game's
+  message list in its colour, for example "France (5): plan boom (enemies across the water, 6
+  enemies)". The call is `MessageListClass::AddMessage` (0x5D3BA0, instance 0xA8BC60), with the
+  arguments the engine passes at 0x4C6E9F; the house colour is `ColorSchemeIndex`, +0x16054.
+  Without Reveal map nothing is shown, so a human playing for real doesn't see the AIs' plans.
+- `[AIn] DirectorPlan=N` forces a plan for tests (0 balanced, 1 rush, 2 boom, 3 siege, 4 naval).
+- **A/B results** (`bench.py suite … strat`, 48 matches on Arena, Hills, Tower and Lostlake,
+  tier-3 bases, superweapons off, crates on; directors with the strategy layer against directors
+  without it):
+  - **First run:** 16 to 17. Opportunity strikes in duels cost 4 matches (see above), and the run
+    was stopped at 33 matches.
+  - **After that fix:** 28 to 20 for the strategy layer.
+    - By plan: balanced (posture only) 14 of 21, siege 5 of 9, boom 4 of 7, rush 5 of 11.
+    - 4 of the 5 lost rushes never launched. From tier-3 bases both armies grow alike, so rush is
+      now a third as likely there.
+
+### Naval yards no longer stall the war factories (2026-10-02)
+
+Stock production keeps one vehicle order per house (`ProducingUnitTypeIndex`, +0x5650) for war
+factories and naval yards alike. Each idle factory asks for it through `0x4FBD80` (called at
+`0x45032D` in the factory AI). The engine then checks that the unit's `Naval` matches the factory.
+The order is cleared only when the unit rolls out (`0x444119`). A ship in that order therefore
+idled every war factory for the whole time the ship was being built. On Isolation, France's queue
+held Carriers and Destroyers most of the game. It sat on about 40,000 credits for 20,000 frames
+with an army worth 600–7,200.
+
+Ships now have their own order for each director house:
+
+- After the stock and director picks, a naval pick moves to the yard's order, and the war
+  factories get a ground pick at once.
+- The hook at `0x45032D` hands a naval yard that order first. The building type is still in EDX
+  there, and the factory RTTI is `UnitType` (0x28), which `0x4FBD80` maps like `Unit` (1).
+- An order that no yard takes within 3,000 frames is dropped.
+- **Result,** 4 AIs on Isolation, frame 19,456: every house spent its money. Before, they held
+  14k–50k. Before the RTTI fix, a first try built no ships at all.
+
+### Convoys and landings (2026-10-02)
+
+Cut off by water, the director used to ferry troops one transport at a time, 4–6 units per trip,
+and they landed piecemeal. On Isolation, the armies grew to 50–80k at home with two launches in
+20,000 frames.
+
+- **Convoy:** up to four transports, one wanted per six ground units waiting at home. They load at
+  the rally, sail together and unload on the same beach.
+  - They sail when every docked transport is ready, none is still driving to the dock (wait up to
+    900 frames) and nobody is still walking over to board (up to 1,800). They also sail when
+    nobody else will come, or after 3,000 frames at the dock.
+  - A transport is ready when full (6), when nobody has boarded for 450 frames with 3+ aboard, or
+    after 900 frames.
+  - Units are called to the docked transport with the most room.
+- **Landed troops attack.** Troops already across used to be ordered to the home army's rally
+  while it gathered, which they can't walk to. Now they attack the target's nearest structure.
+- **Extra war factories on cramped islands:** the combat AI probes the stock base planner before
+  queuing a factory. Where the planner finds no room, the probe now takes the director's own spot
+  (`dir_fallback_spot`, the nearest one the engine accepts, 2–20 cells from the base centre). On
+  Isolation, Yuri had one war factory all game with 40k unspent.
+
 ### Settings
 
 `[AIn]` keys in `yspawn.ini` (Skirmish Setup writes `Director` from the AI's level; 3 is 0, 4 is 1):
 
 - `Director=0` turns the director off for that AI (stock Brutal).
+- `DirectorPlan=N` forces a strategy plan: 0 balanced, 1 rush, 2 boom, 3 siege, 4 naval.
 - `DirectorFlags=N` keeps only some features. Bits: 1 production, 2 army, 4 team takeover,
   8 focus fire, 16 economy, 32 answer fire, 64 defences-first objectives, 128 cohesion,
-  256 engineers, 512 expansion, 1024 regroup, 2048 navy, 4096 walled-in units, 8192 tank bunkers.
+  256 engineers, 512 expansion, 1024 regroup, 2048 navy, 4096 walled-in units, 8192 tank bunkers,
+  16384 strategy (plans and posture). `DirectorFlags=16319` is the director without the strategy layer.
   - The default is everything except 64. Defences-first lost 3 of 4 director-vs-director
     ablation matches.
 
@@ -1233,15 +1351,24 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
 AI-vs-AI matches run unattended. An idle observer uses Human in peace, the game runs uncapped
 (roughly 300–600 frames/s at speed 0), and the DLL exits when one side is left or at the frame limit.
 
-- `bench.py run OUTDIR MAP AI... [--frames N] [--camera HOUSE]`: one match.
-  - Each AI is `COUNTRY:START:DIRECTOR[:DIFFICULTY[:TEAM]]`.
-  - `--camera` reveals the map and follows that house's army.
+- `bench.py run OUTDIR MAP AI... [--frames N] [--camera HOUSE] [--set KEY=VALUE]`: one match.
+  - Each AI is `COUNTRY:START:DIRECTOR[:DIFFICULTY[:TEAM[:PLAN]]]`. `DIRECTOR` above 1 is a
+    `DirectorFlags` mask (16319: no strategy layer), `PLAN` forces a plan.
+  - `--camera` follows that house's army.
+  - `--set` sets any `[Settings]` key, for example `--set StartBase=3 --set Superweapons=0`.
+- `bench.py suite OUTDIR strat|strat_mcv|strat_iso`: the strategy A/B. Directors with plans play
+  directors without them: America, Russia and Yuri paired on four maps, starts and the strategy
+  side swapped (48 matches each), or 7-AI Isolation free-for-alls with alternate slots. Suites skip
+  matches already played, so a stopped run resumes.
+- `bench.py ab DIR...`: strategy on against off, per plan and per country. It reports wins and the
+  mean placement: 0 for the winner, 1 for the first house out. Eliminated houses rank by when they
+  fell, survivors by buildings and army value.
 - `bench.py suite OUTDIR [tune|heldout|heldout2|hard]`: match sets, director vs stock Brutal.
 - `bench.py summary DIR...`: one line per match, plus a win/draw/loss tally.
 - `bench.py restore`: puts the user's `yspawn.ini/.log/.map` back after runs.
 
 Bench-only `[Settings]` keys, for tests:
-- `RevealMap=1` and `Camera=HOUSE`: what `--camera` sets.
+- `Camera=HOUSE`: what `--camera` sets. Benchmark matches always set `RevealMap=1` (see below).
 - `ForceIsland=1`: treat enemies as cut off by water.
 - `ForceExpand=1`: expand without waiting for idle harvesters.
 - `Camera=100+N` follows house N's base; `CameraX`/`CameraY` watch one cell.
@@ -1293,7 +1420,8 @@ Balance tools:
 
 Each match writes `yspawn-bench.csv`: per-house snapshots every 300 frames and a result row.
 - The snapshot columns `killed_units`/`killed_buildings` are the house's **losses**.
-- Also recorded: cash, factories, current build orders and director state.
+- Also recorded: cash, factories, current build orders and director state, and since 2026-10-02 the
+  house's director flags, plan and posture.
 - `yspawn.log` has the director's decisions.
 
 ### Results

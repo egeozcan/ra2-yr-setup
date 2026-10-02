@@ -169,7 +169,8 @@ static void combat_queue_expansion(BYTE *house)
                 continue;
         } else if (role == 1 && (director_enabled(house) & DIR_F_ECONOMY)) {
             /* Director: production, not money, limits the army. Add factories as cash piles up. */
-            if (count < 1 || count >= dir_wanted_factories(cash, CURRENT_FRAME, FIELD(house, OIL_H_REFINERIES, int))
+            if (count < 1 || count >= dir_wanted_factories(cash * 100 / dir_factory_cash_pct(house), CURRENT_FRAME,
+                                                       FIELD(house, OIL_H_REFINERIES, int))
                 || cash - cost < 2000 || power < drain + 50)
                 continue;
         } else if (!combat_expand(CURRENT_FRAME, FIELD(house, 0x2F0, int),
@@ -184,6 +185,10 @@ static void combat_queue_expansion(BYTE *house)
          * Probe before requesting production, so impossible yards don't stall it. */
         CellXY at;
         oil_place_original(house, &at, type, (void *)0x505F80, (DWORD)-1);
+        /* the stock planner found no room (cramped islands): the director places it where the
+         * engine allows, near the base centre (dir_note_placement does the same at build time) */
+        if ((at.X <= 0 || at.Y <= 0) && (director_enabled(house) & DIR_F_ECONOMY))
+            dir_fallback_spot(house, type, &at);
         if (at.X <= 0 || at.Y <= 0
             || !((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &at, house))
             continue;

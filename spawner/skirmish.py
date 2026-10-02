@@ -38,7 +38,7 @@ TEAMS = ["None", "A", "B", "C", "D"]               # yspawn.ini Team: -1 none, 0
 SPEEDS = ["Fastest", "Faster", "Fast", "Normal", "Slow", "Slower", "Slowest"]   # GameSpeed 0..6
 SWITCHES = [("Bases", "Start with a base (MCV)"), ("ShortGame", "Short game"),
             ("Superweapons", "Superweapons"), ("HumanInPeace", "Human in peace"),
-            ("Crates", "Crates"), ("MCVRedeploy", "MCV repacks"),
+            ("RevealMap", "Reveal the whole map"), ("Crates", "Crates"), ("MCVRedeploy", "MCV repacks"),
             ("BuildOffAlly", "Build off ally's base"), ("BridgeDestroy", "Destroyable bridges")]
 NUMBERS = [("Credits", "Starting credits", 1000, 100000, 1000),
            ("UnitCount", "Starting units", 0, 10, 1), ("TechLevel", "Tech level", 1, 10, 1)]
@@ -55,7 +55,7 @@ def default_settings():
     for key, _, lo, _, _ in NUMBERS:
         out[key] = s.getint(key, lo)
     for key, _ in SWITCHES:
-        out[key] = bool(s.getint(key, 0 if key == "HumanInPeace" else 1))
+        out[key] = bool(s.getint(key, 0 if key in ("HumanInPeace", "RevealMap") else 1))
     out["AI"] = [{"Country": ini[sec].getint("Country", 8), "Color": ini[sec].getint("Color", 1),
                   "Difficulty": ini[sec].getint("Difficulty", 2), "Start": ini[sec].getint("Start", RANDOM),
                   "Team": ini[sec].getint("Team", RANDOM)}
@@ -67,6 +67,8 @@ def normalize(saved):
     """Settings as the window expects them: defaults filled in, and a copy so nothing is shared with `saved`."""
     s = default_settings()
     s.update(json.loads(json.dumps(saved)))
+    if "RevealMap" not in saved:   # saved before the switch: an observer in peace wants to watch
+        s["RevealMap"] = s["HumanInPeace"]
     s["Map"] = spawn.resolve_map(s["Map"])
     for p in [s] + s["AI"]:   # settings saved before start positions and teams existed
         p.setdefault("Start", RANDOM)
@@ -410,6 +412,8 @@ class Window(Adw.ApplicationWindow):
             row = Adw.SwitchRow(title=title, active=self.s[key])
             if key == "HumanInPeace":
                 row.set_subtitle("AI leaves you alone, including superweapons, on any team.")
+            if key == "RevealMap":
+                row.set_subtitle("No shroud for you, kept clear of Gap Generators: for watching AIs.")
             row.connect("notify::active", lambda r, _, k=key: self.set(k, r.get_active()))
             g.add(row)
             if key == "Bases":

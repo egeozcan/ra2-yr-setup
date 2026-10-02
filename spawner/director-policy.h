@@ -8,7 +8,7 @@ enum { DIR_GATHER, DIR_ATTACK, DIR_DEFEND, DIR_RETREAT };
 enum { DIR_F_PRODUCTION = 1, DIR_F_ARMY = 2, DIR_F_TAKEOVER = 4, DIR_F_FOCUS = 8, DIR_F_ECONOMY = 16,
        DIR_F_ANSWER = 32, DIR_F_DEFENSES_FIRST = 64, DIR_F_COHESION = 128, DIR_F_ENGINEERS = 256,
        DIR_F_EXPANSION = 512, DIR_F_REGROUP = 1024, DIR_F_NAVY = 2048, DIR_F_UNSTICK = 4096,
-       DIR_F_BUNKERS = 8192, DIR_F_ALL = 16383,
+       DIR_F_BUNKERS = 8192, DIR_F_STRATEGY = 16384, DIR_F_ALL = 32767,
        /* defenses-first objectives lost 3 of 4 director-vs-director ablation matches: off */
        DIR_F_DEFAULT = DIR_F_ALL & ~DIR_F_DEFENSES_FIRST };
 enum { ROLE_MAIN, ROLE_AA, ROLE_SIEGE, ROLE_SUPPORT, ROLE_COUNT };
@@ -16,17 +16,12 @@ enum { ROLE_MAIN, ROLE_AA, ROLE_SIEGE, ROLE_SUPPORT, ROLE_COUNT };
 /* Launch once the army can beat what the enemy fields (its mobile army plus half its static
  * defenses), with a floor that rises over time. A maxed-out army goes regardless, and the longer
  * the army has waited the smaller the edge it asks for: a stalemate is a loss in slow motion. */
-static int dir_should_launch(int army_value, int army_count, int enemy_army_value, int enemy_defense, int frame,
-                             int waited)
+static int dir_should_launch_plan(int army_value, int army_count, int enemy_army_value, int enemy_defense, int frame,
+                                  int waited, int floor_pct, int edge, int min_units);
+__attribute__((unused)) static int dir_should_launch(int army_value, int army_count, int enemy_army_value,
+                                                     int enemy_defense, int frame, int waited)
 {
-    if (army_count < 6)
-        return 0;
-    if (army_value >= 60000)
-        return 1;
-    int floor = frame < 12000 ? 5000 : frame < 24000 ? 8000 : 12000;
-    int edge = waited >= 12000 ? 8 : waited >= 6000 ? 10 : 12;
-    long long opposition = enemy_army_value + enemy_defense / 2;
-    return army_value >= floor && (long long)army_value * 10 >= opposition * edge;
+    return dir_should_launch_plan(army_value, army_count, enemy_army_value, enemy_defense, frame, waited, 100, 12, 6);
 }
 
 /* Which enemy to fight: near and weak beats far and weak or near and strong. strength is the
@@ -114,16 +109,176 @@ static int dir_wanted_factories(int cash, int frame, int refineries)
 
 /* More refineries once money runs short: each brings a harvester and a shorter ore run. Not while
  * harvesters stand idle: their ore is exhausted or cut off, and another refinery would not help. */
-static int dir_want_refinery(int frame, int refineries, int harvesters, int idle_harvesters, int cash)
+static int dir_want_refinery_plan(int frame, int refineries, int harvesters, int idle_harvesters, int cash, int bonus,
+                                  int early);
+__attribute__((unused)) static int dir_want_refinery(int frame, int refineries, int harvesters, int idle_harvesters,
+                                                     int cash)
 {
-    int wanted = frame < 6000 ? 0 : frame < 15000 ? 3 : frame < 30000 ? 4 : 5;
-    return refineries < wanted && harvesters >= refineries && idle_harvesters == 0 && cash < 12000;
+    return dir_want_refinery_plan(frame, refineries, harvesters, idle_harvesters, cash, 0, 0);
 }
 
 /* Keep producing while money lasts; keep a reserve for buildings. */
 static int dir_can_spend(int cash, int cost, int reserve)
 {
     return cash - cost >= reserve;
+}
+
+/* ---- strategy: a plan per house, chosen at the start from the setup, and a posture that follows
+ * the game ----
+ * A plan is a set of numbers for the levers the director already has: when the army launches,
+ * the unit mix, refineries, factories, expansion timing and what an attack goes for first. A rush
+ * or boom lasts a phase; then, and every 9000 frames, the house plans again from the state of the
+ * game (dir_replan_weights). */
+enum { PLAN_BALANCED, PLAN_RUSH, PLAN_BOOM, PLAN_SIEGE, PLAN_NAVAL, PLAN_COUNT };
+static const char *const dir_plan_names[PLAN_COUNT] = { "balanced", "rush", "boom", "siege", "naval" };
+
+typedef struct {
+    int floor_pct;        /* scales the launch floor (100: as is) */
+    int edge;             /* edge over the opposition the launch asks for, tenths (12: 1.2x) */
+    int min_units;        /* fewest units in a launch */
+    int share_siege, share_support, share_aa;   /* added to the enemy-derived role shares (percent) */
+    int refinery_bonus;   /* refineries wanted beyond the stock schedule */
+    int refinery_early;   /* frames the refinery schedule is brought forward */
+    int factory_cash_pct; /* scales the cash thresholds for extra war factories (lower: sooner) */
+    int expand_frame;     /* earliest expansion */
+    int expand_idle;      /* expansion waits for idle harvesters */
+    int eco_targets;      /* attacks go for refineries, factories and yards first */
+    int phase;            /* frames the plan lasts before the house plans again (0: until re-planned) */
+    int navy_share;       /* warships kept at this percent of the army's value (0: only to answer ships) */
+    int fleet_launch;     /* fleet value before it sails on the enemy (as before: 3000) */
+} DirPlanLevers;
+
+static const DirPlanLevers dir_plan_levers[PLAN_COUNT] = {
+    /*            floor edge min  siege sup aa  ref early fact expand idle eco  phase navy fleet */
+    [PLAN_BALANCED] = { 100, 12, 6,   0,  0,  0,  0,    0, 100, 9000, 1, 0,     0,   0, 3000 },
+    /* rush: a smaller army goes early for the enemy's production and income, from more factories
+     * and no economy beyond the opening one; lasts 14000 frames or until its first attack ends */
+    [PLAN_RUSH]     = {  45, 10, 5,  -5,  5,  0,  0,    0,  50, 20000, 1, 1, 14000,  0, 3000 },
+    /* boom: refineries early, an expansion as soon as the yard can pay for one, a late and heavy
+     * first strike, and factories to spend the money afterwards; 20000 frames */
+    [PLAN_BOOM]     = { 160, 13, 8,   0,  0,  0,  1, 3000, 120, 4500, 0, 0, 20000,  0, 3000 },
+    /* siege: more siege in the mix (V3s, Prism tanks, Magnetrons) against static defences */
+    [PLAN_SIEGE]    = { 110, 12, 6,  15, -5,  0,  0,    0, 100, 9000, 1, 0,     0,  0, 3000 },
+    /* naval: our sea reaches enemy buildings: a war fleet worth 40% of the army (Carriers and
+     * Destroyers, Dreadnoughts, Boomers) that sails once it is worth 8000; the army as balanced */
+    [PLAN_NAVAL]    = { 100, 12, 6,   0,  0,  0,  0,    0, 100, 9000, 1, 0,     0, 40, 8000 },
+};
+
+/* How much each plan fits the setup, in weights for a random draw. land_steps is the walking
+ * distance to the nearest enemy base (-1: none reachable on foot), enemies the hostile players,
+ * tier the starting base (0: MCV). */
+static void dir_plan_weights(int land_steps, int enemies, int tier, int sea, int w[PLAN_COUNT])
+{
+    w[PLAN_BALANCED] = 30;
+    w[PLAN_RUSH] = land_steps < 0 ? 0 : land_steps <= 70 ? 35 : land_steps <= 110 ? 15 : 5;
+    if (enemies >= 3)
+        w[PLAN_RUSH] /= 3;   /* in a free-for-all a rush leaves the base to everyone else */
+    /* from a built base both armies grow alike and parity never comes: 4 of 5 rushes lost in the
+     * tier-3 A/B never launched at all */
+    if (tier >= 2)
+        w[PLAN_RUSH] /= 3;
+    w[PLAN_BOOM] = 15 + (land_steps < 0 || land_steps > 110 ? 20 : 0) + (enemies >= 3 ? 15 : 0);
+    w[PLAN_SIEGE] = 10 + (tier >= 2 ? 10 : 0);
+    /* sea: our water reaches some enemy's buildings; across water a fleet is the way over */
+    w[PLAN_NAVAL] = !sea ? 0 : land_steps < 0 ? 35 : 10;
+}
+
+/* Later plans, from the state of the game: when an opening plan runs out, and every 9000 frames.
+ * def is the target's static defence, army its mobile army; refineries ours and the strongest
+ * enemy's. A rush is an opening only. */
+static void dir_replan_weights(int def, int army, int refineries, int their_refineries, int land_steps, int sea,
+                               int w[PLAN_COUNT])
+{
+    w[PLAN_BALANCED] = 30;
+    w[PLAN_RUSH] = 0;
+    w[PLAN_BOOM] = refineries < their_refineries ? 30 : 5;
+    w[PLAN_SIEGE] = def > 4000 && def * 2 > army ? 40 : 10;
+    w[PLAN_NAVAL] = !sea ? 0 : land_steps < 0 ? 35 : 10;
+}
+
+/* A weighted draw: roll is any random number. */
+static int dir_plan_pick(const int w[PLAN_COUNT], unsigned roll)
+{
+    int total = 0;
+    for (int i = 0; i < PLAN_COUNT; i++)
+        total += w[i] > 0 ? w[i] : 0;
+    if (total <= 0)
+        return PLAN_BALANCED;
+    int r = (int)(roll % (unsigned)total);
+    for (int i = 0; i < PLAN_COUNT; i++) {
+        if (w[i] <= 0)
+            continue;
+        if (r < w[i])
+            return i;
+        r -= w[i];
+    }
+    return PLAN_BALANCED;
+}
+
+/* Posture: how the plan bends to the state of the game.
+ *  PRESS:   clearly ahead of the target: launch at a smaller edge, keep pushing.
+ *  HOLD:    a neighbour's army near home outclasses ours: no launch, defences, army home.
+ *  OPPORTUNITY: in a free-for-all, the target's army is away from its base and not near ours
+ *           (fighting someone else): strike the base against what is there, not its whole army. */
+enum { POSTURE_NORMAL, POSTURE_PRESS, POSTURE_HOLD, POSTURE_OPPORTUNITY };
+static const char *const dir_posture_names[4] = { "normal", "press", "hold", "opportunity" };
+
+static int dir_posture(int prev, int army, int opposition, int threat_near, int target_army, int target_home,
+                       int enemies)
+{
+    /* hold first: a stronger army within reach of home matters more than the target far away */
+    if (threat_near > 4000 && (long long)threat_near * 10 > (long long)army * (prev == POSTURE_HOLD ? 11 : 15))
+        return POSTURE_HOLD;
+    if (opposition > 0 && (long long)army * 10 >= (long long)opposition * (prev == POSTURE_PRESS ? 13 : 16))
+        return POSTURE_PRESS;
+    /* only with a third player about: in a duel an army away from home is coming for us */
+    if (enemies >= 2 && target_army >= 3000 && threat_near * 4 < target_army
+        && target_home * 100 < target_army * (prev == POSTURE_OPPORTUNITY ? 50 : 35))
+        return POSTURE_OPPORTUNITY;
+    return POSTURE_NORMAL;
+}
+
+/* Launch with plan levers: floor scaled by floor_pct, edge in tenths. The waiting discount of
+ * dir_should_launch still applies, never below 0.8. */
+static int dir_should_launch_plan(int army_value, int army_count, int enemy_army_value, int enemy_defense, int frame,
+                                  int waited, int floor_pct, int edge, int min_units)
+{
+    if (army_count < min_units)
+        return 0;
+    if (army_value >= 60000)
+        return 1;
+    int floor = (frame < 12000 ? 5000 : frame < 24000 ? 8000 : 12000) * floor_pct / 100;
+    int e = edge - (waited >= 12000 ? 4 : waited >= 6000 ? 2 : 0);
+    if (e < 8)
+        e = 8;
+    long long opposition = enemy_army_value + enemy_defense / 2;
+    return army_value >= floor && (long long)army_value * 10 >= opposition * e;
+}
+
+/* Role shares bent by the plan, re-normalised: the main role takes up the difference, never
+ * below a quarter. */
+static void dir_plan_shares(const DirPlanLevers *p, int shares[ROLE_COUNT])
+{
+    shares[ROLE_SIEGE] += p->share_siege;
+    shares[ROLE_SUPPORT] += p->share_support;
+    shares[ROLE_AA] += p->share_aa;
+    for (int r = ROLE_AA; r < ROLE_COUNT; r++)
+        if (shares[r] < 5)
+            shares[r] = 5;
+    shares[ROLE_MAIN] = 100 - shares[ROLE_AA] - shares[ROLE_SUPPORT] - shares[ROLE_SIEGE];
+    if (shares[ROLE_MAIN] < 25)
+        shares[ROLE_MAIN] = 25;
+}
+
+/* The refinery schedule with plan levers. */
+static int dir_want_refinery_plan(int frame, int refineries, int harvesters, int idle_harvesters, int cash, int bonus,
+                                  int early)
+{
+    int f = frame + early;
+    int wanted = f < 6000 ? 0 : f < 15000 ? 3 : f < 30000 ? 4 : 5;
+    if (wanted)
+        wanted += bonus;
+    return refineries < wanted && harvesters >= refineries && idle_harvesters == 0 && cash < 12000 + 4000 * bonus;
 }
 
 #endif

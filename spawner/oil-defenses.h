@@ -155,6 +155,7 @@ static int GFASTCALL oil_build_update(BYTE *house, void *unused)
 {
     (void)unused;
     team_telemetry_sample(house);
+    observer_reveal();
     bench_sample();
     dir_update(house);
     int idx = FIELD(house, 0x30, int);

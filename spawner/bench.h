@@ -24,7 +24,7 @@
 static FILE *bench_file;
 static void bench_row_extra(BYTE *house);
 static int bench_fleet;
-static int bench_limit, bench_next, bench_over, bench_players, bench_reveal, bench_camera = -1, bench_camera_x,
+static int bench_limit, bench_next, bench_over, bench_players, reveal_map, reveal_next, bench_camera = -1, bench_camera_x,
     bench_camera_y;
 static int bench_force_island, bench_force_expand;   /* tests: force ferries / expansion */   /* test: treat every enemy as cut off by water, to exercise ferries */
 static void bench_camera_update(void);
@@ -32,6 +32,7 @@ static void bench_kills_dump(void);
 static DWORD bench_start_ms;
 static int director_slot[8] = { DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT };
 static int director_house[32], director_mapped;
+static int director_plan_slot[8] = { -1, -1, -1, -1, -1, -1, -1, -1 }, director_plan_house[32];
 
 static void bench_init(void)
 {
@@ -39,11 +40,12 @@ static void bench_init(void)
         char sec[8];
         snprintf(sec, sizeof sec, "AI%d", i);
         director_slot[i] = ini_int(sec, "Director", 1) ? ini_int(sec, "DirectorFlags", DIR_F_DEFAULT) : 0;
+        director_plan_slot[i] = ini_int(sec, "DirectorPlan", -1);   /* force a strategy plan (tests) */
     }
+    reveal_map = ini_int("Settings", "RevealMap", 0);        /* the human sees the whole map, any launch */
     if (!ini_int("Settings", "Benchmark", 0))
         return;
     bench_limit = ini_int("Settings", "FrameLimit", 0);
-    bench_reveal = ini_int("Settings", "RevealMap", 0);      /* observer sees the whole map */
     bench_camera = ini_int("Settings", "Camera", -1);        /* follow this house's army front */
     bench_fleet = ini_int("Settings", "FleetTest", 0);       /* N warships for AI house 1 at frame 300 */
     bench_camera_x = ini_int("Settings", "CameraX", 0);      /* or watch one cell */
@@ -57,7 +59,7 @@ static void bench_init(void)
     }
     fputs("frame,ms,house,country,human,director,defeated,units,infantry,aircraft,navy,buildings,cash,"
           "harvesters,refineries,killed_units,killed_buildings,cost_infantry,cost_vehicles,cost_aircraft,power,drain,"
-          "war_factories,building_order,unit_order,infantry_order,state,army_value\n",
+          "war_factories,building_order,unit_order,infantry_order,state,army_value,flags,plan,posture\n",
           bench_file);
     logmsg("benchmark: enabled, frame limit %d", bench_limit);
 }
@@ -69,6 +71,8 @@ static void bench_map_houses(void)
     DynVec *v = HOUSE_ARRAY;
     int slot = 1;
     director_mapped = 1;
+    for (int i = 0; i < 32; i++)
+        director_plan_house[i] = -1;
     bench_players = *GAME_PLAYERCOUNT + SESSION->Config.AIPlayers;
     for (int i = 0; i < v->Count && i < 32; i++) {
         BYTE *h = v->Items[i];
@@ -78,11 +82,21 @@ static void bench_map_houses(void)
             while (slot < 8 && SESSION->Config.Slots.Countries[slot] < 0)
                 slot++;
             director_house[i] = slot < 8 ? director_slot[slot] : 1;
+            director_plan_house[i] = slot < 8 ? director_plan_slot[slot] : -1;
             slot++;
         }
         logmsg("house %d %s human=%d director=%#x", i, (char *)FIELD(h, H_TYPE, BYTE *) + T_ID,
                h[H_ISHUMAN] != 0, director_house[i]);
     }
+}
+
+/* [AIn] DirectorPlan for the house, or -1 for a plan drawn from the setup. */
+static int director_plan_override(BYTE *house)
+{
+    if (!director_mapped)
+        bench_map_houses();
+    int idx = FIELD(house, 0x30, int);
+    return idx >= 0 && idx < 32 ? director_plan_house[idx] : -1;
 }
 
 /* Director feature bits for the house (0: director off). Every match maps houses on first use. */
@@ -108,6 +122,23 @@ static void bench_row(BYTE *h)
     bench_row_extra(h);   /* production and director columns, from director.h */
 }
 
+/* [Settings] RevealMap=1: the human player sees the whole map, for watching AI matches. The reveal
+ * is MapClass::Reveal, the Spy Satellite's own call. It is one-shot, and Gap Generators shroud
+ * their area again, so it is repeated every REVEAL_INTERVAL frames. Called from the per-house AI
+ * update, like bench_sample, so it also runs in ordinary (non-benchmark) launches. */
+#define REVEAL_INTERVAL 150
+static void observer_reveal(void)
+{
+    if (!reveal_map || CURRENT_FRAME < reveal_next)
+        return;
+    reveal_next = CURRENT_FRAME + REVEAL_INTERVAL;
+    DynVec *hv = HOUSE_ARRAY;
+    int players = *GAME_PLAYERCOUNT + SESSION->Config.AIPlayers;
+    for (int i = 0; i < hv->Count && i < players; i++)
+        if (((BYTE *)hv->Items[i])[H_ISHUMAN])
+            ((void (GTHISCALL *)(void *, BYTE *))0x577D90)(MAP_INSTANCE, hv->Items[i]);
+}
+
 /* Called from the per-house AI update; samples every player house once per interval. */
 static void bench_sample(void)
 {
@@ -117,10 +148,6 @@ static void bench_sample(void)
         bench_start_ms = GetTickCount();
         if (!director_mapped)
             bench_map_houses();
-        DynVec *hv = HOUSE_ARRAY;
-        for (int i = 0; bench_reveal && i < hv->Count && i < bench_players; i++)
-            if (((BYTE *)hv->Items[i])[H_ISHUMAN])   /* MapClass::Reveal, as the Spy Satellite does */
-                ((void (GTHISCALL *)(void *, BYTE *))0x577D90)(MAP_INSTANCE, hv->Items[i]);
     }
     bench_camera_update();
     bench_next = CURRENT_FRAME + BENCH_INTERVAL;

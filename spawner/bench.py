@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Run unattended AI-vs-AI skirmishes and collect yspawn-bench.csv results.
 
-usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--speed N] [--seed N]
-           each AI is COUNTRY[:START[:DIRECTOR[:DIFFICULTY[:TEAM]]]], e.g. 8:0:1 9:1:0 (DIRECTOR 1 = new logic,
-           0 = stock Brutal, >1 = DirectorFlags bitmask)
+usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--speed N] [--seed N] [--set KEY=VALUE]
+           each AI is COUNTRY[:START[:DIRECTOR[:DIFFICULTY[:TEAM[:PLAN]]]]], e.g. 8:0:1 9:1:0 (DIRECTOR 1 = new logic,
+           0 = stock Brutal, >1 = DirectorFlags bitmask; 16319 = everything but the strategy layer;
+           PLAN 0-3 forces balanced, rush, boom or siege)
        bench.py restore          put back the game directory's own yspawn.ini/.log/.map after runs
        bench.py summary DIR...   print one line per match directory
        bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER]   director vs stock Brutal match sets
+       bench.py ab DIR...        strategy on against off, per plan and country: wins and mean placement
 
 The idle human uses Human in peace, so it never takes part and never loses. The game directory's
 yspawn.ini, yspawn.log and yspawn.map are saved first and restored afterwards.
@@ -34,7 +36,7 @@ def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
     ini.optionxform = str
     ini["Settings"] = dict(Map=map_file, Name="Observer", Country="4", Color="7", Start=str(human_start),
                            Team="-1", Credits="10000", GameSpeed=str(speed), UnitCount="0", TechLevel="10",
-                           ShortGame="1", Superweapons="1", HumanInPeace="1", TeamTelemetry="0", Crates="0",
+                           ShortGame="1", Superweapons="1", HumanInPeace="1", RevealMap="1", TeamTelemetry="0", Crates="0",
                            Bases="1", MCVRedeploy="1", BuildOffAlly="1", GameMode="1", Benchmark="1",
                            FrameLimit=str(frames), Seed=str(seed))
     if extra:
@@ -52,6 +54,8 @@ def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
         team = ai[4] if len(ai) > 4 else -1
         ini[f"AI{i}"] = dict(Country=str(country), Color=str(i - 1), Difficulty=str(difficulty),
                              Start=str(start), Team=str(team), Director=str(int(director != 0)))
+        if len(ai) > 5 and ai[5] >= 0:   # force a strategy plan (director-policy.h PLAN_*)
+            ini[f"AI{i}"]["DirectorPlan"] = str(ai[5])
         if director > 1:   # a DirectorFlags bitmask (director-policy.h DIR_F_*)
             ini[f"AI{i}"]["DirectorFlags"] = str(director)
     return ini
@@ -59,8 +63,8 @@ def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
 
 def parse_ai(text):
     parts = [int(p) for p in text.split(":")]
-    parts += [-1, 1, 0, -1][len(parts) - 1:]
-    return tuple(parts[:5])
+    parts += [-1, 1, 0, -1, -1][len(parts) - 1:]
+    return tuple(parts[:6])
 
 
 def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, timeout=3600, extra=None):
@@ -157,6 +161,55 @@ def faction_result(outdir):
     if len(ranked) < 2 or (score[ranked[0]] - score[ranked[1]]) * 5 < score[ranked[0]]:
         return countries, "draw"
     return countries, ais[ranked[0]]["country"]
+
+
+def placements(outdir):
+    """[(house row, placement 0..1)] for one match: 0 is the winner, 1 the first one out.
+    Eliminated houses rank by when they fell; survivors by buildings*1000 plus army value."""
+    path = os.path.join(outdir, "yspawn-bench.csv")
+    if not os.path.exists(path):
+        return []
+    rows = list(csv.reader(open(path)))
+    header, body = rows[0], rows[1:]
+    last, fell = {}, {}
+    for r in body:
+        if r[0] == "result":
+            continue
+        d = dict(zip(header, r))
+        if d["human"] == "1":
+            continue
+        last[d["house"]] = d
+        if d["defeated"] == "1" and d["house"] not in fell:
+            fell[d["house"]] = int(d["frame"])
+    score = lambda d: (fell.get(d["house"], 10 ** 9), int(d["buildings"]) * 1000 + int(d["cost_infantry"])
+                       + int(d["cost_vehicles"]) + int(d["cost_aircraft"]))
+    ranked = sorted(last.values(), key=score, reverse=True)
+    n = len(ranked)
+    return [(d, i / (n - 1) if n > 1 else 0.0) for i, d in enumerate(ranked)]
+
+
+def strategy_ab(dirs):
+    """Strategy on against off, and per plan: houses, wins, mean placement (0 best, 1 worst)."""
+    groups = {}
+    for d in dirs:
+        for row, place in placements(d):
+            if "flags" not in row:
+                continue
+            on = int(row["flags"]) & 16384 != 0
+            keys = ["strategy " + ("on" if on else "off")]
+            if on:
+                keys.append("plan " + row["plan"])
+            keys.append("country " + row["country"])
+            for k in keys:
+                g = groups.setdefault(k, [0, 0, 0.0])
+                g[0] += 1
+                g[1] += place == 0.0
+                g[2] += place
+    out = [f"{'group':24} {'houses':>6} {'wins':>5} {'placement':>9}"]
+    for k in sorted(groups):
+        n, w, p = groups[k]
+        out.append(f"{k:24} {n:6} {w:5} {p / n:9.2f}")
+    return "\n".join(out)
 
 
 def factions(dirs):
@@ -298,14 +351,38 @@ BALANCE = [(m, 3, [(a, s, 1, 0), (b, 1 - s, 1, 0)], {"StartBase": "3", "Superwea
            for m in ("Arena.mmx", "Hills.mmx", "Tower.mmx", "Lostlake.mmx")
            for a, b in ((0, 8), (0, 9), (8, 9))
            for s in (0, 1)]
-SUITES = {"tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
+# Strategy layer A/B: director with plans (1) against the director without them (16319: every
+# default feature but DIR_F_STRATEGY), each pairing and start both ways round, on the user's settings.
+NOSTRAT = 16319
+USER = {"StartBase": "3", "Superweapons": "0", "Crates": "1"}
+STRAT = [(m, 3, [(a, s, 1 if on == 0 else NOSTRAT, 0), (b, 1 - s, NOSTRAT if on == 0 else 1, 0)], dict(USER))
+         for m in ("Arena.mmx", "Hills.mmx", "Tower.mmx", "Lostlake.mmx")
+         for a, b in ((0, 8), (0, 9), (8, 9))
+         for s in (0, 1)
+         for on in (0, 1)]
+# The same on held-out maps, from a bare MCV.
+STRAT_MCV = [(m, 3, [(a, s, 1 if on == 0 else NOSTRAT, 0), (b, 1 - s, NOSTRAT if on == 0 else 1, 0)],
+              {"Superweapons": "0", "Crates": "1"})
+             for m in ("DeepFrze.yro", "Rockets.mmx", "Carville.mmx", "Round.mmx")
+             for a, b in ((0, 8), (0, 9), (8, 9))
+             for s in (0, 1)
+             for on in (0, 1)]
+# Island free-for-all on the user's map and settings: seven directors, strategy on in alternate
+# slots, then the other way round.
+ISO = "Maps/2024/2024 - (2-8) Isolation 1.2 NP.yro"
+STRAT_ISO = [(ISO, 0, [(c, k + 1, 1 if (k + flip) % 2 == 0 else NOSTRAT, 0) for k, c in enumerate(order)], dict(USER))
+             for order in ((0, 8, 9, 1, 2, 5, 7), (9, 0, 8, 7, 1, 2, 5))
+             for flip in (0, 1)]
+SUITES = {"strat": STRAT, "strat_iso": STRAT_ISO, "strat_mcv": STRAT_MCV, "tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
 
 
 def suite_list(outdir, matches, frames=60000):
     lines = []
     for i, (m, human, ais, extra) in enumerate(matches):
-        line = run(os.path.join(outdir, f"{i:02d}-{os.path.splitext(os.path.basename(m))[0].replace(' ', '_')}"),
-                   m, ais, human, frames, extra=extra)
+        out = os.path.join(outdir, f"{i:02d}-{os.path.splitext(os.path.basename(m))[0].replace(' ', '_')}")
+        if os.path.exists(os.path.join(out, "yspawn-bench.csv")):   # resumable: played already
+            continue
+        line = run(out, m, ais, human, frames, extra=dict(extra) if extra else None)
         print(line, flush=True)
         lines.append(line)
     return lines
@@ -328,7 +405,7 @@ def suite(outdir, filt=None, frames=60000):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if not args or args[0] not in ("run", "summary", "suite", "restore", "factions", "units"):
+    if not args or args[0] not in ("run", "summary", "suite", "restore", "factions", "units", "ab"):
         raise SystemExit(__doc__)
     if args[0] == "restore":
         restore()
@@ -339,6 +416,9 @@ if __name__ == "__main__":
             suite_list(args[1], SUITES[name])
         else:
             suite(args[1], None if name == "tune" else name)
+        raise SystemExit
+    if args[0] == "ab":
+        print(strategy_ab(args[1:]))
         raise SystemExit
     if args[0] == "units":
         print(units(args[1:]))
@@ -352,14 +432,18 @@ if __name__ == "__main__":
         print(tally(args[1:]))
         raise SystemExit
     opts = {"--human-start": -1, "--frames": 40000, "--speed": 0, "--seed": 0, "--camera": -1}
-    rest = []
+    rest, sets = [], {}
     it = iter(args[1:])
     for a in it:
-        if a in opts:
+        if a == "--set":   # any [Settings] key, e.g. --set StartBase=3 --set Superweapons=0
+            k, _, v = next(it).partition("=")
+            sets[k] = v
+        elif a in opts:
             opts[a] = int(next(it))
         else:
             rest.append(a)
     outdir, map_file, *ai_args = rest
-    extra = {"RevealMap": "1", "Camera": str(opts["--camera"])} if opts["--camera"] >= 0 else None
+    extra = {"Camera": str(opts["--camera"])} if opts["--camera"] >= 0 else {}
+    extra = {**extra, **sets} or None
     print(run(outdir, map_file, [parse_ai(a) for a in ai_args], opts["--human-start"], opts["--frames"],
               opts["--speed"], opts["--seed"], extra=extra))

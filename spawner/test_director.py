@@ -81,6 +81,67 @@ class PolicyTests(unittest.TestCase):
             assert(!dir_want_refinery(16000, 3, 3, 1, 5000));   /* idle harvesters: ore gone or cut off */
             assert(!dir_want_refinery(16000, 4, 4, 0, 5000) && !dir_want_refinery(5000, 1, 1, 0, 5000));
             assert(!dir_want_refinery(16000, 3, 3, 0, 12000));
+            /* strategy: plan weights follow the setup */
+            int w[PLAN_COUNT];
+            dir_plan_weights(50, 1, 0, 0, w);                      /* a close duel: rush is likeliest */
+            assert(w[PLAN_RUSH] > w[PLAN_BALANCED] && w[PLAN_RUSH] > w[PLAN_BOOM]);
+            dir_plan_weights(50, 1, 3, 0, w);                      /* ...but not from a built base */
+            assert(w[PLAN_RUSH] < w[PLAN_BALANCED] / 2);
+            dir_plan_weights(-1, 1, 0, 0, w);                      /* nobody on foot: no rush */
+            assert(w[PLAN_RUSH] == 0 && w[PLAN_BOOM] > 15);
+            dir_plan_weights(60, 6, 3, 0, w);                      /* a big free-for-all: rush is rare */
+            assert(w[PLAN_RUSH] < 15 && w[PLAN_BOOM] >= 30 && w[PLAN_SIEGE] == 20 && w[PLAN_NAVAL] == 0);
+            dir_plan_weights(-1, 6, 3, 1, w);                   /* islands: the fleet is the way over */
+            assert(w[PLAN_NAVAL] >= w[PLAN_BALANCED] && w[PLAN_RUSH] == 0);
+            /* later plans: siege against a fortress, boom when behind in refineries, never a rush */
+            dir_replan_weights(9000, 4000, 3, 3, 60, 0, w);
+            assert(w[PLAN_SIEGE] > w[PLAN_BALANCED] && w[PLAN_RUSH] == 0 && w[PLAN_NAVAL] == 0);
+            dir_replan_weights(1000, 20000, 2, 4, 60, 0, w);
+            assert(w[PLAN_SIEGE] < w[PLAN_BALANCED] && w[PLAN_BOOM] == 30);
+            dir_replan_weights(1000, 20000, 4, 4, -1, 1, w);
+            assert(w[PLAN_NAVAL] == 35 && w[PLAN_BOOM] == 5);
+            /* the draw covers every plan with weight, and only those */
+            int seen[PLAN_COUNT] = { 0 }, none_rush[PLAN_COUNT] = { 10, 0, 10, 10, 0 };
+            for (unsigned r = 0; r < 1000; r++) {
+                seen[dir_plan_pick(none_rush, r * 2654435761u)]++;
+            }
+            assert(seen[PLAN_RUSH] == 0 && seen[PLAN_NAVAL] == 0 && seen[PLAN_BALANCED] > 200 && seen[PLAN_BOOM] > 200 && seen[PLAN_SIEGE] > 200);
+            int zero[PLAN_COUNT] = { 0 };
+            assert(dir_plan_pick(zero, 7) == PLAN_BALANCED);
+            /* balanced levers are the director as it was */
+            const DirPlanLevers *b = &dir_plan_levers[PLAN_BALANCED];
+            for (int a = 4000; a < 70000; a += 1500)
+                for (int e = 0; e < 60000; e += 2500)
+                    for (int wt = 0; wt <= 12000; wt += 6000)
+                        assert(dir_should_launch(a, 10, e, e / 3, 13000, wt)
+                               == dir_should_launch_plan(a, 10, e, e / 3, 13000, wt, b->floor_pct, b->edge, b->min_units));
+            /* a rush launches a small army early; a boom waits for a bigger one */
+            const DirPlanLevers *rush = &dir_plan_levers[PLAN_RUSH], *boom = &dir_plan_levers[PLAN_BOOM];
+            assert(dir_should_launch_plan(2500, 5, 2000, 0, 5000, 0, rush->floor_pct, rush->edge, rush->min_units));
+            assert(!dir_should_launch(2500, 5, 2000, 0, 5000, 0));
+            assert(!dir_should_launch_plan(6000, 10, 2000, 0, 5000, 0, boom->floor_pct, boom->edge, boom->min_units));
+            assert(dir_should_launch_plan(8000, 10, 2000, 0, 5000, 0, boom->floor_pct, boom->edge, boom->min_units));
+            /* the plan bends the mix and the schedule */
+            dir_role_shares(0, 0, 10000, 0, s);
+            dir_plan_shares(&dir_plan_levers[PLAN_SIEGE], s);
+            assert(s[ROLE_SIEGE] == 25 && s[ROLE_SUPPORT] == 5 && s[ROLE_MAIN] + s[ROLE_AA] + s[ROLE_SIEGE] + s[ROLE_SUPPORT] == 100);
+            assert(dir_want_refinery_plan(3500, 2, 2, 0, 5000, boom->refinery_bonus, boom->refinery_early));
+            assert(!dir_want_refinery(3500, 2, 2, 0, 5000));
+            assert(dir_want_refinery_plan(16000, 4, 4, 0, 5000, 1, 0) && !dir_want_refinery_plan(16000, 5, 5, 0, 5000, 1, 0));
+            /* posture: hold against a stronger army near home, press a clear lead, strike an empty base */
+            assert(dir_posture(POSTURE_NORMAL, 10000, 8000, 16000, 8000, 8000, 1) == POSTURE_HOLD);
+            assert(dir_posture(POSTURE_NORMAL, 10000, 8000, 14000, 8000, 8000, 1) == POSTURE_NORMAL);
+            assert(dir_posture(POSTURE_HOLD, 10000, 8000, 11001, 8000, 8000, 1) == POSTURE_HOLD);   /* hysteresis */
+            assert(dir_posture(POSTURE_HOLD, 10000, 8000, 10900, 8000, 8000, 1) == POSTURE_NORMAL);
+            assert(dir_posture(POSTURE_NORMAL, 3000, 0, 3000, 0, 0, 1) == POSTURE_NORMAL);       /* a scout is no threat */
+            assert(dir_posture(POSTURE_NORMAL, 16000, 10000, 0, 10000, 10000, 1) == POSTURE_PRESS);
+            assert(dir_posture(POSTURE_NORMAL, 15900, 10000, 0, 10000, 10000, 1) == POSTURE_NORMAL);
+            assert(dir_posture(POSTURE_PRESS, 13000, 10000, 0, 10000, 10000, 1) == POSTURE_PRESS);
+            assert(dir_posture(POSTURE_NORMAL, 5000, 10000, 0, 10000, 3000, 2) == POSTURE_OPPORTUNITY);
+            assert(dir_posture(POSTURE_NORMAL, 5000, 10000, 0, 10000, 3000, 1) == POSTURE_NORMAL);   /* duel: it's coming */
+            assert(dir_posture(POSTURE_NORMAL, 5000, 10000, 2600, 10000, 3000, 2) == POSTURE_NORMAL); /* toward us */
+            assert(dir_posture(POSTURE_NORMAL, 5000, 10000, 0, 10000, 3500, 2) == POSTURE_NORMAL);
+            assert(dir_posture(POSTURE_NORMAL, 2000, 2000, 0, 2000, 0, 1) == POSTURE_NORMAL);   /* too small to matter */
         }
         '''
         with tempfile.TemporaryDirectory() as tmp:
@@ -106,6 +167,12 @@ class HookTests(unittest.TestCase):
         self.assertEqual(image[0x6EA88F - base:0x6EA892 - base], bytes([0xC2, 0x0C, 0x00]))
         # SetFocus is a plain store to TechnoClass+0x218, which Area_Guard reads as its centre
         self.assertEqual(image[0x70C614 - base:0x70C61A - base], bytes([0x89, 0x81, 0x18, 0x02, 0, 0]))
+        # The factory AI asks the house for its pick: building type in EDX (mov edx,[esi+0x520]), the
+        # factory RTTI and a constant 0 pushed, then call 0x4FBD80, which returns with ret 8
+        self.assertEqual(image[0x450319 - base:0x450332 - base],
+                         bytes([0x8B, 0x96, 0x20, 0x05, 0, 0, 0x8B, 0x8E, 0x1C, 0x02, 0, 0, 0x53,
+                                0x8B, 0x82, 0xB8, 0x0E, 0, 0, 0x50, 0xE8, 0x4E, 0xBA, 0x0A, 0x00]))
+        self.assertEqual(image[0x4FBDC3 - base:0x4FBDC6 - base], bytes([0xC2, 0x08, 0x00]))
 
 
 if __name__ == '__main__':
