@@ -152,8 +152,9 @@ static const DirPlanLevers dir_plan_levers[PLAN_COUNT] = {
     /*            floor edge min  siege sup aa  ref early fact expand idle eco  phase navy fleet */
     [PLAN_BALANCED] = { 100, 12, 6,   0,  0,  0,  0,    0, 100, 9000, 1, 0,     0,   0, 3000 },
     /* rush: a smaller army goes early for the enemy's production and income, from more factories
-     * and no economy beyond the opening one; lasts 14000 frames or until its first attack ends */
-    [PLAN_RUSH]     = {  45, 10, 5,  -5,  5,  0,  0,    0,  50, 20000, 1, 1, 14000,  0, 3000 },
+     * and no economy beyond the opening one; lasts 14000 frames or until its first attack ends.
+     * The edge stays 1.2: at parity the defender won (3 of 12 rushes won the MCV duels) */
+    [PLAN_RUSH]     = {  45, 12, 5,  -5,  5,  0,  0,    0,  50, 20000, 1, 1, 14000,  0, 3000 },
     /* boom: refineries early, an expansion as soon as the yard can pay for one, a late and heavy
      * first strike, and factories to spend the money afterwards; 20000 frames */
     [PLAN_BOOM]     = { 160, 13, 8,   0,  0,  0,  1, 3000, 120, 4500, 0, 0, 20000,  0, 3000 },
@@ -178,9 +179,9 @@ static void dir_plan_weights(int land_steps, int enemies, int tier, int sea, int
      * tier-3 A/B never launched at all */
     if (tier >= 2)
         w[PLAN_RUSH] /= 3;
-    /* a late first strike loses duels to an early attack (0 of 5 from MCV starts at 74 cells):
-     * boom is for long walks and crowded maps */
-    w[PLAN_BOOM] = 5 + (land_steps < 0 || land_steps > 110 ? 20 : 0) + (enemies >= 3 ? 15 : 0);
+    /* a late first strike loses duels to an early attack (0 of 5 from MCV starts at 74 cells, 0 of
+     * 3 again later): boom is for long walks and crowded maps, never a duel within reach */
+    w[PLAN_BOOM] = (enemies >= 2 ? 5 : 0) + (land_steps < 0 || land_steps > 110 ? 20 : 0) + (enemies >= 3 ? 15 : 0);
     w[PLAN_SIEGE] = 15 + (tier >= 2 ? 10 : 0);
     /* sea: our water reaches some enemy's buildings; across water a fleet is the way over */
     w[PLAN_NAVAL] = !sea ? 0 : land_steps < 0 ? 35 : 10;
@@ -190,11 +191,12 @@ static void dir_plan_weights(int land_steps, int enemies, int tier, int sea, int
  * def is the target's static defence, army its mobile army; refineries ours and the strongest
  * enemy's. A rush is an opening only. */
 static void dir_replan_weights(int def, int army, int refineries, int their_refineries, int land_steps, int sea,
-                               int w[PLAN_COUNT])
+                               int enemies, int w[PLAN_COUNT])
 {
     w[PLAN_BALANCED] = 30;
     w[PLAN_RUSH] = 0;
-    w[PLAN_BOOM] = refineries < their_refineries ? 30 : 5;
+    /* in a duel within reach, booming mid-game handed the enemy the initiative: 0 of 7 won */
+    w[PLAN_BOOM] = enemies < 2 && land_steps >= 0 ? 0 : refineries < their_refineries ? 30 : 5;
     w[PLAN_SIEGE] = def > 4000 && def * 2 > army ? 40 : 10;
     w[PLAN_NAVAL] = !sea ? 0 : land_steps < 0 ? 35 : 10;
 }

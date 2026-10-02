@@ -5049,7 +5049,7 @@ static void dir_replan(BYTE *house, DirState *d)
             theirs = FIELD(h, OIL_H_REFINERIES, int);
     }
     int w[PLAN_COUNT];
-    dir_replan_weights(d->enemy_def, d->target_army, refineries, theirs, d->land_steps, d->sea, w);
+    dir_replan_weights(d->enemy_def, d->target_army, refineries, theirs, d->land_steps, d->sea, dir_hostile_houses(house), w);
     if (FIELD(house, OIL_H_SIDE, int) == 0)
         w[PLAN_NAVAL] /= 2;
     int plan = dir_plan_pick(w, dir_next_roll(d));

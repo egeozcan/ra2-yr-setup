@@ -95,19 +95,21 @@ class PolicyTests(unittest.TestCase):
             dir_plan_weights(50, 1, 3, 0, w);                      /* ...but not from a built base */
             assert(w[PLAN_RUSH] < w[PLAN_BALANCED] / 4);
             dir_plan_weights(-1, 1, 0, 0, w);                      /* nobody on foot: no rush */
-            assert(w[PLAN_RUSH] == 0 && w[PLAN_BOOM] >= 25);
+            assert(w[PLAN_RUSH] == 0 && w[PLAN_BOOM] >= 20);
             dir_plan_weights(60, 6, 3, 0, w);                      /* a big free-for-all: rush is rare */
             assert(w[PLAN_RUSH] < 15 && w[PLAN_BOOM] >= 20 && w[PLAN_SIEGE] == 25 && w[PLAN_NAVAL] == 0);
-            dir_plan_weights(74, 1, 0, 0, w);                   /* a duel at medium range: boom is rare */
-            assert(w[PLAN_BOOM] <= 5);
+            dir_plan_weights(74, 1, 0, 0, w);                   /* a duel at medium range: no boom */
+            assert(w[PLAN_BOOM] == 0);
             dir_plan_weights(-1, 6, 3, 1, w);                   /* islands: the fleet is the way over */
             assert(w[PLAN_NAVAL] >= w[PLAN_BALANCED] && w[PLAN_RUSH] == 0);
             /* later plans: siege against a fortress, boom when behind in refineries, never a rush */
-            dir_replan_weights(9000, 4000, 3, 3, 60, 0, w);
+            dir_replan_weights(9000, 4000, 3, 3, 60, 0, 1, w);
             assert(w[PLAN_SIEGE] > w[PLAN_BALANCED] && w[PLAN_RUSH] == 0 && w[PLAN_NAVAL] == 0);
-            dir_replan_weights(1000, 20000, 2, 4, 60, 0, w);
+            dir_replan_weights(1000, 20000, 2, 4, 60, 0, 3, w);
             assert(w[PLAN_SIEGE] < w[PLAN_BALANCED] && w[PLAN_BOOM] == 30);
-            dir_replan_weights(1000, 20000, 4, 4, -1, 1, w);
+            dir_replan_weights(1000, 20000, 2, 4, 60, 0, 1, w);   /* a duel within reach: no boom */
+            assert(w[PLAN_BOOM] == 0);
+            dir_replan_weights(1000, 20000, 4, 4, -1, 1, 1, w);
             assert(w[PLAN_NAVAL] == 35 && w[PLAN_BOOM] == 5);
             /* the draw covers every plan with weight, and only those */
             int seen[PLAN_COUNT] = { 0 }, none_rush[PLAN_COUNT] = { 10, 0, 10, 10, 0 };
