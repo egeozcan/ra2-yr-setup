@@ -28,6 +28,9 @@ class PolicyTests(unittest.TestCase):
             assert(dir_should_launch(8000, 10, 0, 0, 13000, 0));
             assert(!dir_should_launch(30000, 60, 90000, 0, 13000, 0));   /* no count override */
             assert(!dir_should_launch(60000, 10, 90000, 0, 13000, 0));   /* big, but outnumbered */
+            assert(dir_should_launch(8600, 10, 2600, 0, 30000, 0));      /* late: finish off a broken enemy */
+            assert(!dir_should_launch(3900, 10, 500, 0, 30000, 0));      /* ...from 4000 up */
+            assert(!dir_should_launch(7500, 10, 2600, 0, 13000, 0));     /* not before frame 24000 */
             assert(!dir_should_launch(60000, 10, 55000, 0, 13000, 0));   /* the defender wins at 1.1 */
             assert(dir_should_launch(60000, 10, 50000, 0, 13000, 0));
             assert(dir_should_launch(100000, 10, 99000, 0, 13000, 0));   /* parity from 100000 */

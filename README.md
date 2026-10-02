@@ -975,6 +975,8 @@ What it does, per Brutal house:
     100,000, 0.8 from 150,000. It used to launch at 60,000 whatever it faced: the faster-growing
     side got there first and attacked an equal army in its own base, which the attacker loses.
     In the MCV A/B, 8 of 9 strategy houses whose first attack went so lost the duel.
+  - From frame 24,000 the army floor (12,000) drops to twice the opposition, from 4,000 up: an
+    army of 8,600 sat at home against 2,600 until the time limit.
   - It attacks the nearest structures with focus fire. Units answer anything already able to
     shoot them, and units well ahead of the group wait for the rest.
   - It retreats a losing attack, measured at the front. It defends against enemies near its

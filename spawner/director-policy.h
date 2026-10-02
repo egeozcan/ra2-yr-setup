@@ -263,6 +263,10 @@ static int dir_should_launch_plan(int army_value, int army_count, int enemy_army
     if (e < 8)
         e = 8;
     long long opposition = enemy_army_value + enemy_defense / 2;
+    /* late on, a broken enemy is finished off by what we have: the 12000 floor kept 8600 at home
+     * against 2600 until the time limit. Twice the opposition will do, from 4000 up. */
+    if (frame >= 24000 && opposition * 2 < floor)
+        floor = opposition * 2 > 4000 ? (int)(opposition * 2) : 4000;
     return army_value >= floor && (long long)army_value * 10 >= opposition * e;
 }
 
