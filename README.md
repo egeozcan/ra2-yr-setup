@@ -970,7 +970,11 @@ What it does, per Brutal house:
 - **Army.** Team-less combat units form one army. Units are taken from attack teams once their
   script has started. Guard, oil and base-defence teams keep theirs.
   - The army gathers at a rally point on open land (never a bridge or inside the base).
-  - It launches when it outvalues the target enemy's army plus half its defences.
+  - It launches when it outvalues the target enemy's army plus half its defences, by 1.2 times
+    (plans and posture move that edge). A huge army breaks a stalemate at a lower edge: 1.0 from
+    100,000, 0.8 from 150,000. It used to launch at 60,000 whatever it faced: the faster-growing
+    side got there first and attacked an equal army in its own base, which the attacker loses.
+    In the MCV A/B, 8 of 9 strategy houses whose first attack went so lost the duel.
   - It attacks the nearest structures with focus fire. Units answer anything already able to
     shoot them, and units well ahead of the group wait for the rest.
   - It retreats a losing attack, measured at the front. It defends against enemies near its

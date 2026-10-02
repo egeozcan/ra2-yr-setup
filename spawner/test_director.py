@@ -27,7 +27,12 @@ class PolicyTests(unittest.TestCase):
             assert(!dir_should_launch(7000, 10, 0, 0, 13000, 0));
             assert(dir_should_launch(8000, 10, 0, 0, 13000, 0));
             assert(!dir_should_launch(30000, 60, 90000, 0, 13000, 0));   /* no count override */
-            assert(dir_should_launch(60000, 10, 90000, 0, 13000, 0));
+            assert(!dir_should_launch(60000, 10, 90000, 0, 13000, 0));   /* big, but outnumbered */
+            assert(!dir_should_launch(60000, 10, 55000, 0, 13000, 0));   /* the defender wins at 1.1 */
+            assert(dir_should_launch(60000, 10, 50000, 0, 13000, 0));
+            assert(dir_should_launch(100000, 10, 99000, 0, 13000, 0));   /* parity from 100000 */
+            assert(!dir_should_launch(99000, 10, 98000, 0, 13000, 0));
+            assert(dir_should_launch(150000, 10, 180000, 0, 13000, 0));  /* 0.8 from 150000 */
             /* a long wait lowers the edge the army asks for, never below 0.8 of the opposition */
             assert(!dir_should_launch(40000, 50, 40000, 0, 30000, 5999));
             assert(dir_should_launch(40000, 50, 40000, 0, 30000, 6000));

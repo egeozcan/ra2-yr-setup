@@ -248,10 +248,16 @@ static int dir_should_launch_plan(int army_value, int army_count, int enemy_army
 {
     if (army_count < min_units)
         return 0;
-    if (army_value >= 60000)
-        return 1;
     int floor = (frame < 12000 ? 5000 : frame < 24000 ? 8000 : 12000) * floor_pct / 100;
     int e = edge - (waited >= 12000 ? 4 : waited >= 6000 ? 2 : 0);
+    /* A huge army breaks a stalemate at a lower edge: parity from 100000, 0.8 from 150000. It used
+     * to launch at 60000 whatever it faced: the faster-growing side got there first and threw itself
+     * at an equal army in that army's base, which the attacker loses (in the MCV A/B, 8 of 9
+     * strategy houses whose first attack went so lost the duel, at 0.94-1.14 of the defender). */
+    if (army_value >= 150000 && e > 8)
+        e = 8;
+    else if (army_value >= 100000 && e > 10)
+        e = 10;
     if (e < 8)
         e = 8;
     long long opposition = enemy_army_value + enemy_defense / 2;
