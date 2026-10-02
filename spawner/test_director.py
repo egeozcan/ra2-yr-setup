@@ -197,6 +197,11 @@ class HookTests(unittest.TestCase):
         self.assertEqual(image[0x50B77B - base:0x50B77E - base], bytes([0xC2, 0x08, 0x00]))
         # PassengerClass::GetTotalSize, on TechnoClass +0x114: push ecx / push ebx / mov ebx,[ecx] / mov ecx,[ecx+4]
         self.assertEqual(image[0x473460 - base:0x473467 - base], bytes([0x51, 0x53, 0x8B, 0x19, 0x8B, 0x49, 0x04]))
+        # The base planner's type test: mov edi,[edx+ecx*4] / cmp edi,eax / jge 0x505E33 / cmp edi,-4; the
+        # next entry at 0x505EAD (mov ecx,[esp+10h])
+        self.assertEqual(image[0x505DA5 - base:0x505DB3 - base],
+                         bytes([0x8B, 0x3C, 0x8A, 0x3B, 0xF8, 0x0F, 0x8D, 0x83, 0, 0, 0, 0x83, 0xFF, 0xFC]))
+        self.assertEqual(image[0x505EAD - base:0x505EB1 - base], bytes([0x8B, 0x4C, 0x24, 0x10]))
         # BuildingClass::Sell does nothing unless +0x6E9 (build-up art present) is set
         self.assertEqual(image[0x447113 - base:0x447119 - base], bytes([0x8A, 0x86, 0xE9, 0x06, 0, 0]))
 
