@@ -2724,16 +2724,20 @@ static void dir_engineers(BYTE *house, DirState *d)
         target = b;
     }
     if (!target) {
-        best = 18 * 18;
+        /* derricks within 40 cells of the base, the rally (where the army waits) or the front;
+         * other tech buildings closer in. At 18 cells a house whose derricks lay further out never
+         * sent an engineer all game, sitting out a stalemate with its ore gone. */
+        best = 40 * 40;
         for (int i = 0; i < dir_enemy_count; i++) {
             DirEnemy *e = &dir_enemies[i];
             if (!e->capturable)
                 continue;
-            int dd = dir_dist2(e->at, d->base), df = dir_dist2(e->at, d->front);
+            int dd = dir_dist2(e->at, d->base), df = dir_dist2(e->at, d->front), dr = dir_dist2(e->at, d->rally);
             dd = df < dd ? df : dd;
+            dd = dr < dd ? dr : dd;
             int oil = !_stricmp((char *)dir_type(e->obj) + T_ID, "CAOILD");
             if (!oil)
-                dd += 6 * 6;
+                dd += 22 * 22;
             if (dd >= best)
                 continue;
             int guarded = 0;
@@ -2834,6 +2838,10 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
 {
     int best = 0, max_ore = 0, with_ore = 0, rejected = 0;
     DynVec *bv = OIL_BUILDING_ARRAY;
+    /* within 45 cells of home; if no field there will do, out to 70 (a long standoff mines out
+     * the near fields, and all the rest lay beyond 45) */
+    for (int reach = 45; reach <= 70 && !best; reach += 25) {
+    max_ore = with_ore = rejected = 0;
     for (int y = 4; y < 400; y += 4)
         for (int x = 4; x < 400; x += 4) {
             CellXY c = { (short)x, (short)y };
@@ -2844,7 +2852,7 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
             if (ore < 2500)
                 continue;
             with_ore++;
-            int dist = dir_dist2(c, d->base), ok = dist >= 16 * 16 && dist <= 45 * 45;
+            int dist = dir_dist2(c, d->base), ok = dist >= 16 * 16 && dist <= reach * reach;
             for (int i = 0; ok && i < bv->Count; i++) {
                 BYTE *b = bv->Items[i], *owner = FIELD(b, O_OWNER, BYTE *);
                 if (!oil_live(b))
@@ -2871,8 +2879,9 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
             }
         }
     if (bench_file)
-        logmsg("director: house %d site search: max ore %d, %d ore spots, %d rejected, best score %d",
-               FIELD(house, 0x30, int), max_ore, with_ore, rejected, best);
+        logmsg("director: house %d site search (%d cells): max ore %d, %d ore spots, %d rejected, best score %d",
+               FIELD(house, 0x30, int), reach, max_ore, with_ore, rejected, best);
+    }
     if (!best)
         return 0;
     /* a clear 4x4 spot for the construction yard beside the ore */
