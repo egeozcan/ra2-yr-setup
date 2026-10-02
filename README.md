@@ -1333,6 +1333,63 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   (`dir_fallback_spot`, the nearest one the engine accepts, 2–20 cells from the base centre). On
   Isolation, Yuri had one war factory all game with 40k unspent.
 
+### Economy, defence and watching (2026-10-02, from the user's playtest notes)
+
+- **Power ahead of need.** The combat AI adds war factories only with 50 power to spare, and stock
+  plans build power late. Russia on MCV starts sat at one war factory with 25–30k unspent until
+  frame 9,000: one Tesla Reactor gave 150 against a drain of 135. With under 100 spare and the build
+  queue free, the director now queues a power plant (a Nuclear Reactor for the Soviets when they
+  can build one). Russia then had 3 factories and 8k in hand at frame 9,000.
+- **Refineries:**
+  - The refinery rule waited until cash fell under 12,000, as a "money is short" test. Isolation
+    starts with 50,000, so a house spent it all on units and stayed on one refinery, broke from
+    frame 12,000. The cap no longer applies with a single refinery or during a boom.
+  - With one refinery after frame 4,500 and under 2,500 in hand, director unit picks wait until a
+    second refinery can be paid for.
+- **Refineries go to the ore.** A refinery is placed on the spot nearest the best ore field within
+  30 cells of home. Fields count their ore value minus 30 per cell of distance; a field one of our
+  refineries already serves counts a third, and fields by enemy buildings are skipped. Where none
+  fits, the stock base plan is used as before. (`dir_refinery_place`, in the `FindBuildLocation`
+  hook.)
+- **Yuri's Slave Miners move.** A deployed Slave Miner (`YAREFN`) that has stood 4,500 frames packs
+  up when a field within 60 cells is at least 4× richer and worth 1,500. That field must be clear of
+  enemies and of our other miners. Undeploying is the selling mission: `Mission_Selling` turns a
+  building with `UndeploysInto` that isn't a construction yard back into its unit. The miner then
+  gets a player's harvest click on the field and deploys there by itself. One move at a time.
+  - **Tested** on Isolation: Yuri's miner at an ore value of 1,125 packed up and went to a field
+    worth 10,600.
+- **Fenced tech buildings.** Before an engineer captures a building, a flood fill checks whether it
+  is fenced in. Walls and fences are overlays whose type has `Wall=yes` (`OverlayTypeClass` +0x2A8,
+  types at 0xA83D80, the cell's overlay index at +0x44); they block movement by that flag, while the
+  cell's land type stays clear. The walled-in unit check uses the same test now.
+  - **Breakable fence** (the `Wall=yes` overlays: `CAFNCB`, `CAFNCW`, `CAFNCP`): the two nearest
+    armed units shoot the panel nearest the engineer, held out of the army for 600 frames.
+  - **Sealed** by rock, water or other buildings: the target is given up at once. The `FENCE01–22`
+    overlays are `Land=Rock` and can't be destroyed.
+  - A box closed only by cliffs is "sealed" only when the whole-map land fill can't reach the
+    building either. Plateau derricks whose ramp lies further out are not given up.
+  - Benchmark logs list fenced and sealed tech buildings at frame 300. Rockets Red Glare has 12
+    fenced derricks; the other tuning maps have none.
+  - **Tested** on Rockets Red Glare: both houses opened derrick fences and captured the derricks
+    (the first by frame 1,504).
+- **Guards fall back.** While the base is defended and the raid outvalues the army at home by 1.2×
+  (and is worth 3,000+), units of guard, oil and base-defence teams more than 15 cells out leave their
+  teams and join the fight. They then stay team-less and join the army.
+- **Infantry defence.** Two raids in five, a draw from the house's random stream, are met with a
+  barracks flood while they last, up to 60 infantry:
+  - anti-tank infantry against vehicles: Guardian GI, Tesla Trooper, Brute;
+  - cheap infantry against infantry: GI, Conscript, Initiate.
+- **Resource display.** With Reveal map on, every 1,500 frames each living AI gets one line in its
+  colour, lasting until the next. For example: "Russia (2): $6.2k, 2 ref 4 harv, army $55.2k (82),
+  def $5.5k, 20 bldg, balanced/normal". That is cash, refineries and harvesters, army value and
+  unit count, defence value, buildings, plan and posture.
+  - The message list holds 12 lines instead of 6 with Reveal map on. The `push 6` at 0x4A8BAF
+    before `MessageListClass::Init` is patched; the engine's buffers hold 14.
+- **Bench:**
+  - A crash report (`except.txt`) newer than the match ends it at once. Before, the hung game sat
+    out the one-hour timeout.
+  - So does a match with no benchmark row two minutes after launch, i.e. hung while loading.
+
 ### Settings
 
 `[AIn]` keys in `yspawn.ini` (Skirmish Setup writes `Director` from the AI's level; 3 is 0, 4 is 1):

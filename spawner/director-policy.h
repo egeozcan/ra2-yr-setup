@@ -170,15 +170,18 @@ static const DirPlanLevers dir_plan_levers[PLAN_COUNT] = {
 static void dir_plan_weights(int land_steps, int enemies, int tier, int sea, int w[PLAN_COUNT])
 {
     w[PLAN_BALANCED] = 30;
-    w[PLAN_RUSH] = land_steps < 0 ? 0 : land_steps <= 70 ? 35 : land_steps <= 110 ? 15 : 5;
+    /* rush won 11 of 26 in the A/B runs (balanced 25 of 43, siege 10 of 15): a gamble, kept rare */
+    w[PLAN_RUSH] = land_steps < 0 ? 0 : land_steps <= 70 ? 15 : land_steps <= 110 ? 8 : 3;
     if (enemies >= 3)
         w[PLAN_RUSH] /= 3;   /* in a free-for-all a rush leaves the base to everyone else */
     /* from a built base both armies grow alike and parity never comes: 4 of 5 rushes lost in the
      * tier-3 A/B never launched at all */
     if (tier >= 2)
         w[PLAN_RUSH] /= 3;
-    w[PLAN_BOOM] = 15 + (land_steps < 0 || land_steps > 110 ? 20 : 0) + (enemies >= 3 ? 15 : 0);
-    w[PLAN_SIEGE] = 10 + (tier >= 2 ? 10 : 0);
+    /* a late first strike loses duels to an early attack (0 of 5 from MCV starts at 74 cells):
+     * boom is for long walks and crowded maps */
+    w[PLAN_BOOM] = 5 + (land_steps < 0 || land_steps > 110 ? 20 : 0) + (enemies >= 3 ? 15 : 0);
+    w[PLAN_SIEGE] = 15 + (tier >= 2 ? 10 : 0);
     /* sea: our water reaches some enemy's buildings; across water a fleet is the way over */
     w[PLAN_NAVAL] = !sea ? 0 : land_steps < 0 ? 35 : 10;
 }
@@ -278,7 +281,10 @@ static int dir_want_refinery_plan(int frame, int refineries, int harvesters, int
     int wanted = f < 6000 ? 0 : f < 15000 ? 3 : f < 30000 ? 4 : 5;
     if (wanted)
         wanted += bonus;
-    return refineries < wanted && harvesters >= refineries && idle_harvesters == 0 && cash < 12000 + 4000 * bonus;
+    /* "money is short" (under 12000) except with a single refinery or in a boom: a rich start
+     * (Isolation hands out 50000) otherwise spent it all on units and stayed on one refinery */
+    return refineries < wanted && harvesters >= refineries && idle_harvesters == 0
+        && (refineries < 2 || bonus > 0 || cash < 12000);
 }
 
 #endif

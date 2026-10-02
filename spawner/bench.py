@@ -93,8 +93,18 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         spawn.launch()
         while not spawn.running() and time.time() - began < 60:
             time.sleep(1)
+        crash = os.path.join(spawn.GAME, "except.txt")
         while spawn.running() and time.time() - began < timeout:
             time.sleep(2)
+            # a crash leaves the game hung on its error report: note it and move on
+            # hung while loading: no benchmark row two minutes after the launch
+            if time.time() - began > 120 and not os.path.exists(result):
+                print(f"{outdir}: no game frames after 120 s, stopping", flush=True)
+                break
+            if os.path.exists(crash) and os.path.getmtime(crash) >= began - 1:
+                time.sleep(3)
+                print(f"{outdir}: crashed, see except.txt", flush=True)
+                break
         if spawn.running():
             subprocess.run(["pkill", "-x", "gamemd-spawn.ex"])
             time.sleep(3)

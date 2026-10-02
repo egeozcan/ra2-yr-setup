@@ -1027,6 +1027,7 @@ static void combat_queue_expansion(BYTE *house);
 static void team_telemetry_sample(BYTE *house);
 static void bench_sample(void);
 static void observer_reveal(void);
+static void dir_observer_report(void);
 static int director_enabled(BYTE *house);
 static int dir_factory_cash_pct(BYTE *house);
 static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out);

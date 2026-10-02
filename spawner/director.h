@@ -41,13 +41,19 @@
 #define T_MIND_CONTROLLED_BY 0x2C0 /* TechnoClass::MindControlledBy */
 #define T_BUNKER_LINK 0x2E4        /* TechnoClass::BunkerLinkedItem: unit <-> the tank bunker holding it */
 
+#define CELL_ORE_VALUE 0x485020            /* CellClass::GetContainedTiberiumValue */
+static int dir_is_engineer(BYTE *obj);
+static int dir_wall_cell(BYTE *cell);
+typedef struct DirState DirState;
+static unsigned dir_next_roll(DirState *d);
+static int dir_ore_blocked(BYTE *house, CellXY c);
 typedef int (GTHISCALL *dir_prod_fn)(BYTE *);
 static const char *dir_mcvs = "AMCV,SMCV,PCV";
 static const char *dir_transports[3] = { "LCRF", "SAPC", "YHVR" };   /* amphibious ferries */
 static dir_prod_fn dir_unit_original, dir_inf_original;
 
 #define DIR_CONVOY 4
-typedef struct {
+struct DirState {
     BYTE *house;
     int state, next_think, launch_value, launch_frame, last_log;
     int army_value, army_count, enemy_army, target_army, local_enemy, local_ours, threat_value;
@@ -98,12 +104,17 @@ typedef struct {
     int outpost_step, outpost_frame, next_outpost;
     int stranded_frame;
     /* strategy: the plan chosen at the start, and the posture that follows the game */
-    int plan, plan_chosen, land_steps, posture, posture_frame, next_posture, next_hold_defense;
+    int plan, plan_chosen, land_steps, posture, posture_frame, next_posture, next_hold_defense, opening;
     int plan_frame, next_replan, plan_roll;   /* when the plan was adopted; the next re-plan; the random stream */
     int threat_near, target_home;   /* armed enemy units within 35 cells of home; the target's near its base */
     int naval_pick, naval_pick_frame;   /* the shipyard's own order: UnitType index + 1 (0: none) */
+    BYTE *breach_unit[2];               /* units shooting a gap in a fence for an engineer */
+    CellXY miner_from, miner_site;      /* a Slave Miner packed up to move to richer ore */
+    int inf_defense, raid_inf, raid_armor;  /* this raid is met with a barracks flood; what the raiders are */
+    int miner_frame, next_miner;
+    int breach_frame;
     int fleet_value, sea;               /* armed ships' value; our sea reaches enemy buildings */
-} DirState;
+};
 static DirState dir_state[32];
 
 static int dir_active(BYTE *house)
@@ -274,7 +285,7 @@ static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
 /* Enemy out of reach by land: Robot Tanks hover over water, Kirovs, Siege Choppers and Discs fly. */
 static const char *dir_blocked_main[3] = { "ROBO", "SCHP,ZEP", "DISK" };   /* Siege Choppers before Kirovs */
 static const char *dir_infantry[3] = { "GGI,E1", "SHK,E2", "BRUTE,INIT" };
-static const char *dir_warships[3] = { "DEST", "SUB,HYD", "BSUB" };   /* navy answers enemy ships */
+static const char *dir_warships[3] = { "CARRIER,DEST", "SUB,HYD", "BSUB" };   /* navy answers enemy ships */
 /* Anti-air answers to Kirovs, Discs, Harriers and Rocketeers, the same way for every side. */
 static const char *dir_aa_vehicles[3] = { "FV", "HTK", "YTNK" };
 static const char *dir_aa_infantry[3] = { "GGI", "FLAKT", "" };
@@ -371,10 +382,17 @@ static int dir_ground_full(BYTE *house, DirState *d)
     return n >= DIR_HOME_VEHICLES;
 }
 
+/* One refinery after the opening and too poor for a second: units wait until it is paid for. */
+static int dir_saving_for_refinery(BYTE *house)
+{
+    return CURRENT_FRAME > 4500 && FIELD(house, OIL_H_REFINERIES, int) < 2 && FIELD(house, H_HARVESTERS, int) >= 1
+        && FIELD(house, OIL_H_CASH, int) < 2500;
+}
+
 static void dir_choose_vehicle(BYTE *house, DirState *d)
 {
     int side = FIELD(house, OIL_H_SIDE, int);
-    if (side < 0 || side > 2)
+    if (side < 0 || side > 2 || dir_saving_for_refinery(house))
         return;
     int shares[ROLE_COUNT], have[ROLE_COUNT] = { 0 }, available[ROLE_COUNT];
     BYTE *pick[ROLE_COUNT];
@@ -501,7 +519,8 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
     if (d->naval_pick && CURRENT_FRAME - d->naval_pick_frame > 3000)
         d->naval_pick = 0;   /* no yard took it: no yard, or it could not be built */
     /* a naval plan keeps a war fleet beside the army, in the yard's own order */
-    static const char *battle_fleet[3] = { "CARRIER,DEST", "DRED,SUB", "BSUB" };
+    /* Carriers' Hornets traded 3.8, Destroyers 0.12; Typhoons 1.7, Dreadnought missiles 1.6 */
+    static const char *battle_fleet[3] = { "CARRIER", "DRED,SUB", "BSUB" };
     int share = dir_levers(d)->navy_share;
     if (share && !d->naval_pick && side >= 0 && side <= 2
         && (long long)d->fleet_value * 100 < (long long)(d->army_value + d->fleet_value) * share) {
@@ -564,6 +583,18 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
             FIELD(house, H_PRODUCING_INF, int) = index;
             return result;
         }
+        /* a barracks flood against a raid: anti-tank infantry against vehicles, cheap infantry
+         * against infantry; past the usual cap, while the raid lasts */
+        static const char *anti_armor[3] = { "GGI,E1", "SHK,E2", "BRUTE,INIT" }, *anti_inf[3] = { "E1", "E2", "INIT" };
+        if (dd->inf_defense && s0 >= 0 && s0 <= 2 && FIELD(house, H_OWNED_INFANTRY, int) < 60) {
+            BYTE *t = dir_first_buildable(house, INFANTRYTYPE_ARRAY,
+                                          dd->raid_armor >= dd->raid_inf ? anti_armor[s0] : anti_inf[s0], 0);
+            index = t ? dir_type_index(INFANTRYTYPE_ARRAY, t) : -1;
+            if (index >= 0) {
+                FIELD(house, H_PRODUCING_INF, int) = index;
+                return result;
+            }
+        }
     }
     /* cut off by water, infantry can't reach the enemy beyond a ferry load or two: keep a garrison */
     int cap = dd && (dd->blocked || dd->island) ? 16 : 30;
@@ -579,7 +610,7 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
     BYTE *type = d && d->want_engineer ? dir_first_buildable(house, INFANTRYTYPE_ARRAY, engineers[side], 0) : NULL;
     if (!type && d && d->want_occupier)
         type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, occupiers[side], 500);
-    if (!type)
+    if (!type && !dir_saving_for_refinery(house))
         type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, dir_infantry[side], 4000);
     int index = type ? dir_type_index(INFANTRYTYPE_ARRAY, type) : -1;
     if (index >= 0)
@@ -641,7 +672,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
     dir_enemy_count = 0;
     d->enemy_army = d->enemy_air = d->enemy_inf = d->enemy_armor = d->enemy_def = d->target_army = 0;
     d->threat_value = d->naval_threat = d->third_party = d->air_near = 0;
-    d->threat_near = d->target_home = 0;
+    d->threat_near = d->target_home = d->raid_inf = d->raid_armor = 0;
     CellXY target_base = d->enemy ? dir_house_center(d->enemy) : (CellXY){ 0, 0 };
     int threat_best = 0x7FFFFFFF;
     DynVec *v = OIL_TECHNO_ARRAY;
@@ -683,7 +714,9 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
             continue;
         }
         d->enemy_army += e->value;
-        if (!e->air && !e->naval && dir_dist2(e->at, d->base) <= 35 * 35)
+        /* across water only what can reach us counts: hover/air units, or units already ashore */
+        if (!e->air && !e->naval && dir_dist2(e->at, d->base) <= 35 * 35
+            && (!(d->island || d->blocked) || dir_crosses(o) || dir_near_own_building(house, e->at, 15)))
             d->threat_near += e->value;
         if (owner == d->enemy && dir_dist2(e->at, target_base) <= 30 * 30)
             d->target_home += e->value;
@@ -711,6 +744,10 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
         } else if (!e->air && dir_near_own_building(house, e->at, 10)) {
             d->threat_value += e->value;
             e->threat = 1;
+            if (e->infantry)
+                d->raid_inf += e->value;
+            else
+                d->raid_armor += e->value;
             /* the raid closest to home: the mean of raids on two sides lands inside the base */
             int dd = dir_dist2(e->at, d->base);
             if (dd < threat_best) {
@@ -1313,7 +1350,7 @@ static int dir_enclosed(CellXY at, BYTE **rim, int *rim_count)
                         rim[(*rim_count)++] = b;
                     continue;
                 }
-                if (land == 2 || land == 3 || land == 4)
+                if (land == 2 || land == 3 || dir_wall_cell(cell))   /* walls and fences: overlays with Wall=yes */
                     continue;
                 if (bx == 0 || by == 0 || bx == W - 1 || by == W - 1)
                     return 0;   /* open ground leads out of the box */
@@ -1405,6 +1442,36 @@ static int dir_hostile_houses(BYTE *house)
 
 static int dir_bridge_down_near(CellXY at, int r);
 
+/* The base is falling: a raid at home outvalues the army there. Units out guarding lesser places
+ * (oil derricks, stock guard and base-defence teams) more than 15 cells from home leave their teams
+ * and come back to fight; afterwards they are team-less and join the army. */
+static void dir_recall_guards(BYTE *house, DirState *d)
+{
+    if (d->state != DIR_DEFEND || d->threat_value < 3000 || d->threat_value * 10 < d->army_value * 12
+        || CURRENT_FRAME % 150 >= 15)
+        return;
+    int n = 0;
+    DynVec *v = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *o = v->Items[i], *team;
+        int what;
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !(team = FIELD(o, F_TEAM, BYTE *))
+            || ((what = dir_whatami(o)) != 1 && what != 15) || !dir_armed(o) || dir_naval(o) || dir_is_engineer(o)
+            || dir_dist2(object_cell(o), d->base) <= 15 * 15)
+            continue;
+        ((char (GTHISCALL *)(BYTE *, BYTE *, int, char))TEAM_LIBERATE)(team, o, -1, 0);
+        if (FIELD(o, F_TEAM, BYTE *))
+            continue;
+        o[T_RECRUITABLE] = 0;
+        dir_why = "recalled";
+        dir_command(o, d->threat_at, NULL, 1);
+        n++;
+    }
+    if (n)
+        logmsg("director: house %d frame %d: base falling (raid %d, army %d): %d guards recalled", FIELD(house, 0x30, int),
+               CURRENT_FRAME, d->threat_value, d->army_value, n);
+}
+
 static void dir_army(BYTE *house, DirState *d)
 {
     dir_flags = director_enabled(house);
@@ -1422,6 +1489,8 @@ static void dir_army(BYTE *house, DirState *d)
             bound |= d->garrison_unit[k] == o && CURRENT_FRAME - d->garrison_frame[k] < 900;
         for (int k = 0; k < 6; k++)
             bound |= d->post_unit[k] == o;
+        for (int k = 0; k < 2; k++)
+            bound |= d->breach_unit[k] == o && CURRENT_FRAME - d->breach_frame < 600;
         if (bound)
             continue;
         if ((d->blocked || d->island) && !dir_crosses(o)) {
@@ -1555,6 +1624,16 @@ static void dir_army(BYTE *house, DirState *d)
     }
     if (d->state != previous)
         d->state_frame = CURRENT_FRAME;
+    /* Some raids are met with a barracks flood: infantry trains fast and close to the fight. A
+     * draw per raid (two in five) from the house's own stream, so it isn't the same every time. */
+    if (d->state == DIR_DEFEND && previous != DIR_DEFEND) {
+        d->inf_defense = d->plan_roll && dir_next_roll(d) % 5 < 2;
+        if (d->inf_defense)
+            logmsg("director: house %d frame %d: meeting the raid (%d infantry, %d vehicles) with infantry",
+                   FIELD(house, 0x30, int), CURRENT_FRAME, d->raid_inf, d->raid_armor);
+    } else if (d->state != DIR_DEFEND)
+        d->inf_defense = 0;
+    dir_recall_guards(house, d);
     if (previous == DIR_ATTACK && d->state != DIR_ATTACK)
         d->last_attack_end = CURRENT_FRAME;
     if (d->state != previous || CURRENT_FRAME - d->last_log > 1500) {
@@ -1821,6 +1900,19 @@ static void dir_economy(BYTE *house, DirState *d)
             logmsg("director: house %d queued %s for the expansion MCV", FIELD(house, 0x30, int), depots[side]);
         }
     }
+    /* Power ahead of need: the combat AI adds war factories only with 50 to spare, and stock
+     * plans build power late. Russia on MCV starts sat at one factory with 25-30k unspent, its
+     * one reactor at 150 against a drain of 135. */
+    static const char *power_plants[3] = { "GAPOWR", "NANRCT,NAPOWR", "YAPOWR" };
+    if (FIELD(house, OIL_H_PRODUCING, int) == -1 && CURRENT_FRAME > 1800
+        && FIELD(house, OIL_H_POWER, int) - FIELD(house, OIL_H_DRAIN, int) < 100) {
+        BYTE *type = dir_first_buildable(house, BUILDINGTYPE_ARRAY, power_plants[side], 1000);
+        if (type) {
+            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+            logmsg("director: house %d frame %d: queued %.24s (power %d, drain %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   (char *)type + T_ID, FIELD(house, OIL_H_POWER, int), FIELD(house, OIL_H_DRAIN, int));
+        }
+    }
     if (CURRENT_FRAME >= d->next_economy) {
         d->next_economy = CURRENT_FRAME + 450;
         d->idle_harvesters = dir_idle_harvesters(house);
@@ -1878,12 +1970,63 @@ static BYTE *dir_built_near(BYTE *house, BYTE *type, CellXY at, int r)
     return NULL;
 }
 
+/* A refinery goes where the ore is: the placeable spot nearest the best field within 30 cells of
+ * home (ore value minus 30 per cell of distance; fields a refinery of ours already serves count a
+ * third), not wherever the stock base plan had a node. Fields by enemy buildings are skipped. */
+static int dir_refinery_place(BYTE *house, DirState *d, BYTE *type, CellXY *out)
+{
+    if (!in_list("GAREFN,NAREFN,YAREFN", (char *)type + T_ID) || !(director_enabled(house) & DIR_F_ECONOMY))
+        return 0;
+    CellXY base = d->base, ore = { 0, 0 };
+    int best = 0;
+    DynVec *bv = OIL_BUILDING_ARRAY;
+    for (int dy = -30; dy <= 30; dy += 3)
+        for (int dx = -30; dx <= 30; dx += 3) {
+            CellXY c = { (short)(base.X + dx), (short)(base.Y + dy) };
+            BYTE *cell = dir_cell(c);
+            if (!cell || dx * dx + dy * dy > 30 * 30 || ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(cell) <= 0)
+                continue;
+            int value = dir_ore_near(c, 4), served = 0;
+            for (int i = 0; i < bv->Count && !served; i++) {
+                BYTE *b = bv->Items[i];
+                served = oil_live(b) && FIELD(b, O_OWNER, BYTE *) == house
+                    && in_list("GAREFN,NAREFN,YAREFN", (char *)dir_type(b) + T_ID) && dir_dist2(object_cell(b), c) <= 8 * 8;
+            }
+            int score = (served ? value / 3 : value) - 30 * dir_isqrt(dx * dx + dy * dy);
+            if (score > best && !dir_ore_blocked(house, c)) {
+                best = score;
+                ore = c;
+            }
+        }
+    if (!best)
+        return 0;
+    int closest = 0x7FFFFFFF;
+    for (int r = 1; r <= 12; r++)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                CellXY c = { (short)(ore.X + dx), (short)(ore.Y + dy) };
+                int dd = dx * dx + dy * dy;
+                if ((abs(dx) == r || abs(dy) == r) && dd < closest && dir_cell(c)
+                    && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                    closest = dd;
+                    *out = c;
+                }
+            }
+    if (closest == 0x7FFFFFFF)
+        return 0;
+    logmsg("director: house %d frame %d: %.24s placed at %d,%d by the ore at %d,%d (value %d)", FIELD(house, 0x30, int),
+           CURRENT_FRAME, (char *)type + T_ID, out->X, out->Y, ore.X, ore.Y, best);
+    return 1;
+}
+
 static int dir_outpost_place(BYTE *house, BYTE *type, CellXY *out)
 {
     if (!house || !dir_active(house))
         return 0;
     DirState *d = dir_get(house);
-    if (!d || !d->outpost_step || type != d->outpost_type)
+    if (d && (!d->outpost_step || type != d->outpost_type))
+        return dir_refinery_place(house, d, type, out);
+    if (!d)
         return 0;
     BYTE *anchor = d->outpost_step == 1 ? d->outpost_anchor : d->outpost_built;
     if (!anchor || !dir_object_listed(OIL_BUILDING_ARRAY, anchor) || !oil_live(anchor)
@@ -2051,7 +2194,6 @@ static int dir_idle_harvesters(BYTE *house)
  * it still could not reach is skipped for 9000 frames. */
 #define RADIO_CONTACT 0x65AD30            /* RadioClass::GetRadioContact(index) */
 #define MISSION_HARVEST 10
-#define CELL_ORE_VALUE 0x485020            /* CellClass::GetContainedTiberiumValue */
 static struct { BYTE *unit; CellXY at, sent; int frame, sent_frame; } dir_harv[256];
 static struct { BYTE *house; CellXY at; int frame; } dir_bad_ore[32];
 static int dir_bad_ore_next;
@@ -2215,6 +2357,127 @@ static void dir_note_closed_bridges(void)
     }
 }
 
+/* A wall in the cell: walls and fences are overlays whose type has Wall=yes (OverlayTypeClass
+ * +0x2A8, as its LoadFromINI stores it; the types are the DynVec at 0xA83D80; the cell's overlay index
+ * is at +0x44, as CellClass::GetContainedTiberiumValue reads it). They block movement by that flag,
+ * not by the land type, which stays clear. */
+#define OVERLAYTYPE_ARRAY ((DynVec *)0xA83D80)
+#define C_OVERLAY 0x44
+#define OT_WALL 0x2A8
+static int dir_wall_cell(BYTE *cell)
+{
+    int ov = FIELD(cell, C_OVERLAY, int);
+    DynVec *v = OVERLAYTYPE_ARRAY;
+    return FIELD(cell, C_LANDTYPE, int) == 4 || (ov >= 0 && ov < v->Count && ((BYTE *)v->Items[ov])[OT_WALL]);
+}
+
+/* A building fenced in, as map derricks often are: a flood fill from it over open ground (its own
+ * cells, no walls, water, rock or other buildings) that can't get 7 cells away. Returns 0 when the
+ * building can be walked to; 1 when a wall (Wall=yes overlay: CAFNCB, CAFNCW, CAFNCP) encloses it,
+ * with the wall cell nearest `from` in *gap; 2 when only rock, water or buildings do (the FENCE01-22
+ * overlays are Land=Rock and can't be destroyed). */
+static int dir_fenced(BYTE *b, CellXY from, CellXY *gap)
+{
+    enum { R = 9, W = 2 * R + 1 };
+    static unsigned char seen[W * W];
+    static CellXY queue[W * W];
+    memset(seen, 0, sizeof seen);
+    CellXY at = object_cell(b);
+    int head = 0, tail = 0, best = 0x7FFFFFFF;
+    queue[tail++] = at;
+    seen[R * W + R] = 1;
+    while (head < tail) {
+        CellXY c = queue[head++];
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                CellXY n = { (short)(c.X + dx), (short)(c.Y + dy) };
+                int bx = n.X - at.X + R, by = n.Y - at.Y + R;
+                if ((!dx && !dy) || bx < 0 || by < 0 || bx >= W || by >= W || seen[by * W + bx])
+                    continue;
+                seen[by * W + bx] = 1;
+                BYTE *cell = dir_cell(n);
+                if (!cell)
+                    continue;
+                int land = FIELD(cell, C_LANDTYPE, int);
+                if (dir_wall_cell(cell)) {   /* the fence: the panel nearest our engineer is the one to open */
+                    int dd = dir_dist2(n, from);
+                    if (dd < best) {
+                        best = dd;
+                        *gap = n;
+                    }
+                    continue;
+                }
+                if (land == 2 || land == 3)
+                    continue;
+                if ((FIELD(cell, C_OCCUPATION, DWORD) & 0x80) && ((BYTE *(GTHISCALL *)(BYTE *))CELL_GET_BUILDING)(cell) != b)
+                    continue;
+                if (abs(n.X - at.X) > 7 || abs(n.Y - at.Y) > 7)
+                    return 0;   /* open ground leads away from it */
+                queue[tail++] = n;
+            }
+    }
+    return best != 0x7FFFFFFF ? 1 : 2;
+}
+
+/* The capture target is fenced in: up to two armed ground units of ours nearest the fence (within
+ * 30 cells) shoot the panel nearest the engineer, as a player's force-fire on a wall cell does. */
+static void dir_breach_fence(BYTE *house, DirState *d)
+{
+    BYTE *eng = d->repair_engineer, *b = d->repair_hut;
+    CellXY gap;
+    if (!d->repair_mode || !eng || !b || !dir_object_listed(OIL_TECHNO_ARRAY, eng) || !oil_live(eng))
+        return;
+    int fenced = dir_fenced(b, object_cell(eng), &gap);
+    if (fenced == 2) {   /* the box is closed by cliffs: a ramp further out, or no way at all */
+        dir_fill_land(object_cell(eng));   /* over land, bridge decks and walls */
+        if (dir_land_reachable(object_cell(b)))
+            return;
+    }
+    if (fenced == 2) {   /* sealed for good: give it up now rather than after the job's 4000 frames */
+        logmsg("director: house %d frame %d: %.24s is sealed in by rock or water, leaving it", FIELD(house, 0x30, int),
+               CURRENT_FRAME, (char *)dir_type(b) + T_ID);
+        d->failed_job = b;
+        d->failed_frame = CURRENT_FRAME;
+        dir_why = "engineer home";
+        dir_command(eng, d->base, NULL, 0);
+        d->repair_hut = d->repair_engineer = NULL;
+        return;
+    }
+    if (!fenced)
+        return;
+    BYTE *cell = dir_cell(gap);
+    BYTE *pick[2] = { NULL, NULL };
+    int dist[2] = { 30 * 30, 30 * 30 };
+    DynVec *v = OIL_TECHNO_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *o = v->Items[i];
+        int what, dd;
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || ((what = dir_whatami(o)) != 1 && what != 15)
+            || !dir_armed(o) || dir_naval(o) || dir_is_engineer(o) || (dd = dir_dist2(object_cell(o), gap)) >= dist[1])
+            continue;
+        if (dd < dist[0]) {
+            pick[1] = pick[0], dist[1] = dist[0];
+            pick[0] = o, dist[0] = dd;
+        } else
+            pick[1] = o, dist[1] = dd;
+    }
+    d->breach_unit[0] = pick[0];
+    d->breach_unit[1] = pick[1];
+    d->breach_frame = CURRENT_FRAME;
+    for (int k = 0; k < 2; k++)
+        if (pick[k] && !dir_recent_order(pick[k], cell, 300)) {
+            dir_why = "breach fence";
+            dir_order(pick[k], MISSION_ATTACK, cell, NULL);
+        }
+    static int last_log[32];
+    int idx = FIELD(house, 0x30, int) & 31;
+    if (pick[0] && CURRENT_FRAME - last_log[idx] > 1500) {
+        last_log[idx] = CURRENT_FRAME;
+        logmsg("director: house %d frame %d: %.24s is fenced in, opening the fence at %d,%d", idx, CURRENT_FRAME,
+               (char *)dir_type(b) + T_ID, gap.X, gap.Y);
+    }
+}
+
 static void dir_engineers(BYTE *house, DirState *d)
 {
     dir_why = "engineer";
@@ -2261,8 +2524,10 @@ static void dir_engineers(BYTE *house, DirState *d)
     }
     d->want_engineer = 0;
     if (d->repair_hut && d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer)
-        && oil_live(d->repair_engineer))
+        && oil_live(d->repair_engineer)) {
+        dir_breach_fence(house, d);
         return;
+    }
     CellXY base = d->base;
     (void)base;
     BYTE *target = NULL;
@@ -3014,6 +3279,11 @@ static void dir_veto_production(BYTE *house, DirState *d)
     if (unit >= 0 && unit < ut->Count && !_stricmp((char *)ut->Items[unit] + T_ID, "ATTNK")
         && dir_owned_of(house, ut->Items[unit]) >= 2)
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
+    /* Destroyers traded 0.12 on Isolation (240k lost for 29k destroyed): a pair for subs at most */
+    unit = FIELD(house, H_PRODUCING_UNIT, int);
+    if (unit >= 0 && unit < ut->Count && unit != d->unit_request && !_stricmp((char *)ut->Items[unit] + T_ID, "DEST")
+        && dir_owned_of(house, ut->Items[unit]) >= 2)
+        FIELD(house, H_PRODUCING_UNIT, int) = -1;
     /* cut off by water, stock teams' ground vehicles past the home garrison (dir_ground_full);
      * transports, harvesters, MCVs, ships, hover/air units and anti-air during a raid still go */
     unit = FIELD(house, H_PRODUCING_UNIT, int);
@@ -3744,6 +4014,84 @@ static void dir_colonize(BYTE *house, DirState *d)
     }
 }
 
+/* ---- Yuri's Slave Miners ----
+ * Yuri's refinery is the Slave Miner, deployed (YAREFN, UndeploysInto=SMIN). Stock AI leaves it
+ * where it first deployed, so miners camp by a couple of weak ore drills while rich fields lie
+ * unused. A miner whose surroundings have run thin packs up (the selling mission undeploys a
+ * building with UndeploysInto that isn't a construction yard: BuildingClass::Mission_Selling,
+ * 0x449CF0) and is sent to the richest field within 60 cells with a player's harvest click; a
+ * harvesting Slave Miner deploys by the ore by itself. One move at a time, every 300 frames. */
+static struct { BYTE *b; int seen; } dir_miner_seen[64];
+
+static void dir_slave_miners(BYTE *house, DirState *d)
+{
+    if (FIELD(house, OIL_H_SIDE, int) != 2 || CURRENT_FRAME < d->next_miner)
+        return;
+    d->next_miner = CURRENT_FRAME + 300;
+    DynVec *v = OIL_TECHNO_ARRAY, *bv = OIL_BUILDING_ARRAY;
+    if (d->miner_site.X > 0) {   /* packed up: send the mobile miner to the field */
+        if (CURRENT_FRAME - d->miner_frame > 3000) {
+            d->miner_site = (CellXY){ 0, 0 };
+            return;
+        }
+        for (int i = 0; i < v->Count; i++) {
+            BYTE *o = v->Items[i];
+            if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && !_stricmp((char *)dir_type(o) + T_ID, "SMIN")
+                && dir_dist2(object_cell(o), d->miner_from) <= 6 * 6) {
+                dir_order(o, 10, NULL, dir_cell(d->miner_site));   /* Harvest, at the cell */
+                logmsg("director: house %d frame %d: Slave Miner from %d,%d sent to the ore at %d,%d",
+                       FIELD(house, 0x30, int), CURRENT_FRAME, d->miner_from.X, d->miner_from.Y, d->miner_site.X,
+                       d->miner_site.Y);
+                d->miner_site = (CellXY){ 0, 0 };
+                return;
+            }
+        }
+        return;
+    }
+    for (int i = 0; i < bv->Count; i++) {
+        BYTE *b = bv->Items[i];
+        if (!oil_live(b) || FIELD(b, O_OWNER, BYTE *) != house || _stricmp((char *)dir_type(b) + T_ID, "YAREFN"))
+            continue;
+        int k = 0, free_slot = -1;
+        while (k < 64 && dir_miner_seen[k].b != b) {
+            if (free_slot < 0 && (!dir_miner_seen[k].b || !dir_object_listed(bv, dir_miner_seen[k].b)))
+                free_slot = k;
+            k++;
+        }
+        if (k == 64) {   /* first seen now: it has just deployed */
+            if (free_slot >= 0)
+                dir_miner_seen[free_slot] = (typeof(dir_miner_seen[0])){ b, CURRENT_FRAME };
+            CellXY at = object_cell(b);
+            if (CURRENT_FRAME > 600)
+                logmsg("director: house %d frame %d: Slave Miner deployed at %d,%d (ore around it %d)",
+                       FIELD(house, 0x30, int), CURRENT_FRAME, at.X, at.Y, dir_ore_near(at, 8));
+            continue;
+        }
+        if (CURRENT_FRAME - dir_miner_seen[k].seen < 4500)
+            continue;
+        CellXY c = object_cell(b), site;
+        int here = dir_ore_near(c, 8);
+        if (!dir_find_ore(house, c, &site) || dir_dist2(site, c) < 12 * 12)
+            continue;
+        int there = dir_ore_near(site, 8), taken = 0;
+        for (int j = 0; j < bv->Count && !taken; j++) {
+            BYTE *o = bv->Items[j];
+            taken = o != b && oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house
+                && !_stricmp((char *)dir_type(o) + T_ID, "YAREFN") && dir_dist2(object_cell(o), site) <= 10 * 10;
+        }
+        if (taken || there < here * 4 || there < 1500)
+            continue;
+        logmsg("director: house %d frame %d: Slave Miner at %d,%d packs up (ore around it %d, at %d,%d %d)",
+               FIELD(house, 0x30, int), CURRENT_FRAME, c.X, c.Y, here, site.X, site.Y, there);
+        ((void (GTHISCALL *)(BYTE *, int))VFUNC(b, VT_SELL))(b, 1);
+        dir_miner_seen[k].seen = CURRENT_FRAME;
+        d->miner_from = c;
+        d->miner_site = site;
+        d->miner_frame = CURRENT_FRAME;
+        return;
+    }
+}
+
 /* ---- strategy ----
  * At the start each house reads the setup (walking distance to the nearest enemy, how many enemies,
  * its starting base) and draws a plan from weights that fit it, with its own random stream seeded
@@ -3822,6 +4170,7 @@ static int dir_sea_reaches_enemy(BYTE *house, CellXY base)
 #define MESSAGE_LIST ((void *)0xA8BC60)
 #define MESSAGE_ADD 0x5D3BA0
 #define H_COLOR_SCHEME 0x16054
+static int dir_announce_timeout = 900;
 static void dir_announce(BYTE *house, const char *fmt, ...)
 {
     static const char *names[][2] = { { "Americans", "America" }, { "Alliance", "Korea" }, { "French", "France" },
@@ -3843,7 +4192,38 @@ static void dir_announce(BYTE *house, const char *fmt, ...)
     wchar_t wide[160];
     MultiByteToWideChar(CP_ACP, 0, text, -1, wide, 160);
     ((void *(GTHISCALL *)(void *, const wchar_t *, int, const wchar_t *, int, int, int, char))MESSAGE_ADD)(
-        MESSAGE_LIST, NULL, 0, wide, FIELD(house, H_COLOR_SCHEME, int), 0x4046, 900, 0);
+        MESSAGE_LIST, NULL, 0, wide, FIELD(house, H_COLOR_SCHEME, int), 0x4046, dir_announce_timeout, 0);
+}
+
+/* For an observer: every 1500 frames a line per living AI with its money, economy and forces, timed
+ * to last until the next one. */
+#define REPORT_INTERVAL 1500
+static void dir_observer_report(void)
+{
+    static int next_report = 600;
+    if (!reveal_map || CURRENT_FRAME < next_report)
+        return;
+    next_report = CURRENT_FRAME + REPORT_INTERVAL;
+    dir_house_strengths();
+    dir_announce_timeout = REPORT_INTERVAL;
+    DynVec *hv = HOUSE_ARRAY;
+    int players = *GAME_PLAYERCOUNT + SESSION->Config.AIPlayers;
+    for (int i = 0; i < hv->Count && i < players; i++) {
+        BYTE *h = hv->Items[i];
+        if (h[H_ISHUMAN] || h[OIL_H_DEFEATED] || !dir_house_alive(h))
+            continue;
+        int idx = FIELD(h, 0x30, int) & 31;
+        DirState *d = &dir_state[idx];
+        int strategic = d->house == h && d->plan_chosen;
+        int units = FIELD(h, H_OWNED_UNITS, int) + FIELD(h, H_OWNED_INFANTRY, int) + FIELD(h, H_OWNED_AIRCRAFT, int);
+        dir_announce(h, "$%d.%dk, %d ref %d harv, army $%d.%dk (%d), def $%d.%dk, %d bldg%s%s%s%s",
+                     FIELD(h, OIL_H_CASH, int) / 1000, FIELD(h, OIL_H_CASH, int) % 1000 / 100,
+                     FIELD(h, OIL_H_REFINERIES, int), FIELD(h, H_HARVESTERS, int), dir_house_army[idx] / 1000,
+                     dir_house_army[idx] % 1000 / 100, units, dir_house_def[idx] / 1000, dir_house_def[idx] % 1000 / 100,
+                     FIELD(h, H_OWNED_BUILDINGS, int), strategic ? ", " : "", strategic ? dir_plan_names[d->plan] : "",
+                     strategic ? "/" : "", strategic ? dir_posture_names[d->posture] : "");
+    }
+    dir_announce_timeout = 900;
 }
 
 /* The next number of the house's random stream (xorshift). */
@@ -3870,10 +4250,13 @@ static void dir_choose_plan(BYTE *house, DirState *d)
     d->sea = dir_sea_reaches_enemy(house, d->base);
     int w[PLAN_COUNT];
     dir_plan_weights(d->land_steps, enemies, tier, d->sea, w);
+    if (FIELD(house, OIL_H_SIDE, int) == 0)
+        w[PLAN_NAVAL] /= 2;   /* an Allied fleet is Carriers only: dear, and slow to build up */
     /* the house's own stream, seeded from the match seed and the house index */
     d->plan_roll = *GAME_SEED ^ (int)(0x9E3779B9u * (unsigned)(idx + 1));
     int forced = director_plan_override(house);
     d->plan = forced >= 0 && forced < PLAN_COUNT ? forced : dir_plan_pick(w, dir_next_roll(d));
+    d->opening = d->plan;
     d->plan_frame = CURRENT_FRAME;
     d->next_replan = CURRENT_FRAME + 9000;
     if (d->land_steps >= 0)
@@ -3890,7 +4273,10 @@ static void dir_choose_plan(BYTE *house, DirState *d)
  * forced plan (DirectorPlan) stays. */
 static void dir_replan(BYTE *house, DirState *d)
 {
-    if (director_plan_override(house) >= 0 || (CURRENT_FRAME < d->next_replan && !dir_plan_over(d)))
+    /* a phased plan (rush, boom) runs its course first: cut short it pays the costs and never
+     * collects (booms dropped at frame 9000 lost 5 of 5) */
+    if (director_plan_override(house) >= 0 || (dir_plan_levers[d->plan].phase ? !dir_plan_over(d)
+                                                                             : CURRENT_FRAME < d->next_replan))
         return;
     d->next_replan = CURRENT_FRAME + 9000;
     int refineries = FIELD(house, OIL_H_REFINERIES, int), theirs = 0;
@@ -3902,6 +4288,8 @@ static void dir_replan(BYTE *house, DirState *d)
     }
     int w[PLAN_COUNT];
     dir_replan_weights(d->enemy_def, d->target_army, refineries, theirs, d->land_steps, d->sea, w);
+    if (FIELD(house, OIL_H_SIDE, int) == 0)
+        w[PLAN_NAVAL] /= 2;
     int plan = dir_plan_pick(w, dir_next_roll(d));
     logmsg("director: house %d frame %d re-plan: %s -> %s (target defences %d, army %d, refineries %d vs %d; "
            "weights %d/%d/%d/%d/%d)", FIELD(house, 0x30, int), CURRENT_FRAME, dir_plan_names[d->plan],
@@ -4028,6 +4416,20 @@ static void dir_update(BYTE *house)
     if (CURRENT_FRAME >= 300 && !huts_noted) {
         huts_noted = 1;
         dir_note_closed_bridges();
+        DynVec *bv = OIL_BUILDING_ARRAY;   /* benchmark: which tech buildings stand behind fences */
+        for (int i = 0; bench_file && i < bv->Count; i++) {
+            BYTE *b = bv->Items[i];
+            CellXY gap = { 0, 0 }, at = object_cell(b);
+            int fenced = oil_live(b) && in_list("CAOILD,CAAIRP,CATHOSP,CAOUTP,CAMACH,CAPOWR", (char *)dir_type(b) + T_ID)
+                ? dir_fenced(b, d->base, &gap) : 0;
+            if (fenced == 2) {   /* closed by cliffs nearby: sealed only if no land route at all */
+                dir_fill_land(d->base);
+                fenced = dir_land_reachable(at) ? 0 : 2;
+            }
+            if (fenced)
+                logmsg("director: %.24s at %d,%d is %s (gap toward house %d at %d,%d)", (char *)dir_type(b) + T_ID,
+                       at.X, at.Y, fenced == 1 ? "fenced in" : "sealed in", FIELD(house, 0x30, int), gap.X, gap.Y);
+        }
     }
     if (bench_file && CURRENT_FRAME < 1000 && !d->last_regroup_log) {   /* cell offsets sanity check */
         d->last_regroup_log = 1;
@@ -4120,6 +4522,8 @@ static void dir_update(BYTE *house)
     if (CURRENT_FRAME % 150 < 15 && (director_enabled(house) & DIR_F_ENGINEERS))
         dir_engineers(house, d);
     dir_economy(house, d);
+    if (director_enabled(house) & DIR_F_ECONOMY)
+        dir_slave_miners(house, d);
     dir_expansion(house, d);
     dir_ferry(house, d);
     /* Allies need a Robot Control Center before Robot Tanks can cross water. */
@@ -4173,12 +4577,13 @@ static void bench_row_extra(BYTE *h)
     int building = FIELD(h, OIL_H_PRODUCING, int);
     DynVec *bt = BUILDINGTYPE_ARRAY;
     int strategic = d->house == h && d->plan_chosen;
-    fprintf(bench_file, ",%d,%.24s,%.24s,%.24s,%d,%d,%d,%s,%s\n", combat_building_count(h, "GAWEAP,NAWEAP,YAWEAP"),
+    fprintf(bench_file, ",%d,%.24s,%.24s,%.24s,%d,%d,%d,%s,%s,%s\n", combat_building_count(h, "GAWEAP,NAWEAP,YAWEAP"),
             building >= 0 && building < bt->Count ? (char *)bt->Items[building] + T_ID : "-",
             unit >= 0 && unit < ut->Count ? (char *)ut->Items[unit] + T_ID : "-",
             inf >= 0 && inf < it->Count ? (char *)it->Items[inf] + T_ID : "-",
             d->house == h ? d->state : -1, d->house == h ? d->army_value : 0, director_house[idx],
-            strategic ? dir_plan_names[d->plan] : "-", strategic ? dir_posture_names[d->posture] : "-");
+            strategic ? dir_plan_names[d->opening] : "-", strategic ? dir_posture_names[d->posture] : "-",
+            strategic ? dir_plan_names[d->plan] : "-");
 }
 
 /* Benchmark camera: centre the view on a house's army front (TacticalClass::SetTacticalPosition). */

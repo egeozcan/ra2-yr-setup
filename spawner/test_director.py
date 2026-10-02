@@ -81,16 +81,20 @@ class PolicyTests(unittest.TestCase):
             assert(!dir_want_refinery(16000, 3, 3, 1, 5000));   /* idle harvesters: ore gone or cut off */
             assert(!dir_want_refinery(16000, 4, 4, 0, 5000) && !dir_want_refinery(5000, 1, 1, 0, 5000));
             assert(!dir_want_refinery(16000, 3, 3, 0, 12000));
+            assert(dir_want_refinery(16000, 1, 2, 0, 40000));   /* one refinery: whatever the bank */
+            assert(dir_want_refinery_plan(16000, 3, 3, 0, 40000, 1, 0));   /* a boom builds them rich */
             /* strategy: plan weights follow the setup */
             int w[PLAN_COUNT];
-            dir_plan_weights(50, 1, 0, 0, w);                      /* a close duel: rush is likeliest */
-            assert(w[PLAN_RUSH] > w[PLAN_BALANCED] && w[PLAN_RUSH] > w[PLAN_BOOM]);
+            dir_plan_weights(50, 1, 0, 0, w);                      /* a close duel: rush is possible */
+            assert(w[PLAN_RUSH] > 0 && w[PLAN_RUSH] > w[PLAN_BOOM]);
             dir_plan_weights(50, 1, 3, 0, w);                      /* ...but not from a built base */
-            assert(w[PLAN_RUSH] < w[PLAN_BALANCED] / 2);
+            assert(w[PLAN_RUSH] < w[PLAN_BALANCED] / 4);
             dir_plan_weights(-1, 1, 0, 0, w);                      /* nobody on foot: no rush */
-            assert(w[PLAN_RUSH] == 0 && w[PLAN_BOOM] > 15);
+            assert(w[PLAN_RUSH] == 0 && w[PLAN_BOOM] >= 25);
             dir_plan_weights(60, 6, 3, 0, w);                      /* a big free-for-all: rush is rare */
-            assert(w[PLAN_RUSH] < 15 && w[PLAN_BOOM] >= 30 && w[PLAN_SIEGE] == 20 && w[PLAN_NAVAL] == 0);
+            assert(w[PLAN_RUSH] < 15 && w[PLAN_BOOM] >= 20 && w[PLAN_SIEGE] == 25 && w[PLAN_NAVAL] == 0);
+            dir_plan_weights(74, 1, 0, 0, w);                   /* a duel at medium range: boom is rare */
+            assert(w[PLAN_BOOM] <= 5);
             dir_plan_weights(-1, 6, 3, 1, w);                   /* islands: the fleet is the way over */
             assert(w[PLAN_NAVAL] >= w[PLAN_BALANCED] && w[PLAN_RUSH] == 0);
             /* later plans: siege against a fortress, boom when behind in refineries, never a rush */

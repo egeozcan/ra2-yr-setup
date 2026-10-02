@@ -43,6 +43,10 @@ static void bench_init(void)
         director_plan_slot[i] = ini_int(sec, "DirectorPlan", -1);   /* force a strategy plan (tests) */
     }
     reveal_map = ini_int("Settings", "RevealMap", 0);        /* the human sees the whole map, any launch */
+    /* watching 7 AIs: the message list (MessageListClass::Init at 0x4A8BB8, push 6 at 0x4A8BAF) holds
+     * 12 lines instead of 6, so a resource line per AI fits beside plan news; its buffers hold 14 */
+    if (reveal_map && patch_checked("message list lines", 0x4A8BAF, (const BYTE[]){ 0x6A, 0x06 }, 2))
+        patch(0x4A8BB0, (const BYTE[]){ 12 }, 1);
     if (!ini_int("Settings", "Benchmark", 0))
         return;
     bench_limit = ini_int("Settings", "FrameLimit", 0);
@@ -59,7 +63,7 @@ static void bench_init(void)
     }
     fputs("frame,ms,house,country,human,director,defeated,units,infantry,aircraft,navy,buildings,cash,"
           "harvesters,refineries,killed_units,killed_buildings,cost_infantry,cost_vehicles,cost_aircraft,power,drain,"
-          "war_factories,building_order,unit_order,infantry_order,state,army_value,flags,plan,posture\n",
+          "war_factories,building_order,unit_order,infantry_order,state,army_value,flags,plan,posture,plan_now\n",
           bench_file);
     logmsg("benchmark: enabled, frame limit %d", bench_limit);
 }
