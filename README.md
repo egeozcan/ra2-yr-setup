@@ -1254,7 +1254,7 @@ of the game (`DIR_F_STRATEGY`, flag 16384, on by default). Code: `dir_choose_pla
   | rush | a short walk to the enemy (weight 35 under 70 cells, 15 under 110); a third as likely with 3+ enemies and again from a tier 2–3 base, never across water | launches at under half the usual army floor and a 1.0x edge, goes for refineries, factories and yards first, adds war factories at half the cash; ends with its first attack or at frame 14,000 |
   | boom | long walks, 3+ enemies, islands | an extra refinery, the refinery schedule 3,000 frames early, an expansion from frame 4,500 without waiting for idle harvesters, a first strike only at 1.6x the floor; hands over at frame 20,000 |
   | siege | tier 2–3 starts | 15 points more siege in the unit mix (V3, Prism Tank, Magnetron) |
-  | naval | our sea reaches an enemy (weight 35 across water, 10 otherwise) | warships kept at 40% of the army's value (Carriers and Destroyers, Dreadnoughts, Boomers); the fleet sails once it is worth 8,000 |
+  | naval | our sea reaches an enemy (weight 35 across water, 10 otherwise; half for the Allies) | warships kept at 40% of the army's value, the fleet sailing once it is worth 8,000. Escorts first: anti-air (Aegis, Sea Scorpion; Yuri has none) and anti-submarine (Destroyer, Typhoon, Boomer) ships each make up 20% of the fleet, 35% once enemy aircraft or submarines are about. The rest are capital ships: Carriers, Dreadnoughts, Boomers. A fleet of Dreadnoughts alone sat helpless under aircraft and submarines. |
 
 - **Posture**, re-checked every 450 frames, kept for at least 900 frames unless home is threatened:
   - **press**: our army is at least 1.6x the target's army plus half its defences. Launches need

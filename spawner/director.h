@@ -122,6 +122,7 @@ struct DirState {
     int miner_frame, next_miner;
     int breach_frame;
     int fleet_value, sea;               /* armed ships' value; our sea reaches enemy buildings */
+    int enemy_subs;                     /* enemy submarines seen (Typhoons, Boomers) */
 };
 static DirState dir_state[32];
 
@@ -526,13 +527,40 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
     DynVec *ut = UNITTYPE_ARRAY;
     if (d->naval_pick && CURRENT_FRAME - d->naval_pick_frame > 3000)
         d->naval_pick = 0;   /* no yard took it: no yard, or it could not be built */
-    /* a naval plan keeps a war fleet beside the army, in the yard's own order */
-    /* Carriers' Hornets traded 3.8, Destroyers 0.12; Typhoons 1.7, Dreadnought missiles 1.6 */
-    static const char *battle_fleet[3] = { "CARRIER", "DRED,SUB", "BSUB" };
+    /* A naval plan keeps a war fleet beside the army, in the yard's own order. Capital ships alone
+     * sat helpless under aircraft and submarines, so escorts fill their share first: anti-air
+     * (Aegis, Sea Scorpion; Yuri has none) and anti-submarine (Destroyer, Typhoon, Boomer), each 20%
+     * of the fleet, 35% once enemy aircraft or submarines are about. Capital ships: Carriers (their
+     * Hornets traded 3.8), Dreadnoughts (missiles 1.6), Boomers. */
+    static const char *fleet_main[3] = { "CARRIER", "DRED", "BSUB" }, *fleet_aa[3] = { "AEGIS", "HYD", "" },
+                      *fleet_asw[3] = { "DEST", "SUB", "BSUB" };
     int share = dir_levers(d)->navy_share;
     if (share && !d->naval_pick && side >= 0 && side <= 2
         && (long long)d->fleet_value * 100 < (long long)(d->army_value + d->fleet_value) * share) {
-        BYTE *ship = dir_first_buildable(house, UNITTYPE_ARRAY, battle_fleet[side], 2500);
+        int main_v = 0, aa_v = 0, asw_v = 0, subs = 0;
+        DynVec *tv = OIL_TECHNO_ARRAY;
+        for (int i = 0; i < tv->Count; i++) {
+            BYTE *o = tv->Items[i], *ot;
+            if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !dir_naval(o) || !(ot = dir_type(o)))
+                continue;
+            const char *sid = (char *)ot + T_ID;
+            if (*fleet_aa[side] && in_list(fleet_aa[side], sid))
+                aa_v += dir_cost(ot);
+            else if (in_list(fleet_asw[side], sid) && !in_list(fleet_main[side], sid))
+                asw_v += dir_cost(ot);
+            else if (in_list(fleet_main[side], sid))
+                main_v += dir_cost(ot);
+        }
+        subs = d->enemy_subs;
+        int total = main_v + aa_v + asw_v + 1, aa_share = d->enemy_air > 2000 ? 35 : 20, asw_share = subs ? 35 : 20;
+        const char *pick = fleet_main[side];
+        if (*fleet_aa[side] && aa_v * 100 < total * aa_share)
+            pick = fleet_aa[side];
+        else if (strcmp(fleet_asw[side], fleet_main[side]) && asw_v * 100 < total * asw_share)
+            pick = fleet_asw[side];
+        BYTE *ship = dir_first_buildable(house, UNITTYPE_ARRAY, pick, 2500);
+        if (!ship)
+            ship = dir_first_buildable(house, UNITTYPE_ARRAY, fleet_main[side], 2500);
         if (ship) {
             d->naval_pick = dir_type_index(UNITTYPE_ARRAY, ship) + 1;
             d->naval_pick_frame = CURRENT_FRAME;
@@ -680,7 +708,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
     dir_enemy_count = 0;
     d->enemy_army = d->enemy_air = d->enemy_inf = d->enemy_armor = d->enemy_def = d->target_army = 0;
     d->threat_value = d->naval_threat = d->third_party = d->air_near = 0;
-    d->threat_near = d->target_home = d->raid_inf = d->raid_armor = 0;
+    d->threat_near = d->target_home = d->raid_inf = d->raid_armor = d->enemy_subs = 0;
     CellXY target_base = d->enemy ? dir_house_center(d->enemy) : (CellXY){ 0, 0 };
     int threat_best = 0x7FFFFFFF;
     DynVec *v = OIL_TECHNO_ARRAY;
@@ -710,6 +738,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
         e->infantry = what == 15;
         e->focus = e->threat = 0;
         e->naval = !e->building && type[TT_NAVAL];
+        d->enemy_subs += e->naval && in_list("SUB,BSUB", (char *)type + T_ID);
         Coord c = FIELD(o, O_LOCATION, Coord);
         int floor = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
         e->air = what == 2 || c.Z > floor + 128;
