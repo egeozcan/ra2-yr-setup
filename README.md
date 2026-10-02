@@ -1107,8 +1107,18 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   - **Tested** on Isolation, a 2–8 player island map, director against director. Every house
     knew it was cut off by frame 608. Ferries made 20 trips in 45,000 frames with 7 AIs; most
     carried 4–6, though some still left with one after 900 frames without boarders. Hills, Tower
-    and Lostlake raised no false island. Yuri, with ground tanks capped, piled up 70k unspent:
-    one war factory turns out Floating Discs too slowly to spend it.
+    and Lostlake raised no false island.
+- **Placing what the base planner can't.** On cramped islands the stock planner found no room for
+  the Battle Lab (and at times a war factory, refinery or power plant). The building queue then
+  waited on it for good, with no defences, factories or labs again and no Floating Discs, which
+  need the lab. Yuri piled up 115k by frame 40,000. Where the planner finds nothing, the nearest
+  spot to our base centre (2–20 cells) that the engine's own placement check accepts is taken.
+- **Unbuildable stock picks.** A stock pick the house can't build (a construction yard, which only
+  comes from an MCV) is dropped from the building or vehicle queue instead of holding it.
+  - **Tested** on Isolation with 7 AIs: every side placed its Battle Lab. At frame 40,000 the Yuri
+    AIs held 29.7k and 73 instead of 115k, and the houses that survived stood on 22–59 buildings
+    instead of about 20. The bench log now shows each house's queues and whether they can be
+    built every 1,500 frames.
 - **Standing anti-air.** From frame 9000, every side keeps at least two anti-air defences at home
   (Patriot, Flak Cannon, Gatling Cannon) once it can spare the price plus 2000, besides the ones
   queued during air raids.

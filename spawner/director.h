@@ -1648,6 +1648,21 @@ static void dir_economy(BYTE *house, DirState *d)
             logmsg("director: house %d queued its first war factory at frame %d", FIELD(house, 0x30, int), CURRENT_FRAME);
         }
     }
+    /* a stock pick the house can't build (a construction yard, say: those come from MCVs) held the
+     * building queue for good; free it for the next pick */
+    int pick = FIELD(house, OIL_H_PRODUCING, int);
+    DynVec *bts = BUILDINGTYPE_ARRAY;
+    if (pick >= 0 && pick < bts->Count
+        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, bts->Items[pick], 0, 1) <= 0) {
+        FIELD(house, OIL_H_PRODUCING, int) = -1;
+        static int last_log[32];
+        int idx = FIELD(house, 0x30, int) & 31;
+        if (CURRENT_FRAME - last_log[idx] > 3000) {
+            last_log[idx] = CURRENT_FRAME;
+            logmsg("director: house %d frame %d: dropped %.24s from the build queue (can't be built)", idx, CURRENT_FRAME,
+                   (char *)bts->Items[pick] + T_ID);
+        }
+    }
     /* the expansion MCV needs a service depot (Yuri: grinder); tried every tick like the refinery */
     static const char *depots[3] = { "GADEPT", "NADEPT", "YAGRND" };
     if (d->want_mcv && FIELD(house, OIL_H_PRODUCING, int) == -1 && !combat_building_count(house, depots[side])) {
@@ -2779,6 +2794,10 @@ static void dir_veto_production(BYTE *house, DirState *d)
     if (pick >= 0 && pick < uts->Count && in_list(dir_mcvs, (char *)uts->Items[pick] + T_ID) && !d->want_mcv
         && pick != d->unit_request && combat_building_count(house, "GACNST,NACNST,YACNST") >= 2)
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
+    /* a stock pick the house can't build would hold the vehicle queue for good */
+    if (pick >= 0 && pick < uts->Count && pick != d->unit_request
+        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, uts->Items[pick], 0, 1) <= 0)
+        FIELD(house, H_PRODUCING_UNIT, int) = -1;
     /* the mod's Allied AI teams order Liberators in threes; a pair is all that still pays */
     int unit = FIELD(house, H_PRODUCING_UNIT, int);
     DynVec *ut = UNITTYPE_ARRAY;
@@ -2999,6 +3018,40 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
  * leaves the Enter mission but keeps the target, and opens fire on our own bunker. Every unit of
  * ours aiming at one of our garrisonable buildings drops it when that is full, or when the unit has
  * stopped going in (anything but Move, Enter or Capture: stock teams send soldiers in that way). */
+/* The stock base planner places each building at its node in the base plan, nudged a little. On a
+ * cramped island it found no room for the Battle Lab, and the AI's building queue then waited on
+ * it for good: no defences, factories or labs again (and no Floating Discs, which need the lab),
+ * with the money piling up. Where the planner finds nothing, the nearest spot to our base centre
+ * that the engine's own placement check accepts is taken instead. */
+static void dir_note_placement(BYTE *house, BYTE *type, CellXY *out)
+{
+    static int last_try[32], last_log[32];
+    int idx = FIELD(house, 0x30, int) & 31;
+    if (out->X > 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
+        || CURRENT_FRAME - last_try[idx] < 30)
+        return;
+    last_try[idx] = CURRENT_FRAME;
+    CellXY base = dir_house_center(house);
+    for (int r = 2; r <= 20; r++)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                if (abs(dx) != r && abs(dy) != r)
+                    continue;
+                CellXY c = { (short)(base.X + dx), (short)(base.Y + dy) };
+                if (dir_cell(c) && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                    *out = c;
+                    logmsg("director: house %d frame %d: no room for %.24s in the base plan, placed at %d,%d", idx,
+                           CURRENT_FRAME, (char *)type + T_ID, c.X, c.Y);
+                    return;
+                }
+            }
+    if (CURRENT_FRAME - last_log[idx] > 1500) {
+        last_log[idx] = CURRENT_FRAME;
+        logmsg("director: house %d frame %d: no room for %.24s anywhere near the base", idx, CURRENT_FRAME,
+               (char *)type + T_ID);
+    }
+}
+
 static void dir_drop_own_targets(BYTE *house, DirState *d, int all)
 {
     DynVec *tv = OIL_TECHNO_ARRAY, *bv = OIL_BUILDING_ARRAY;
@@ -3532,6 +3585,16 @@ static void dir_update(BYTE *house)
             logmsg("director: house %d frame %d: enemy base %s", FIELD(house, 0x30, int), CURRENT_FRAME,
                    island ? "cut off by water: ferrying troops, building hover/air units" : "reachable by land again");
         d->island = island;
+    }
+    if (bench_file && CURRENT_FRAME % 1500 < 15) {   /* what the queues hold, and whether it can be built */
+        int bi = FIELD(house, OIL_H_PRODUCING, int), ui = FIELD(house, H_PRODUCING_UNIT, int);
+        DynVec *bt = BUILDINGTYPE_ARRAY, *ut = UNITTYPE_ARRAY;
+        BYTE *b = bi >= 0 && bi < bt->Count ? bt->Items[bi] : NULL, *u = ui >= 0 && ui < ut->Count ? ut->Items[ui] : NULL;
+        logmsg("director: house %d frame %d queues: building %s (can %d) unit %s (can %d) cash %d",
+               FIELD(house, 0x30, int), CURRENT_FRAME, b ? (char *)b + T_ID : "-",
+               b ? ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, b, 0, 1) : 0,
+               u ? (char *)u + T_ID : "-", u ? ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, u, 0, 1) : 0,
+               FIELD(house, OIL_H_CASH, int));
     }
     static int huts_noted;
     if (CURRENT_FRAME >= 300 && !huts_noted) {
