@@ -3326,16 +3326,26 @@ static void dir_ferry(BYTE *house, DirState *d)
            "%d over 40 cells away, %d busy; %d on this side, %d transports wanted)", FIELD(house, 0x30, int),
            CURRENT_FRAME, ships, aboard, out.X, out.Y, called, distant, busy, d->home_ground, d->ferry_want);
     /* units still on their way in hold a transport where it is: release them */
+    char late[200];
+    int nlate = 0, len = 0;
+    late[0] = 0;
     for (int i = 0; i < v->Count; i++) {
         BYTE *o = v->Items[i];
         BYTE *dest = oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && FIELD(o, COMBAT_MISSION, int) == MISSION_ENTER
             ? FIELD(o, COMBAT_DESTINATION, BYTE *) : NULL;
+        if (dest && dir_is_ferry(d, dest) && nlate++ < 8 && len < 170) {
+            CellXY c = object_cell(o);
+            len += sprintf(late + len, " %d,%d", c.X, c.Y);
+        }
         for (int k = 0; dest && k < DIR_CONVOY; k++)
             if (dest == d->ferry[k] && d->ferry_state[k] == 1) {
                 ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, NULL, 1);
                 ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_AREA_GUARD, 1);
             }
     }
+    if (nlate && bench_file)
+        logmsg("director: house %d frame %d: %d left walking to board, at%s (dock %d,%d, rally %d,%d)",
+               FIELD(house, 0x30, int), CURRENT_FRAME, nlate, late, d->dock.X, d->dock.Y, d->rally.X, d->rally.Y);
 }
 
 /* ---- navy ----
@@ -4007,13 +4017,11 @@ static int dir_blocks_passage(BYTE *type, CellXY tl)
     #undef DIR_OPEN
 }
 
-/* The nearest spot to the base centre (2-20 cells) that the engine's placement check accepts, that
- * cuts no passage and that is on the base's own level (not down a cliff on the beach below). */
-static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out)
+/* The nearest spot to `base` (from-to cells) that the engine's placement check accepts, that cuts
+ * no passage and that is within a level of `level`. */
+static int dir_spot_near(BYTE *house, BYTE *type, CellXY base, int level, int from, int to, CellXY *out)
 {
-    CellXY base = dir_house_center(house);
-    int level = dir_height(base);
-    for (int r = 2; r <= 20; r++)
+    for (int r = from; r <= to; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
                 if (abs(dx) != r && abs(dy) != r)
@@ -4027,6 +4035,13 @@ static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out)
                 }
             }
     return 0;
+}
+
+/* ... near the base centre (2-20 cells) and on the base's own level (not down a cliff on the beach below) */
+static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out)
+{
+    CellXY base = dir_house_center(house);
+    return dir_spot_near(house, type, base, dir_height(base), 2, 20, out);
 }
 
 /* The stock planner's spot would cut a passage (a ramp, a gap between cliffs): the director's own
@@ -4048,7 +4063,10 @@ static void dir_check_passage(BYTE *house, BYTE *type, CellXY *out)
     if (!off_level && !dir_blocks_passage(type, *out))
         return;
     CellXY was = *out;
-    if (!dir_fallback_spot(house, type, out))
+    /* near where the planner wanted it first (a defence moved to the far side of the base guards
+     * nothing it was meant to), then near the base centre */
+    if (!dir_spot_near(house, type, was, dir_height(off_level ? dir_house_center(house) : was), 1, 6, out)
+        && !dir_fallback_spot(house, type, out))
         *out = off_level && !dir_blocks_passage(type, was) ? was : (CellXY){ 0, 0 };   /* off level beats never */
     static int last_log[32];
     int idx = FIELD(house, 0x30, int) & 31;
