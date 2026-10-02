@@ -388,6 +388,7 @@ SUITES = {"strat": STRAT, "strat_iso": STRAT_ISO, "strat_mcv": STRAT_MCV, "tune"
 
 def suite_list(outdir, matches, frames=60000):
     lines = []
+    failed = 0   # games that never started in a row: the launch is broken (no monitor, ...), stop
     for i, (m, human, ais, extra) in enumerate(matches):
         out = os.path.join(outdir, f"{i:02d}-{os.path.splitext(os.path.basename(m))[0].replace(' ', '_')}")
         if os.path.exists(os.path.join(out, "yspawn-bench.csv")):   # resumable: played already
@@ -395,6 +396,10 @@ def suite_list(outdir, matches, frames=60000):
         line = run(out, m, ais, human, frames, extra=dict(extra) if extra else None)
         print(line, flush=True)
         lines.append(line)
+        failed = failed + 1 if line.endswith("no result") else 0
+        if failed >= 3:
+            shutil.rmtree(out, ignore_errors=True)   # so a rerun plays them
+            raise SystemExit("3 games in a row never started: stopping the suite")
     return lines
 
 
