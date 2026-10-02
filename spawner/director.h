@@ -4036,8 +4036,8 @@ static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out)
 static void dir_check_passage(BYTE *house, BYTE *type, CellXY *out)
 {
     if (out->X <= 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
-        || in_list("GAWALL,NAWALL,YAWALL,GAFWLL", (char *)type + T_ID))
-        return;
+        || in_list("GAWALL,NAWALL,YAWALL,GAFWLL,GAYARD,NAYARD,YAYARD", (char *)type + T_ID) || type[TT_NAVAL])
+        return;   /* walls close gaps on purpose; shipyards sit on water, by a beach (the ramp rule took that for a ramp) */
     /* A factory (or a plant or lab) down the cliff from the base: new units climbed the ramp
      * against the army coming down it, and the beach below filled up where transports dock.
      * Refineries go by the ore, defences where they're put, shipyards on the water. */
