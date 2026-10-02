@@ -55,6 +55,7 @@ static unsigned dir_next_roll(DirState *d);
 static int dir_ore_blocked(BYTE *house, CellXY c);
 typedef int (GTHISCALL *dir_prod_fn)(BYTE *);
 static const char *dir_mcvs = "AMCV,SMCV,PCV";
+#define DIR_WALLS "GAWALL,NAWALL,YAWALL,GAFWLL"
 static const char *dir_transports[3] = { "LCRF", "SAPC", "YHVR" };   /* amphibious ferries */
 static dir_prod_fn dir_unit_original, dir_inf_original;
 
@@ -4155,28 +4156,61 @@ static int dir_fallback_spot(BYTE *house, BYTE *type, CellXY *out)
 }
 
 /* The stock planner's spot would cut a passage (a ramp, a gap between cliffs): the director's own
- * nearest spot that doesn't, or none (the building waits) when there is no such spot. Walls are
- * meant to close gaps and are left alone. */
+ * nearest spot that doesn't, or none (the building waits) when there is no such spot. Walls too:
+ * the stock AI rings its refineries with them, and a ring by a ramp's mouth squeezed the only way
+ * down to the beach to one cell; a wall piece goes at most 3 cells aside, or nowhere. */
 #define BT_FACTORY 0xEB8   /* BuildingTypeClass::Factory, an RTTI (read at 0x450326); 0 for none */
+/* A factory (or a plant or lab) down the cliff from the base: new units climbed the ramp against
+ * the army coming down it, and the beach below filled up where transports dock. Refineries go by
+ * the ore, defences where they're put, shipyards on the water. */
+static int dir_off_level(BYTE *house, BYTE *type, CellXY at)
+{
+    return !in_list(DIR_WALLS, (char *)type + T_ID) && (FIELD(type, BT_FACTORY, int)
+        || in_list("GAPOWR,NAPOWR,NANRCT,YAPOWR,GATECH,NATECH,YATECH,AMRADR,NARADR,NAPSIS,GAOREP,YAGRND,NACLON",
+                   (char *)type + T_ID))
+        && abs(dir_height(at) - dir_height(dir_house_center(house))) > 104;
+}
+
+/* A building's base plan node already has a cell: the AI puts it there when HouseClass 0x50B760
+ * accepts the cell (called at 0x444FBA), and only otherwise asks FindBuildLocation, which the
+ * passage check sits on. Walls and most planned buildings went down unchecked: a node that cuts
+ * a passage, squeezes a ramp or is off the base's level is refused here, so the checked search
+ * runs instead (and its spot becomes the node's). */
+#define DIR_NODE_CELL_CALL 0x444FBA
+#define DIR_NODE_CELL_OK 0x50B760
+static char GFASTCALL dir_node_cell_ok(BYTE *house, void *unused, BYTE *type, CellXY *cell)
+{
+    (void)unused;
+    char ok = ((char (GTHISCALL *)(BYTE *, BYTE *, CellXY *))DIR_NODE_CELL_OK)(house, type, cell);
+    if (!ok || !cell || cell->X <= 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
+        || type[TT_NAVAL] || in_list("GAYARD,NAYARD,YAYARD", (char *)type + T_ID))
+        return ok;
+    if (!dir_off_level(house, type, *cell) && !dir_blocks_passage(type, *cell))
+        return ok;
+    static int last_log[32];
+    int idx = FIELD(house, 0x30, int) & 31;
+    if (CURRENT_FRAME - last_log[idx] > 600) {
+        last_log[idx] = CURRENT_FRAME;
+        logmsg("director: house %d frame %d: base plan spot %d,%d for %.24s refused (%s)", idx, CURRENT_FRAME,
+               cell->X, cell->Y, (char *)type + T_ID, dir_off_level(house, type, *cell) ? "off level" : "passage");
+    }
+    return 0;
+}
+
 static void dir_check_passage(BYTE *house, BYTE *type, CellXY *out)
 {
     if (out->X <= 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
-        || in_list("GAWALL,NAWALL,YAWALL,GAFWLL,GAYARD,NAYARD,YAYARD", (char *)type + T_ID) || type[TT_NAVAL])
-        return;   /* walls close gaps on purpose; shipyards sit on water, by a beach (the ramp rule took that for a ramp) */
-    /* A factory (or a plant or lab) down the cliff from the base: new units climbed the ramp
-     * against the army coming down it, and the beach below filled up where transports dock.
-     * Refineries go by the ore, defences where they're put, shipyards on the water. */
-    int off_level = !type[TT_NAVAL] && (FIELD(type, BT_FACTORY, int)
-        || in_list("GAPOWR,NAPOWR,NANRCT,YAPOWR,GATECH,NATECH,YATECH,AMRADR,NARADR,NAPSIS,GAOREP,YAGRND,NACLON",
-                   (char *)type + T_ID))
-        && abs(dir_height(*out) - dir_height(dir_house_center(house))) > 104;
+        || in_list("GAYARD,NAYARD,YAYARD", (char *)type + T_ID) || type[TT_NAVAL])
+        return;   /* shipyards sit on water, by a beach (the ramp rule took that for a ramp) */
+    int wall = in_list(DIR_WALLS, (char *)type + T_ID);
+    int off_level = dir_off_level(house, type, *out);
     if (!off_level && !dir_blocks_passage(type, *out))
         return;
     CellXY was = *out;
     /* near where the planner wanted it first (a defence moved to the far side of the base guards
      * nothing it was meant to), then near the base centre */
-    if (!dir_spot_near(house, type, was, dir_height(off_level ? dir_house_center(house) : was), 1, 6, out)
-        && !dir_fallback_spot(house, type, out))
+    if (!dir_spot_near(house, type, was, dir_height(off_level ? dir_house_center(house) : was), 1, wall ? 3 : 6, out)
+        && (wall || !dir_fallback_spot(house, type, out)))
         *out = off_level && !dir_blocks_passage(type, was) ? was : (CellXY){ 0, 0 };   /* off level beats never */
     static int last_log[32];
     int idx = FIELD(house, 0x30, int) & 31;
@@ -4192,8 +4226,8 @@ static void dir_note_placement(BYTE *house, BYTE *type, CellXY *out)
     static int last_try[32], last_log[32];
     int idx = FIELD(house, 0x30, int) & 31;
     if (out->X > 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
-        || CURRENT_FRAME - last_try[idx] < 30)
-        return;
+        || CURRENT_FRAME - last_try[idx] < 30 || in_list(DIR_WALLS, (char *)type + T_ID))
+        return;   /* a wall piece the passage check refused stays unbuilt */
     last_try[idx] = CURRENT_FRAME;
     if (dir_fallback_spot(house, type, out)) {
         logmsg("director: house %d frame %d: no room for %.24s in the base plan, placed at %d,%d", idx,
@@ -5303,6 +5337,12 @@ static void patch_director(void)
         const BYTE call[5] = { 0xE8, (BYTE)rel, (BYTE)(rel >> 8), (BYTE)(rel >> 16), (BYTE)(rel >> 24) };
         if (patch_checked("director yard escape", at, call, sizeof call))
             patch_rel(at, 0xE8, (DWORD)dir_may_undeploy);
+    }
+    {
+        DWORD rel = DIR_NODE_CELL_OK - (DIR_NODE_CELL_CALL + 5);
+        const BYTE call[5] = { 0xE8, (BYTE)rel, (BYTE)(rel >> 8), (BYTE)(rel >> 16), (BYTE)(rel >> 24) };
+        if (patch_checked("director base plan spots", DIR_NODE_CELL_CALL, call, sizeof call))
+            patch_rel(DIR_NODE_CELL_CALL, 0xE8, (DWORD)dir_node_cell_ok);
     }
     const BYTE pick_call[] = { 0xE8, 0x4E, 0xBA, 0x0A, 0x00 };   /* call 0x4FBD80 */
     if (patch_checked("director naval yard orders", DIR_FACTORY_PICK_CALL, pick_call, sizeof pick_call))

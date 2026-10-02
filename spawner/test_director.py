@@ -183,6 +183,13 @@ class HookTests(unittest.TestCase):
             rel = (0x50B730 - (site + 5)) & 0xFFFFFFFF
             self.assertEqual(image[site - base:site + 5 - base], bytes([0xE8]) + rel.to_bytes(4, 'little'), hex(site))
         self.assertEqual(image[0x7393C0 - base:0x7393C5 - base], bytes([0x83, 0xEC, 0x18, 0x53, 0x55]))
+        # A base plan node's own cell: owner in ECX, push cell*, push type, call 0x50B760 (ret 8)
+        rel = (0x50B760 - (0x444FBA + 5)) & 0xFFFFFFFF
+        self.assertEqual(image[0x444FB2 - base:0x444FBF - base],
+                         bytes([0x8B, 0x8E, 0x1C, 0x02, 0, 0, 0x53, 0x50, 0xE8]) + rel.to_bytes(4, 'little'))
+        self.assertEqual(image[0x50B77B - base:0x50B77E - base], bytes([0xC2, 0x08, 0x00]))
+        # PassengerClass::GetTotalSize, on TechnoClass +0x114: push ecx / push ebx / mov ebx,[ecx] / mov ecx,[ecx+4]
+        self.assertEqual(image[0x473460 - base:0x473467 - base], bytes([0x51, 0x53, 0x8B, 0x19, 0x8B, 0x49, 0x04]))
         # BuildingClass::Sell does nothing unless +0x6E9 (build-up art present) is set
         self.assertEqual(image[0x447113 - base:0x447119 - base], bytes([0x8A, 0x86, 0xE9, 0x06, 0, 0]))
 

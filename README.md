@@ -1325,7 +1325,13 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
     nobody else will come, or after 3,000 frames at the dock.
   - A transport is ready when full (6), when nobody has boarded for 450 frames with 3+ aboard, or
     after 900 frames.
-  - Units are called to the docked transport with the most room.
+  - Units are called nearest first, each to the docked transport with the most room it fits in.
+    Room is by size: `Passengers=` (`TechnoTypeClass` +0x5E0) less what is aboard
+    (`PassengerClass::GetTotalSize`, 0x473460), each unit taking its `Size=` (+0x380). A hover
+    transport holds 12, so four tanks. Counting units instead called more than fit, and the rest
+    crowded the dock, gave up and jammed the ramp to the beach. Yuri's slaves aren't called.
+  - The rally stays on the base's level, turning 45 or 90 degrees aside if the way toward the
+    enemy goes down a cliff. On islands it had been on the beach, on the dock itself.
 - **Landed troops attack.** Troops already across used to be ordered to the home army's rally
   while it gathered, which they can't walk to. Now they attack the target's nearest structure.
 - **Extra war factories on cramped islands:** the combat AI probes the stock base planner before
@@ -1363,7 +1369,14 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   types at 0xA83D80, the cell's overlay index at +0x44); they block movement by that flag, while the
   cell's land type stays clear. The walled-in unit check uses the same test now.
   - **Breakable fence** (the `Wall=yes` overlays: `CAFNCB`, `CAFNCW`, `CAFNCP`): the two nearest
-    armed units shoot the panel nearest the engineer, held out of the army for 600 frames.
+    units that can open it are held out of the army for 600 frames and taken out of their team.
+    - Units whose primary weapon's warhead has `Wall=yes` (`WarheadTypeClass` +0x144, via
+      `WeaponTypeClass` +0xAC) shoot the panel nearest the engineer. Flak Tracks, Gattling Tanks
+      and Magnetrons can't hurt walls and aren't sent; a soldier's secondary weapon doesn't count.
+    - Units whose `MovementZone` (+0x5B4) paths through it are sent past it: the Crusher zones
+      over a `Crushable` fence (+0x22D), the Destroyer zones (Rhino, Apocalypse, Lasher, Prism)
+      through any fence they can shoot. A Normal-zone tank such as the Grizzly is refused a move
+      into a fenced box, whatever its `Crusher=`.
   - **Sealed** by rock, water or other buildings: the target is given up at once. The `FENCE01–22`
     overlays are `Land=Rock` and can't be destroyed.
   - A box closed only by cliffs is "sealed" only when the whole-map land fill can't reach the
@@ -1389,7 +1402,20 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   - A spot is rejected where the building would cut a passage, such as a ramp or a gap between
     cliffs: with its cells blocked, the open cells around it no longer all connect within 10 cells.
     Footprints come from `BuildingTypeClass::Foundation` (+0xEF0). It applies to the stock planner's
-    spots for director houses, to the fallback spot and to refineries by the ore; walls are exempt.
+    spots for director houses, to the fallback spot and to refineries by the ore.
+  - Base plan nodes that already have a cell skipped that check: the AI put the building straight on
+    the node when `HouseClass` 0x50B760 accepted it (the call at 0x444FBA). That call is hooked, so a
+    node cell that cuts a passage, squeezes a ramp or is off the base's level is refused, and the
+    checked search runs instead.
+  - Walls are checked too. The stock AI rings refineries with them, and a ring at a ramp's mouth
+    squeezed the only way down to the beach to one cell. A refused wall piece moves at most 3 cells,
+    or isn't built.
+  - A building moved off a passage goes within 6 cells of the planner's spot first, then near the
+    base centre. A tank bunker had been moved 26 cells away.
+  - Factories, power plants, labs and radars stay on the base's level (within 104 leptons). A War
+    Factory at the foot of the ramp below its base sent new tanks up the ramp against the army
+    coming down. Shipyards are exempt from all of this. Starting bases keep to the start cell's
+    level and out of passages too.
   - Fallback spots must be on the base's level and refinery spots on the ore's level, within one
     height level (104 leptons). The nearest free spot by distance had been down the cliff on the
     beach: harvesters had to go the long way round, and the refineries narrowed the ramp.
