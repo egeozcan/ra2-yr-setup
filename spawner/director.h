@@ -35,6 +35,7 @@
 #define MAP_ZONE 0x56D230          /* MapClass::GetMovementZoneType(cell, MovementZone, bridge) */
 #define T_PASSENGERS 0x114         /* TechnoClass::Passengers.NumPassengers */
 #define MAX_ENEMY 1024
+#define UT_HARVESTER 0xE0E         /* UnitTypeClass::Harvester (read at 0x7476A6) */
 #define TT_NAVAL 0xCCE             /* TechnoTypeClass::Naval (after Repairable 0xCCC, Crewed 0xCCD) */
 #define VT_SELL 0x1A0              /* ObjectClass::Sell(control): 1 queues the Selling mission */
 #define T_CAPTURE_MANAGER 0x2BC    /* TechnoClass::CaptureManager: set on mind-controllers */
@@ -298,11 +299,13 @@ static int dir_poolable(BYTE *obj, int what)
     if (!dir_armed(obj))
         return 0;
     BYTE *type = dir_type(obj);
-    if (!type || in_list("HARV,CMIN,SMIN,AMCV,SMCV,PCV,SBDOZR,ENGINEER,SENGINEER,YENGINEER,SPY,"
+    if (!type || in_list("HARV,CMIN,SMIN,SLAV,AMCV,SMCV,PCV,SBDOZR,ENGINEER,SENGINEER,YENGINEER,SPY,"
                          "IVAN,CIVAN,TERROR,SHAD,JUMPJET,CCOMAND,TANY,BORIS,GHOST,YURIPR,"
                          "CARRIER,DEST,SUB,AEGIS,LCRF,DRED,SQD,DLPH,HYD,BSUB,SAPC,YHVR,VIRUS,DTRUCK",
                          (char *)type + T_ID))
         return 0;
+    if (what == 1 && type[UT_HARVESTER])
+        return 0;   /* any other harvester the list doesn't name */
     if (FIELD(obj, T_BUNKER_LINK, BYTE *))
         return 0;   /* garrisoning a tank bunker */
     int mission = FIELD(obj, COMBAT_MISSION, int);
@@ -3081,9 +3084,27 @@ static CellXY dir_landing_spot(DirState *d, CellXY e)
 }
 
 /* Ground units of ours that could board: armed, not hover/air, not across already, on this side. */
+/* Transports fill by size: Passengers= is the room (TechnoTypeClass +0x5E0, read at 0x714B3C), Size=
+ * what each passenger takes (+0x380, a double, read at 0x71251F); PassengerClass::GetTotalSize
+ * (0x473460, on TechnoClass +0x114) sums those aboard. Four tanks fill a hover transport. */
+#define TT_PASSENGER_ROOM 0x5E0
+#define TT_SIZE 0x380
+static int dir_size(BYTE *o)
+{
+    double size = FIELD(dir_type(o), TT_SIZE, double);
+    return size < 1 ? 1 : (int)(size + 0.999);
+}
+
+static int dir_free_room(BYTE *t)
+{
+    return FIELD(dir_type(t), TT_PASSENGER_ROOM, int) - ((int (GTHISCALL *)(BYTE *))0x473460)(t + T_PASSENGERS);
+}
+
 static int dir_boardable(BYTE *house, DirState *d, BYTE *o, int *what)
 {
+    /* not harvesters, nor the slaves of a Slave Miner (dir_poolable skips them; called to board, they never came) */
     return oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && ((*what = dir_whatami(o)) == 1 || *what == 15)
+        && !(*what == 1 && dir_type(o)[UT_HARVESTER])
         && !dir_is_ferry(d, o) && !dir_naval(o) && !dir_crosses(o) && dir_armed(o) && !dir_landed(d, object_cell(o));
 }
 
@@ -3206,7 +3227,7 @@ static void dir_ferry(BYTE *house, DirState *d)
             /* full; nobody boarded for a while (sooner with a few aboard: a load of tanks fills it by
              * size, four); soldiers walk over in a straggling line and board one by one */
             int still = CURRENT_FRAME - d->ferry_aboard_frame[k];
-            ready += passengers >= 6 || (passengers && ((passengers >= 3 && still > 450) || still > 900));
+            ready += dir_free_room(t) < 3 || (passengers && ((passengers >= 3 && still > 450) || still > 900));
         } else if (d->ferry_state[k] == 1) {   /* sail, then unload beside the enemy */
             if (dir_dist2(at, d->landing) <= 4 * 4 || CURRENT_FRAME - d->ferry_frame[k] > 4000) {
                 dir_order(t, 16, NULL, NULL);
@@ -3234,11 +3255,11 @@ static void dir_ferry(BYTE *house, DirState *d)
     if (!d->convoy_since)
         d->convoy_since = CURRENT_FRAME;
     /* Call the nearest idle ground units on this side, each to the docked transport with the most room. */
-    int called = 0, distant = 0, busy = 0, room = 0, npool = 0, pool_dist[256];
+    /* room left in each docked transport, by size, less what is already walking over to it */
+    int called = 0, distant = 0, busy = 0, room[DIR_CONVOY], npool = 0, pool_dist[256];
     BYTE *pool[256];
     for (int k = 0; k < DIR_CONVOY; k++)
-        if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k])
-            room += 8 - FIELD(d->ferry[k], T_PASSENGERS, int);
+        room[k] = d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k] ? dir_free_room(d->ferry[k]) : 0;
     for (int i = 0; i < v->Count; i++) {
         BYTE *o = v->Items[i];
         int what;
@@ -3246,6 +3267,9 @@ static void dir_ferry(BYTE *house, DirState *d)
             continue;
         if (FIELD(o, COMBAT_MISSION, int) == MISSION_ENTER && dir_is_ferry(d, FIELD(o, COMBAT_DESTINATION, BYTE *))) {
             called++;
+            for (int k = 0; k < DIR_CONVOY; k++)
+                if (d->ferry[k] == FIELD(o, COMBAT_DESTINATION, BYTE *))
+                    room[k] -= dir_size(o);
             continue;
         }
         if (!dir_poolable(o, what)) {
@@ -3265,7 +3289,7 @@ static void dir_ferry(BYTE *house, DirState *d)
     }
     /* nearest first: called in array order, units from the back of the army pushed through the
      * rest down a ramp to the beach and the whole crowd jammed there */
-    for (int n = 0; n < npool && called < room; n++) {
+    for (int n = 0; n < npool; n++) {
         int pick = n;
         for (int j = n + 1; j < npool; j++)
             if (pool_dist[j] < pool_dist[pick])
@@ -3273,23 +3297,20 @@ static void dir_ferry(BYTE *house, DirState *d)
         BYTE *o = pool[pick];
         pool[pick] = pool[n];
         pool_dist[pick] = pool_dist[n];
-        BYTE *best = NULL;
-        int best_room = 0;
-        for (int k = 0; k < DIR_CONVOY; k++) {
-            BYTE *t = d->ferry[k];
-            int r;
-            if (t && d->ferry_state[k] == 0 && d->ferry_docked[k] && (r = 8 - FIELD(t, T_PASSENGERS, int)) > best_room) {
-                best_room = r;
-                best = t;
-            }
-        }
-        if (!best)
-            break;
+        /* the transport with the most room that it fits in; called beyond the room, units crowded
+         * round full transports at the dock, gave up and jammed the way down for the rest */
+        int best = -1, size = dir_size(o);
+        for (int k = 0; k < DIR_CONVOY; k++)
+            if (room[k] >= size && (best < 0 || room[k] > room[best]))
+                best = k;
+        if (best < 0)
+            continue;   /* a smaller unit may still fit */
+        room[best] -= size;
         called++;
-        if (!dir_recent_order(o, best, 300)) {
+        if (!dir_recent_order(o, d->ferry[best], 300)) {
             /* Entering a transport follows Destination, not Target */
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_ENTER, 0);
-            ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, best, 1);
+            ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, d->ferry[best], 1);
         }
     }
     /* The convoy sails together: when every docked transport is ready, none is still on its way to
@@ -3342,6 +3363,17 @@ static void dir_ferry(BYTE *house, DirState *d)
                 ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, NULL, 1);
                 ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_AREA_GUARD, 1);
             }
+    }
+    if (bench_file && npool > 2 * nlate + 4) {   /* called but not walking over: what they do instead */
+        len = 0;
+        for (int n = 0; n < npool && n < 6 && len < 150; n++) {
+            BYTE *o = pool[n];
+            if (!dir_object_listed(OIL_TECHNO_ARRAY, o) || !oil_live(o))
+                continue;
+            CellXY c = object_cell(o);
+            len += sprintf(late + len, " %.6s@%d,%d/m%d", (char *)dir_type(o) + T_ID, c.X, c.Y, FIELD(o, COMBAT_MISSION, int));
+        }
+        logmsg("director: house %d frame %d: %d called stay put:%s", FIELD(house, 0x30, int), CURRENT_FRAME, npool, late);
     }
     if (nlate && bench_file)
         logmsg("director: house %d frame %d: %d left walking to board, at%s (dock %d,%d, rally %d,%d)",
