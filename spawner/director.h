@@ -266,6 +266,21 @@ static int dir_crosses(BYTE *obj)
 
 #define T_RECRUITABLE 0x421           /* TechnoClass::RecruitableA: FootClass::CanBeRecruited returns it */
 
+static int dir_team_takeable(BYTE *obj)
+{
+    BYTE *team = FIELD(obj, F_TEAM, BYTE *);
+    if (!team)
+        return 1;
+    if (!(director_enabled(FIELD(obj, O_OWNER, BYTE *)) & DIR_F_TAKEOVER))
+        return 0;
+    BYTE *type = FIELD(team, TEAM_TYPE, BYTE *), *script = FIELD(team, TEAM_SCRIPT, BYTE *);
+    if (!type || !script || type[TT_BASE_DEFENSE])
+        return 0;
+    BYTE *script_type = FIELD(type, TT_SCRIPT, BYTE *);
+    const char *id = script_type ? (char *)script_type + T_ID : "";
+    return _strnicmp(id, "0F1BC", 5) && _stricmp(id, "0F1BF007-G");
+}
+
 static int dir_take_from_team(BYTE *obj)
 {
     BYTE *team = FIELD(obj, F_TEAM, BYTE *);
@@ -2513,10 +2528,33 @@ static int dir_hurts_walls(BYTE *obj)
     for (int k = 0; k < 2; k++) {
         BYTE **w = ((BYTE **(GTHISCALL *)(BYTE *, int))VFUNC(obj, VT_GETWEAPON))(obj, k);
         BYTE *wh = w && *w ? FIELD(*w, WT_WARHEAD, BYTE *) : NULL;
+        if (k && dir_whatami(obj) == 15)
+            break;   /* a soldier's second weapon is for deployed use (a Guardian GI's missiles): it shot at fences with its rifle */
         if (wh && wh[WH_WALL])
             return 1;
     }
     return 0;
+}
+
+/* Units whose MovementZone (TechnoTypeClass +0x5B4, read at 0x716065) paths through a fence: the
+ * Crusher zones over a Crushable one (ObjectTypeClass +0x22D, 0x5F940A: the CAFNC* fences and
+ * sandbags), the Destroyer zones through any they can shoot. Sent past it, they open it on the way.
+ * A Normal-zone tank (Grizzly) is refused a move into a fenced box, Crusher=yes or not. */
+#define TT_MOVEMENT_ZONE 0x5B4
+#define OT_CRUSHABLE 0x22D
+static int dir_crushable_wall(BYTE *cell)
+{
+    int ov = cell ? FIELD(cell, C_OVERLAY, int) : -1;
+    DynVec *v = OVERLAYTYPE_ARRAY;
+    return ov >= 0 && ov < v->Count && ((BYTE *)v->Items[ov])[OT_WALL] && ((BYTE *)v->Items[ov])[OT_CRUSHABLE];
+}
+
+static int dir_paths_through(BYTE *obj, int crushable)
+{
+    int zone = FIELD(dir_type(obj), TT_MOVEMENT_ZONE, int);
+    if (zone == 1 || zone == 4 || zone == 12)   /* Crusher, AmphibiousCrusher, CrusherAll */
+        return crushable;
+    return (zone == 2 || zone == 3 || zone == 8) && dir_hurts_walls(obj);   /* the Destroyer zones */
 }
 
 static void dir_breach_fence(BYTE *house, DirState *d)
@@ -2541,9 +2579,16 @@ static void dir_breach_fence(BYTE *house, DirState *d)
         d->repair_hut = d->repair_engineer = NULL;
         return;
     }
-    if (!fenced)
+    if (!fenced) {
+        if (d->breach_unit[0] && CURRENT_FRAME - d->breach_frame < 600) {
+            logmsg("director: house %d frame %d: the fence round %.24s is open", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   (char *)dir_type(b) + T_ID);
+            d->breach_unit[0] = d->breach_unit[1] = NULL;
+        }
         return;
+    }
     BYTE *cell = dir_cell(gap);
+    int crush = dir_crushable_wall(cell);
     BYTE *pick[2] = { NULL, NULL };
     int dist[2] = { 30 * 30, 30 * 30 };
     DynVec *v = OIL_TECHNO_ARRAY;
@@ -2552,7 +2597,7 @@ static void dir_breach_fence(BYTE *house, DirState *d)
         int what, dd;
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || ((what = dir_whatami(o)) != 1 && what != 15)
             || !dir_armed(o) || dir_naval(o) || dir_is_engineer(o) || (dd = dir_dist2(object_cell(o), gap)) >= dist[1]
-            || !dir_hurts_walls(o))
+            || !(dir_hurts_walls(o) || dir_paths_through(o, crush)) || !dir_team_takeable(o))
             continue;
         if (dd < dist[0]) {
             pick[1] = pick[0], dist[1] = dist[0];
@@ -2564,16 +2609,24 @@ static void dir_breach_fence(BYTE *house, DirState *d)
     d->breach_unit[1] = pick[1];
     d->breach_frame = CURRENT_FRAME;
     for (int k = 0; k < 2; k++)
-        if (pick[k] && !dir_recent_order(pick[k], cell, 300)) {
+        if (pick[k] && !dir_recent_order(pick[k], cell, 300) && dir_take_from_team(pick[k])) {   /* or its team orders it back */
             dir_why = "breach fence";
-            dir_order(pick[k], MISSION_ATTACK, cell, NULL);
+            if (dir_paths_through(pick[k], crush)) {   /* past it, toward the building */
+                CellXY at = object_cell(b), in = gap;
+                in.X += at.X > gap.X ? 1 : at.X < gap.X ? -1 : 0;
+                in.Y += at.Y > gap.Y ? 1 : at.Y < gap.Y ? -1 : 0;
+                dir_order(pick[k], MISSION_MOVE, NULL, dir_cell(in));
+            }
+            else
+                dir_order(pick[k], MISSION_ATTACK, cell, NULL);
         }
     static int last_log[32];
     int idx = FIELD(house, 0x30, int) & 31;
     if (pick[0] && CURRENT_FRAME - last_log[idx] > 1500) {
         last_log[idx] = CURRENT_FRAME;
-        logmsg("director: house %d frame %d: %.24s is fenced in, opening the fence at %d,%d", idx, CURRENT_FRAME,
-               (char *)dir_type(b) + T_ID, gap.X, gap.Y);
+        int run_over = dir_paths_through(pick[0], crush);
+        logmsg("director: house %d frame %d: %.24s is fenced in, %.12s %s the fence at %d,%d", idx, CURRENT_FRAME,
+               (char *)dir_type(b) + T_ID, (char *)dir_type(pick[0]) + T_ID, run_over ? "drives through" : "shoots", gap.X, gap.Y);
     }
 }
 
