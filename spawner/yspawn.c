@@ -767,6 +767,8 @@ static BYTE *find_house(const char *country)
 }
 
 typedef struct { short X, Y; } CellXY;
+static int dir_height(CellXY c);
+static int dir_blocks_passage(BYTE *type, CellXY tl);
 
 /* the nearest top-left cell to *x,*y, in growing squares, where the building can be placed */
 static int building_spot(BYTE *type, BYTE *house, int *x, int *y)
@@ -899,12 +901,16 @@ static int base_clear(int x, int y, int w, int h)
 }
 
 /* the top-left cell for a building centred as near as it can be to cx,cy: the closest in the first square ring around
- * it that has a spot the placement check accepts and base_clear leaves free */
+ * it that has a spot the placement check accepts and base_clear leaves free. The first pass also keeps to the start
+ * cell's level and out of passages (dir_blocks_passage: ramps, gaps between cliffs): a War Factory put at the foot of
+ * the ramp below its base jammed new units going up against the army coming down. */
 static int base_spot(BYTE *type, BYTE *house, int cx, int cy, int *x, int *y)
 {
     int w = ((int (GTHISCALL *)(BYTE *))BTYPE_WIDTH)(type);
     int h = ((int (GTHISCALL *)(BYTE *, char))BTYPE_HEIGHT)(type, 1);
-    for (int r = 0; r <= 24; r++) {
+    int level = dir_height((CellXY){ (short)cx, (short)cy });
+    for (int strict = 1; strict >= 0; strict--)
+    for (int r = 0; r <= (strict ? 14 : 24); r++) {
         int best = -1;
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
@@ -913,7 +919,8 @@ static int base_spot(BYTE *type, BYTE *house, int cx, int cy, int *x, int *y)
                 CellXY c = { cx - w / 2 + dx, cy - h / 2 + dy };
                 int d = dx * dx + dy * dy;
                 if ((best < 0 || d < best) && base_clear(c.X, c.Y, w, h)
-                    && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                    && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)
+                    && (!strict || (abs(dir_height(c) - level) <= 52 && !dir_blocks_passage(type, c)))) {
                     best = d;
                     *x = c.X;
                     *y = c.Y;
