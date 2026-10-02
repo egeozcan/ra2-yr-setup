@@ -2503,6 +2503,22 @@ static int dir_fenced(BYTE *b, CellXY from, CellXY *gap)
 
 /* The capture target is fenced in: up to two armed ground units of ours nearest the fence (within
  * 30 cells) shoot the panel nearest the engineer, as a player's force-fire on a wall cell does. */
+/* Only a warhead with Wall=yes (WarheadTypeClass +0x144, read at 0x75D4FB) hurts walls and fences;
+ * a weapon's warhead is WeaponTypeClass +0xAC (0x772992). Flak tracks and the like sent to open a
+ * fence fired at it for good. */
+#define WT_WARHEAD 0xAC
+#define WH_WALL 0x144
+static int dir_hurts_walls(BYTE *obj)
+{
+    for (int k = 0; k < 2; k++) {
+        BYTE **w = ((BYTE **(GTHISCALL *)(BYTE *, int))VFUNC(obj, VT_GETWEAPON))(obj, k);
+        BYTE *wh = w && *w ? FIELD(*w, WT_WARHEAD, BYTE *) : NULL;
+        if (wh && wh[WH_WALL])
+            return 1;
+    }
+    return 0;
+}
+
 static void dir_breach_fence(BYTE *house, DirState *d)
 {
     BYTE *eng = d->repair_engineer, *b = d->repair_hut;
@@ -2535,7 +2551,8 @@ static void dir_breach_fence(BYTE *house, DirState *d)
         BYTE *o = v->Items[i];
         int what, dd;
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || ((what = dir_whatami(o)) != 1 && what != 15)
-            || !dir_armed(o) || dir_naval(o) || dir_is_engineer(o) || (dd = dir_dist2(object_cell(o), gap)) >= dist[1])
+            || !dir_armed(o) || dir_naval(o) || dir_is_engineer(o) || (dd = dir_dist2(object_cell(o), gap)) >= dist[1]
+            || !dir_hurts_walls(o))
             continue;
         if (dd < dist[0]) {
             pick[1] = pick[0], dist[1] = dist[0];
