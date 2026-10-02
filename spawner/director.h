@@ -2713,17 +2713,25 @@ static CellXY dir_pick_rally(DirState *d)
         len++;
     CellXY base = d->base, fallback = base;
     int zone = ((int (GTHISCALL *)(void *, CellXY *, int, char))MAP_ZONE)(MAP_INSTANCE, &base, 0, 0);
-    /* Out of the base: units idling on building sites block construction. */
+    int level = dir_height(base);
+    /* Out of the base: units idling on building sites block construction. On the base's own level:
+     * a rally on the beach below an island base put the whole waiting army where the transports
+     * dock, and in the one ramp down to it. */
+    /* toward the enemy first, then turned 45 and 90 degrees either way (scaled back to length) */
+    static const int turn[5][4] = { {1,0,0,1}, {1,-1,1,1}, {1,1,-1,1}, {0,-1,1,0}, {0,1,-1,0} };
+    for (int t = 0; t < 5; t++)
     for (int step = 12; step <= 24 && step < len; step += 4) {
-        CellXY want = { (short)(d->base.X + dx * step / len), (short)(d->base.Y + dy * step / len) }, out = { 0, 0 };
-        if (step == 12)
+        int vx = turn[t][0] * dx + turn[t][1] * dy, vy = turn[t][2] * dx + turn[t][3] * dy;
+        int vlen = (t == 1 || t == 2) ? len * 1414 / 1000 : len;
+        CellXY want = { (short)(d->base.X + vx * step / vlen), (short)(d->base.Y + vy * step / vlen) }, out = { 0, 0 };
+        if (fallback.X == base.X && fallback.Y == base.Y && abs(dir_height(want) - level) <= 104)
             fallback = want;
         /* SpeedType Track, MovementZone Normal, 5x5 clear, no overlay, no bridge */
         ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, zone, 0, 0, 5, 5, 1, 0, 0, 0, &want, 0, 0);
         if (out.X <= 0 || out.Y <= 0 || dir_dist2(out, want) > 10 * 10)
             continue;
         CellXY c = { (short)(out.X + 2), (short)(out.Y + 2) };   /* the patch's centre */
-        if (dir_dist2(c, d->base) >= 10 * 10 && !dir_near_own_building(NULL, c, 8))
+        if (dir_dist2(c, d->base) >= 10 * 10 && !dir_near_own_building(NULL, c, 8) && abs(dir_height(c) - level) <= 104)
             return c;
     }
     return fallback;
