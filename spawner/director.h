@@ -513,6 +513,8 @@ static int dir_ferry_count(DirState *d)
 
 static int dir_is_ferry(DirState *d, BYTE *o)
 {
+    if (!o)
+        return 0;   /* an empty slot is no ferry (units told to Enter with no destination matched it) */
     for (int k = 0; k < DIR_CONVOY; k++)
         if (d->ferry[k] == o)
             return 1;
@@ -3454,7 +3456,7 @@ static void dir_ferry(BYTE *house, DirState *d)
         if (FIELD(o, COMBAT_MISSION, int) == MISSION_ENTER && dir_is_ferry(d, FIELD(o, COMBAT_DESTINATION, BYTE *))) {
             called++;
             for (int k = 0; k < DIR_CONVOY; k++)
-                if (d->ferry[k] == FIELD(o, COMBAT_DESTINATION, BYTE *)) {
+                if (d->ferry[k] && d->ferry[k] == FIELD(o, COMBAT_DESTINATION, BYTE *)) {
                     room[k] -= dir_size(o);
                     boarding[k] |= dir_dist2(object_cell(o), object_cell(d->ferry[k])) <= 2 * 2;
                 }
