@@ -3339,7 +3339,8 @@ static void dir_ferry(BYTE *house, DirState *d)
                 }
                 d->ferry_docked[k] = d->ferry_aboard_frame[k] = CURRENT_FRAME;   /* blocked: load where it stands */
                 d->ferry_aboard[k] = passengers;
-                d->ferry_dock_at[k] = at;
+                /* at the dock it may still roll on to the dock cell itself: that is where it loads */
+                d->ferry_dock_at[k] = dir_dist2(at, d->dock) <= 6 * 6 ? d->dock : at;
             } else {
                 coming++;
                 if (!dir_recent_order(t, dir_cell(d->dock), 450))
@@ -3348,8 +3349,8 @@ static void dir_ferry(BYTE *house, DirState *d)
             }
         }
         /* Docked, it stays: one drove off from the beach into the waiting army by the rally and sat
-         * there empty for 35000 frames, nobody able to board. Off by more than 6 cells, it docks again. */
-        if (d->ferry_state[k] == 0 && dir_dist2(at, d->ferry_dock_at[k]) > 6 * 6) {
+         * there empty for 35000 frames, nobody able to board. Off by more than 8 cells, it docks again. */
+        if (d->ferry_state[k] == 0 && dir_dist2(at, d->ferry_dock_at[k]) > 8 * 8) {
             logmsg("director: house %d frame %d: ferry %d left its dock at %d,%d for %d,%d; back to the dock",
                    FIELD(house, 0x30, int), CURRENT_FRAME, k, d->ferry_dock_at[k].X, d->ferry_dock_at[k].Y, at.X, at.Y);
             d->ferry_docked[k] = 0;
