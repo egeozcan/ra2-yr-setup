@@ -4,6 +4,10 @@
 #include "combat-ai-policy.h"
 #include "director-policy.h"
 
+/* base defences and wall pieces: a pending one gives way to a wanted war factory */
+#define COMBAT_DEFENSES "GAPILL,NASAM,ATESLA,GTGCAN,NALASR,NAFLAK,TESLA,NABNKR,YAGGUN,YAPSYT,NATBNK"
+#define COMBAT_WALLS "GAWALL,NAWALL,YAWALL,GAFWLL"
+
 #define COMBAT_SELECT_WEAPON 0x2E4
 #define COMBAT_CLOSE_ENOUGH 0x3A8
 #define COMBAT_SET_DESTINATION 0x480
@@ -134,8 +138,15 @@ static struct {
 static void combat_queue_expansion(BYTE *house)
 {
     int idx = FIELD(house, 0x30, int), side = FIELD(house, OIL_H_SIDE, int);
-    if (!oil_eligible(house) || idx < 0 || idx >= 32 || side < 0 || side > 2
-        || FIELD(house, OIL_H_PRODUCING, int) != -1)
+    /* The building queue holds one pick. A war factory may take the place of a pending defence or
+     * wall: picks are checked every 900 frames, and a Yuri rush with 45000 unspent got its second
+     * factory at frame 7000 behind a wall, gattling cannons and psychic towers (its opponent had
+     * three factories by 6400). */
+    int pending = FIELD(house, OIL_H_PRODUCING, int);
+    DynVec *bts = BUILDINGTYPE_ARRAY;
+    int displaceable = pending >= 0 && pending < bts->Count && (director_enabled(house) & DIR_F_ECONOMY)
+        && in_list(COMBAT_DEFENSES "," COMBAT_WALLS, (char *)bts->Items[pending] + T_ID);
+    if (!oil_eligible(house) || idx < 0 || idx >= 32 || side < 0 || side > 2 || (pending != -1 && !displaceable))
         return;
     if (combat_expansions[idx].house != house) {
         combat_expansions[idx].house = house;
@@ -153,7 +164,7 @@ static void combat_queue_expansion(BYTE *house)
     int cash = FIELD(house, OIL_H_CASH, int);
     int power = FIELD(house, OIL_H_POWER, int) - FIELD(house, OIL_H_DRAIN, int);
     for (int role = 0; role < 4; role++) {
-        if (role >= 2 && side != 0)
+        if ((role >= 2 && side != 0) || (displaceable && role != 1))
             continue;
         const char *id = candidates[role];
         BYTE *type = find_type(BUILDINGTYPE_ARRAY, id);
@@ -193,8 +204,9 @@ static void combat_queue_expansion(BYTE *house)
             || !((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &at, house))
             continue;
         FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
-        logmsg("combat AI: house %d queued %s (ground pending %d, planes %d+%d)",
-               idx, id, ground_pending, owned_planes, plane_pending);
+        logmsg("combat AI: house %d queued %s (ground pending %d, planes %d+%d)%s%.24s",
+               idx, id, ground_pending, owned_planes, plane_pending, displaceable ? " ahead of " : "",
+               displaceable ? (char *)bts->Items[pending] + T_ID : "");
         return;
     }
 }
