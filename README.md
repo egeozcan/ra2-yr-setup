@@ -1592,7 +1592,7 @@ plus army value, and within 20% count as a draw.
 | 1 director vs 2 allied stock Brutals | v4 build 1W 4L → v8 3W 2L → final 2W 1L, plus 2 where it eliminated one of the two before the cap |
 | 4-AI FFAs, 2 directors vs 2 stock | won by a director every time (v4, v8, final) |
 | 2026-10-03 build (strategy layer, placement and convoy fixes): held-out set 1 | **13/13**, all 10 duels and all 3 FFAs |
-| 2026-10-03 build: held-out set 2 | **13W 1L**: 12/12 duels and the 7-AI FFA; lost the 6-AI FFA on Powder Keg (its only refinery fell and it never built another, since fixed) |
+| 2026-10-03 build: held-out set 2 | **13W 1L**: 12/12 duels and the Potomac FFA (at the time limit, far ahead); lost the 6-AI FFA on Powder Keg (its only refinery fell and it never built another, since fixed) |
 | 2026-10-03 build: 1 director vs 2 allied stock Brutals | 3W 2D 1L |
 
 | 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
