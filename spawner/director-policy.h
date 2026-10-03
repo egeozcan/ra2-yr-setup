@@ -171,8 +171,10 @@ static const DirPlanLevers dir_plan_levers[PLAN_COUNT] = {
 static void dir_plan_weights(int land_steps, int enemies, int tier, int sea, int w[PLAN_COUNT])
 {
     w[PLAN_BALANCED] = 30;
-    /* rush won 11 of 26 in the A/B runs (balanced 25 of 43, siege 10 of 15): a gamble, kept rare */
-    w[PLAN_RUSH] = land_steps < 0 ? 0 : land_steps <= 70 ? 15 : land_steps <= 110 ? 8 : 3;
+    /* rush won 11 of 26 in the A/B runs (balanced 25 of 43, siege 10 of 15): a gamble, kept rare.
+     * Within 70 cells it won 7 of 11 MCV duels; at 73-80 cells (DeepFrze, Rockets, Lostlake) about
+     * 3 of 12, the walk eating the head start: there it is only a rare surprise */
+    w[PLAN_RUSH] = land_steps < 0 ? 0 : land_steps <= 70 ? 15 : land_steps <= 110 ? 2 : 1;
     if (enemies >= 3)
         w[PLAN_RUSH] /= 3;   /* in a free-for-all a rush leaves the base to everyone else */
     /* from a built base both armies grow alike and parity never comes: 4 of 5 rushes lost in the
