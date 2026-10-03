@@ -7,7 +7,7 @@ usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--s
            PLAN 0-3 forces balanced, rush, boom or siege)
        bench.py restore          put back the game directory's own yspawn.ini/.log/.map after runs
        bench.py summary DIR...   print one line per match directory
-       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER]   director vs stock Brutal match sets
+       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N]   director vs stock Brutal match sets
        bench.py ab DIR...        strategy on against off, per plan and country: wins and mean placement
 
 The idle human uses Human in peace, so it never takes part and never loses. The game directory's
@@ -426,9 +426,17 @@ if __name__ == "__main__":
         restore()
         raise SystemExit
     if args[0] == "suite":
+        # --frames N and --games N: a short smoke run of a suite's first games
+        frames, games = 60000, None
+        for flag in ("--frames", "--games"):
+            if flag in args:
+                i = args.index(flag)
+                value = int(args[i + 1])
+                del args[i:i + 2]
+                frames, games = (value, games) if flag == "--frames" else (frames, value)
         name = args[2] if len(args) > 2 else "tune"
         if SUITES.get(name):
-            suite_list(args[1], SUITES[name])
+            suite_list(args[1], SUITES[name][:games], frames)
         else:
             suite(args[1], None if name == "tune" else name)
         raise SystemExit
