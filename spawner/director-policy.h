@@ -297,6 +297,10 @@ static int dir_want_refinery_plan(int frame, int refineries, int harvesters, int
         wanted += bonus;
     /* "money is short" (under 12000) except with a single refinery or in a boom: a rich start
      * (Isolation hands out 50000) otherwise spent it all on units and stayed on one refinery */
+    /* idle harvesters mean the ore is gone, except with no refinery left: then they idle for want
+     * of one (a house whose only refinery fell never built another, and went broke) */
+    if (!refineries && frame >= 3000)
+        return 1;
     return refineries < wanted && harvesters >= refineries && idle_harvesters == 0
         && (refineries < 2 || bonus > 0 || cash < 12000);
 }

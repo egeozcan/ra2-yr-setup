@@ -90,6 +90,8 @@ class PolicyTests(unittest.TestCase):
             assert(!dir_want_refinery(16000, 4, 4, 0, 5000) && !dir_want_refinery(5000, 1, 1, 0, 5000));
             assert(!dir_want_refinery(16000, 3, 3, 0, 12000));
             assert(dir_want_refinery(16000, 1, 2, 0, 40000));   /* one refinery: whatever the bank */
+            assert(dir_want_refinery(9000, 0, 2, 2, 5000));     /* none left: its harvesters idle for want of one */
+            assert(!dir_want_refinery(1000, 0, 0, 0, 5000));    /* the opening builds its own */
             assert(dir_want_refinery_plan(16000, 3, 3, 0, 40000, 1, 0));   /* a boom builds them rich */
             /* strategy: plan weights follow the setup */
             int w[PLAN_COUNT];
