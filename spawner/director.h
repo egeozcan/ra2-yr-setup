@@ -3442,7 +3442,7 @@ static void dir_ferry(BYTE *house, DirState *d)
         d->convoy_since = CURRENT_FRAME;
     /* Call the nearest idle ground units on this side, each to the docked transport with the most room. */
     /* room left in each docked transport, by size, less what is already walking over to it */
-    int called = 0, distant = 0, busy = 0, room[DIR_CONVOY], npool = 0, pool_dist[256];
+    int called = 0, distant = 0, busy = 0, room[DIR_CONVOY], npool = 0, pool_dist[256], boarding[DIR_CONVOY] = { 0 };
     BYTE *pool[256];
     for (int k = 0; k < DIR_CONVOY; k++)
         room[k] = d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k] ? dir_free_room(d->ferry[k]) : 0;
@@ -3454,8 +3454,10 @@ static void dir_ferry(BYTE *house, DirState *d)
         if (FIELD(o, COMBAT_MISSION, int) == MISSION_ENTER && dir_is_ferry(d, FIELD(o, COMBAT_DESTINATION, BYTE *))) {
             called++;
             for (int k = 0; k < DIR_CONVOY; k++)
-                if (d->ferry[k] == FIELD(o, COMBAT_DESTINATION, BYTE *))
+                if (d->ferry[k] == FIELD(o, COMBAT_DESTINATION, BYTE *)) {
                     room[k] -= dir_size(o);
+                    boarding[k] |= dir_dist2(object_cell(o), object_cell(d->ferry[k])) <= 2 * 2;
+                }
             continue;
         }
         if (!dir_poolable(o, what)) {
@@ -3539,7 +3541,10 @@ static void dir_ferry(BYTE *house, DirState *d)
             int m = FIELD(o, COMBAT_MISSION, int);
             BYTE *dest = FIELD(o, COMBAT_DESTINATION, BYTE *);
             int to_ferry = m == MISSION_ENTER && dir_is_ferry(d, dest);
-            if (to_ferry) {
+            /* not one already at the transport: called off in the middle of boarding, it was counted
+             * aboard but never joined the passengers (lists broken that way, and Isolation games
+             * crashed walking them) */
+            if (to_ferry && dir_dist2(object_cell(o), object_cell(dest)) > 3 * 3) {
                 ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, NULL, 1);
                 ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_AREA_GUARD, 1);
             }
@@ -3589,7 +3594,9 @@ static void dir_ferry(BYTE *house, DirState *d)
     int ships = 0, aboard = 0;
     for (int k = 0; k < DIR_CONVOY; k++) {
         BYTE *t = d->ferry[k];
-        if (!t || d->ferry_state[k] != 0 || !d->ferry_docked[k] || !FIELD(t, T_PASSENGERS, int))
+        /* not while a unit beside it is getting in: sailing off mid-boarding left it counted aboard
+         * but out of the passenger list */
+        if (!t || d->ferry_state[k] != 0 || !d->ferry_docked[k] || !FIELD(t, T_PASSENGERS, int) || boarding[k])
             continue;
         ships++;
         aboard += FIELD(t, T_PASSENGERS, int);
@@ -3613,7 +3620,7 @@ static void dir_ferry(BYTE *house, DirState *d)
             len += sprintf(late + len, " %d,%d", c.X, c.Y);
         }
         for (int k = 0; dest && k < DIR_CONVOY; k++)
-            if (dest == d->ferry[k] && d->ferry_state[k] == 1) {
+            if (dest == d->ferry[k] && d->ferry_state[k] == 1 && dir_dist2(object_cell(o), object_cell(dest)) > 3 * 3) {
                 ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, NULL, 1);
                 ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_AREA_GUARD, 1);
             }
