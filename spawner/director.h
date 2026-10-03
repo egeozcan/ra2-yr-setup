@@ -1968,6 +1968,7 @@ static void dir_army(BYTE *house, DirState *d)
 static int dir_idle_harvesters(BYTE *house);
 static void dir_outpost(BYTE *house, DirState *d);
 static void dir_fill_land(CellXY from);
+static void dir_fill_walk(CellXY from);
 static int dir_land_reachable(CellXY c);
 static int dir_watch_harvester(BYTE *house, BYTE *o);
 static void dir_economy(BYTE *house, DirState *d)
@@ -3218,7 +3219,7 @@ static int dir_boardable(BYTE *house, DirState *d, BYTE *o, int *what)
  * to; 0,0: none); 0,0 if there is none. */
 static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
 {
-    dir_fill_land(from);
+    dir_fill_walk(from);
     for (int r = 0; r <= 30; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
@@ -3351,7 +3352,7 @@ static void dir_ferry(BYTE *house, DirState *d)
                  * to: transports waiting in the water under a cliff-top base had the army called to
                  * the cliff edge, where it crowded for good and no convoy sailed again. Off that
                  * land, the dock moves to the beach on it nearest the transport. */
-                dir_fill_land(d->rally);
+                dir_fill_walk(d->rally);
                 if (dir_dist2(at, d->dock) > 6 * 6 && !dir_is_land(at)) {
                     CellXY to = dir_beach_near(at, d->rally, d->dock);
                     if (to.X) {
@@ -3383,7 +3384,7 @@ static void dir_ferry(BYTE *house, DirState *d)
          * by more than 8 cells it loads where it now stands if our units can walk there, and goes
          * back to the dock only from water or land they can't reach. */
         if (d->ferry_state[k] == 0 && dir_dist2(at, d->ferry_dock_at[k]) > 8 * 8) {
-            dir_fill_land(d->rally);
+            dir_fill_walk(d->rally);
             int walkable = dir_is_land(at);
             static int last_log[32];
             int idx = FIELD(house, 0x30, int) & 31;
@@ -4682,7 +4683,21 @@ static int dir_is_land(CellXY c)
     return c.X > 0 && c.Y > 0 && c.X < 512 && c.Y < 512 && (dir_land[(c.Y * 512 + c.X) >> 3] >> (c.X & 7) & 1);
 }
 
+static void dir_fill_land_ex(CellXY from, int buildings_block);
 static void dir_fill_land(CellXY from)
+{
+    dir_fill_land_ex(from, 0);
+}
+
+/* The same with buildings in the way: where our units can walk now. Convoy docks were picked on
+ * land the army could reach in principle, and units called there stood 15-17 cells off behind
+ * their own base, never arriving. */
+static void dir_fill_walk(CellXY from)
+{
+    dir_fill_land_ex(from, 1);
+}
+
+static void dir_fill_land_ex(CellXY from, int buildings_block)
 {
     memset(dir_land, 0, sizeof dir_land);
     if (!dir_cell(from))
@@ -4700,6 +4715,8 @@ static void dir_fill_land(CellXY from)
                     continue;
                 int land = FIELD(cell, C_LANDTYPE, int);
                 if ((land == 2 || land == 3) && !(FIELD(cell, C_FLAGS, DWORD) & 0x100))
+                    continue;
+                if (buildings_block && (FIELD(cell, C_OCCUPATION, DWORD) & 0x80))
                     continue;
                 dir_land[(n.Y * 512 + n.X) >> 3] |= 1 << (n.X & 7);
                 dir_sea_queue[tail++] = n.Y * 512 + n.X;
