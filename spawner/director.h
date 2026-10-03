@@ -87,7 +87,7 @@ struct DirState {
     int ferry_docked[DIR_CONVOY], ferry_want, convoy_since, home_ground;
     CellXY ferry_seen[DIR_CONVOY];      /* where each transport last made headway, and when */
     int ferry_seen_frame[DIR_CONVOY], dock_frame;
-    CellXY landing, dock;
+    CellXY landing, dock, dock_failed;   /* dock_failed: a beach the transports couldn't get to */
     int rally_frame;
     int third_party, last_attack_end, next_repick;          /* other enemies' units near the target's base */
     int naval_threat, want_navy;                            /* enemy ships near our buildings */
@@ -3210,11 +3210,12 @@ static int dir_boardable(BYTE *house, DirState *d, BYTE *o, int *what)
         && !dir_is_ferry(d, o) && !dir_naval(o) && !dir_crosses(o) && dir_armed(o) && !dir_landed(d, object_cell(o));
 }
 
-/* The beach cell nearest `at` (within 30 cells) on land our units can walk to from it, clear of
- * buildings, with water within 2 cells; `at` itself if there is none. */
-static CellXY dir_beach_near(CellXY at)
+/* The beach cell nearest `at` (within 30 cells) on land our units can walk to from `from`, clear
+ * of buildings, with water within 2 cells and away from `avoid` (a beach transports couldn't get
+ * to; 0,0: none); 0,0 if there is none. */
+static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
 {
-    dir_fill_land(at);
+    dir_fill_land(from);
     for (int r = 0; r <= 30; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
@@ -3223,10 +3224,10 @@ static CellXY dir_beach_near(CellXY at)
                 CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
                 BYTE *cell = dir_cell(c);
                 if (cell && FIELD(cell, C_LANDTYPE, int) == 6 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
-                    && dir_is_land(c) && dir_near_water(c, 2))
+                    && dir_is_land(c) && dir_near_water(c, 2) && (!avoid.X || dir_dist2(c, avoid) > 6 * 6))
                     return c;
             }
-    return at;
+    return (CellXY){ 0, 0 };
 }
 
 static void dir_ferry(BYTE *house, DirState *d)
@@ -3270,7 +3271,9 @@ static void dir_ferry(BYTE *house, DirState *d)
      * bases, where they never got out to the water again. Re-picked every 3000 frames. */
     if (!d->dock.X || CURRENT_FRAME >= d->dock_frame) {
         d->dock_frame = CURRENT_FRAME + 3000;
-        d->dock = dir_beach_near(d->rally);
+        d->dock = dir_beach_near(d->rally, d->rally, d->dock_failed);
+        if (!d->dock.X)
+            d->dock = d->rally;
     }
     /* a stock team that recruited a transport orders it about too (area guard), and it ignored the
      * sailing order with a full load aboard */
@@ -3311,6 +3314,26 @@ static void dir_ferry(BYTE *house, DirState *d)
                    d->dock.X, d->dock.Y, FIELD(t, COMBAT_MISSION, int));
         if (d->ferry_state[k] == 0 && !d->ferry_docked[k]) {   /* come ashore first */
             if (dir_dist2(at, d->dock) <= 6 * 6 || CURRENT_FRAME - d->ferry_frame[k] > 600) {
+                /* Kept from the dock, it loads where it stands, but only on land our units can walk
+                 * to: transports waiting in the water under a cliff-top base had the army called to
+                 * the cliff edge, where it crowded for good and no convoy sailed again. Off that
+                 * land, the dock moves to the beach on it nearest the transport. */
+                dir_fill_land(d->rally);
+                if (dir_dist2(at, d->dock) > 6 * 6 && !dir_is_land(at)) {
+                    CellXY to = dir_beach_near(at, d->rally, d->dock);
+                    if (to.X) {
+                        logmsg("director: house %d frame %d: ferry %d can't get from %d,%d to the dock at %d,%d; "
+                               "dock moved to %d,%d", FIELD(house, 0x30, int), CURRENT_FRAME, k, at.X, at.Y,
+                               d->dock.X, d->dock.Y, to.X, to.Y);
+                        d->dock_failed = d->dock;
+                        d->dock = to;
+                        d->dock_frame = CURRENT_FRAME + 3000;
+                        d->ferry_frame[k] = CURRENT_FRAME;
+                        coming++;
+                        dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
+                        continue;
+                    }
+                }
                 d->ferry_docked[k] = d->ferry_aboard_frame[k] = CURRENT_FRAME;   /* blocked: load where it stands */
                 d->ferry_aboard[k] = passengers;
             } else {
