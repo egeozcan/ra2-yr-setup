@@ -100,7 +100,7 @@ class PolicyTests(unittest.TestCase):
             dir_plan_weights(-1, 1, 0, 0, w);                      /* nobody on foot: no rush */
             assert(w[PLAN_RUSH] == 0 && w[PLAN_BOOM] >= 20);
             dir_plan_weights(60, 6, 3, 0, w);                      /* a big free-for-all: rush is rare */
-            assert(w[PLAN_RUSH] < 15 && w[PLAN_BOOM] >= 20 && w[PLAN_SIEGE] == 25 && w[PLAN_NAVAL] == 0);
+            assert(w[PLAN_RUSH] < 15 && w[PLAN_BOOM] >= 20 && w[PLAN_SIEGE] == 10 && w[PLAN_NAVAL] == 0);
             dir_plan_weights(74, 1, 0, 0, w);                   /* a duel at medium range: no boom */
             assert(w[PLAN_BOOM] == 0);
             dir_plan_weights(-1, 6, 3, 1, w);                   /* islands: the fleet is the way over */

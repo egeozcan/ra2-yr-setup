@@ -182,7 +182,9 @@ static void dir_plan_weights(int land_steps, int enemies, int tier, int sea, int
     /* a late first strike loses duels to an early attack (0 of 5 from MCV starts at 74 cells, 0 of
      * 3 again later): boom is for long walks and crowded maps, never a duel within reach */
     w[PLAN_BOOM] = (enemies >= 2 ? 5 : 0) + (land_steps < 0 || land_steps > 110 ? 20 : 0) + (enemies >= 3 ? 15 : 0);
-    w[PLAN_SIEGE] = 15 + (tier >= 2 ? 10 : 0);
+    /* nobody has defences at the start: siege as an opening is a hunch the re-plan (40 against a
+     * real fortress) does better; as an opening it placed 0.55 from built bases (balanced 0.38) */
+    w[PLAN_SIEGE] = 10;
     /* sea: our water reaches some enemy's buildings; across water a fleet is the way over */
     w[PLAN_NAVAL] = !sea ? 0 : land_steps < 0 ? 35 : 10;
 }
