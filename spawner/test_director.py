@@ -116,6 +116,9 @@ class PolicyTests(unittest.TestCase):
             assert(w[PLAN_BOOM] == 0);
             dir_replan_weights(1000, 20000, 4, 4, -1, 1, 1, w);
             assert(w[PLAN_NAVAL] == 35 && w[PLAN_BOOM] == 5);
+            /* a rush far behind 8000 frames in is called off; not before, nor when close */
+            assert(dir_rush_failing(9000, 7000, 15000) && !dir_rush_failing(6000, 7000, 15000));
+            assert(!dir_rush_failing(9000, 30000, 35000) && !dir_rush_failing(9000, 5000, 0));
             /* the draw covers every plan with weight, and only those */
             int seen[PLAN_COUNT] = { 0 }, none_rush[PLAN_COUNT] = { 10, 0, 10, 10, 0 };
             for (unsigned r = 0; r < 1000; r++) {

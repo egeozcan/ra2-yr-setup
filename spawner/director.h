@@ -120,6 +120,7 @@ struct DirState {
     /* strategy: the plan chosen at the start, and the posture that follows the game */
     int plan, plan_chosen, land_steps, posture, posture_frame, next_posture, next_hold_defense, opening;
     int plan_frame, next_replan, plan_roll;   /* when the plan was adopted; the next re-plan; the random stream */
+    int plan_dropped;                     /* a rush called off before it struck (dir_rush_failing) */
     int threat_near, target_home;   /* armed enemy units within 35 cells of home; the target's near its base */
     int naval_pick, naval_pick_frame;   /* the shipyard's own order: UnitType index + 1 (0: none) */
     BYTE *breach_unit[2];               /* units shooting a gap in a fence for an engineer */
@@ -157,11 +158,18 @@ static DirState *dir_get(BYTE *house)
     return d;
 }
 
-/* A plan with a phase has run out: its time is up, or a rush's first attack is over. */
+/* A plan with a phase has run out: its time is up, a rush's first attack is over, or a rush fell
+ * too far behind to strike at all (and stays called off: the house plans again). */
 static int dir_plan_over(DirState *d)
 {
     const DirPlanLevers *p = &dir_plan_levers[d->plan];
-    return p->phase && (CURRENT_FRAME - d->plan_frame >= p->phase
+    if (d->plan == PLAN_RUSH && !d->plan_dropped && d->state != DIR_ATTACK
+        && dir_rush_failing(CURRENT_FRAME - d->plan_frame, d->army_value, d->target_army)) {
+        d->plan_dropped = 1;
+        logmsg("director: house %d frame %d calls the rush off (army %d, the target's %d)", FIELD(d->house, 0x30, int),
+               CURRENT_FRAME, d->army_value, d->target_army);
+    }
+    return p->phase && (CURRENT_FRAME - d->plan_frame >= p->phase || d->plan_dropped
                         || (d->plan == PLAN_RUSH && d->last_attack_end > d->plan_frame));
 }
 
@@ -5070,6 +5078,7 @@ static void dir_replan(BYTE *house, DirState *d)
         dir_announce(house, "new plan %s", dir_plan_names[plan]);
     d->plan = plan;
     d->plan_frame = CURRENT_FRAME;
+    d->plan_dropped = 0;
 }
 
 /* Every 450 frames: press an advantage, hold against a stronger neighbour, or strike a target whose
