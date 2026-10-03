@@ -1651,9 +1651,11 @@ static void dir_army(BYTE *house, DirState *d)
          * last attack (or from frame 15000: the opening is no stalemate) */
         int since = d->last_attack_end > 15000 ? d->last_attack_end : 15000;
         int waited = CURRENT_FRAME > since ? CURRENT_FRAME - since : 0;
-        /* a duel waits 9000 frames longer: an army that stays home there is ready for the other's
-         * attack, and patience pays. It still ends: two capped armies sat to the time limit. */
-        if (dir_hostile_houses(house) < 2)
+        /* a duel's first attack waits 9000 frames longer: an army that stays home there is ready for
+         * the other's attack, and patience pays. It still ends: two capped armies sat to the time
+         * limit. Not again after an attack: both houses reached the lower edge together at frame
+         * 36000, traded armies and waited 21000 frames more (9 of 12 Rockets duels timed out). */
+        if (dir_hostile_houses(house) < 2 && d->last_attack_end <= 15000)
             waited = waited > 9000 ? waited - 9000 : 0;
         const DirPlanLevers *lv = dir_levers(d);
         int edge = lv->edge - (d->posture == POSTURE_PRESS ? 2 : 0);
