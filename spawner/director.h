@@ -3514,6 +3514,58 @@ static void dir_ferry(BYTE *house, DirState *d)
                "far, %d busy; room left %d, waited %d", FIELD(house, 0x30, int), CURRENT_FRAME, docked, ready, coming,
                called, npool, distant, busy, free, CURRENT_FRAME - d->convoy_since);
     }
+    /* Nobody aboard any docked transport 3000 frames after the first call, with units called: they
+     * can't get to it (four landing craft clumped on a beach pocket sat empty for 45000 frames with
+     * 20 called). The dock moves (away from where they stand), the transports go there and the
+     * called units are let go; what the units were doing is logged. */
+    int aboard_docked = 0;
+    for (int k = 0; k < DIR_CONVOY; k++)
+        if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k])
+            aboard_docked += FIELD(d->ferry[k], T_PASSENGERS, int);
+    if (called && !aboard_docked && CURRENT_FRAME - d->convoy_since > 3000) {
+        BYTE *t0 = NULL;
+        for (int k = 0; k < DIR_CONVOY && !t0; k++)
+            if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k])
+                t0 = d->ferry[k];
+        CellXY stuck = t0 ? object_cell(t0) : d->dock;
+        char seen[200];
+        int len = 0, shown = 0;
+        seen[0] = 0;
+        for (int i = 0; i < v->Count; i++) {
+            BYTE *o = v->Items[i];
+            if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house)
+                continue;
+            int m = FIELD(o, COMBAT_MISSION, int);
+            BYTE *dest = FIELD(o, COMBAT_DESTINATION, BYTE *);
+            int to_ferry = m == MISSION_ENTER && dir_is_ferry(d, dest);
+            if (to_ferry) {
+                ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, NULL, 1);
+                ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_AREA_GUARD, 1);
+            }
+            if ((to_ferry || (m == MISSION_MOVE && dir_dist2(object_cell(o), stuck) < 20 * 20)) && shown < 6 && len < 160) {
+                CellXY c = object_cell(o);
+                len += sprintf(seen + len, " %.6s@%d,%d/m%d/%dc", (char *)dir_type(o) + T_ID, c.X, c.Y, m,
+                               dir_isqrt(dir_dist2(c, to_ferry && dest ? object_cell(dest) : stuck)));
+                shown++;
+            }
+        }
+        CellXY to = dir_beach_near(d->rally, d->rally, stuck);
+        logmsg("director: house %d frame %d: convoy stalled, %d called and nobody aboard (transport at %d,%d, dock "
+               "%d,%d); dock moved to %d,%d; units:%s", FIELD(house, 0x30, int), CURRENT_FRAME, called, stuck.X, stuck.Y,
+               d->dock.X, d->dock.Y, to.X, to.Y, seen);
+        d->dock_failed = stuck;
+        if (to.X)
+            d->dock = to;
+        d->dock_frame = CURRENT_FRAME + 6000;
+        for (int k = 0; k < DIR_CONVOY; k++)
+            if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k]) {
+                d->ferry_docked[k] = 0;
+                d->ferry_frame[k] = CURRENT_FRAME;
+                dir_order(d->ferry[k], MISSION_MOVE, NULL, dir_cell(d->dock));
+            }
+        d->convoy_since = 0;
+        return;
+    }
     /* The convoy sails together: when every docked transport is ready, none is still on its way to
      * the dock and nobody is still walking over to board (each waited for up to 900 and 1800
      * frames), or when nobody else will come, or after 3000 frames at the dock. */
