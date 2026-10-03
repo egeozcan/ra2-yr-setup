@@ -3233,6 +3233,33 @@ static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
     return (CellXY){ 0, 0 };
 }
 
+/* A transport's passengers: a count (T_PASSENGERS) and a chain through ObjectClass::NextObject
+ * (0x30) from the first (T_PASSENGERS + 4). Twice on Isolation the game crashed walking a chain
+ * with a dead object in it (0x473491, in PassengerClass::GetTotalSize, from a unit asking to
+ * board; and earlier at 0x6F3731, perhaps the same). A chain that runs into anything not in the
+ * techno list is cut there, before the engine walks it, and logged. */
+#define O_NEXT_OBJECT 0x30
+static void dir_check_passengers(BYTE *house, BYTE *t)
+{
+    int count = FIELD(t, T_PASSENGERS, int);
+    BYTE *prev = NULL, *p = FIELD(t, T_PASSENGERS + 4, BYTE *);
+    int i = 0;
+    for (; i < count && p && dir_object_listed(OIL_TECHNO_ARRAY, p) && FIELD(p, O_OWNER, BYTE *); i++) {
+        prev = p;
+        p = FIELD(p, O_NEXT_OBJECT, BYTE *);
+    }
+    if (i == count)
+        return;
+    logmsg("director: house %d frame %d: %.24s passenger list broken at %d of %d (%p, vtable %#x, health %d); cut "
+           "there", FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(t) + T_ID, i, count, (void *)p,
+           p ? FIELD(p, 0, DWORD) : 0, p ? FIELD(p, 0x6C, int) : 0);
+    if (prev)
+        FIELD(prev, O_NEXT_OBJECT, BYTE *) = NULL;
+    else
+        FIELD(t, T_PASSENGERS + 4, BYTE *) = NULL;
+    FIELD(t, T_PASSENGERS, int) = i;
+}
+
 static void dir_ferry(BYTE *house, DirState *d)
 {
     dir_why = "ferry";
@@ -3269,6 +3296,9 @@ static void dir_ferry(BYTE *house, DirState *d)
     }
     if (!dir_ferry_count(d))
         return;
+    for (int k = 0; k < DIR_CONVOY; k++)
+            if (d->ferry[k])
+                dir_check_passengers(house, d->ferry[k]);
     /* The dock: a beach (land type 6, water beside it) near the rally that our ground units can walk
      * to. Docking at the rally itself wedged transports in among the waiting army on cliff-top
      * bases, where they never got out to the water again. Re-picked every 3000 frames. */
@@ -3348,16 +3378,30 @@ static void dir_ferry(BYTE *house, DirState *d)
                 continue;
             }
         }
-        /* Docked, it stays: one drove off from the beach into the waiting army by the rally and sat
-         * there empty for 35000 frames, nobody able to board. Off by more than 8 cells, it docks again. */
+        /* Docked, it may still be moved off (something orders transports about every few hundred
+         * frames on Isolation; sent back each time, one went back and forth 590 times a game). Off
+         * by more than 8 cells it loads where it now stands if our units can walk there, and goes
+         * back to the dock only from water or land they can't reach. */
         if (d->ferry_state[k] == 0 && dir_dist2(at, d->ferry_dock_at[k]) > 8 * 8) {
-            logmsg("director: house %d frame %d: ferry %d left its dock at %d,%d for %d,%d; back to the dock",
-                   FIELD(house, 0x30, int), CURRENT_FRAME, k, d->ferry_dock_at[k].X, d->ferry_dock_at[k].Y, at.X, at.Y);
-            d->ferry_docked[k] = 0;
-            d->ferry_frame[k] = CURRENT_FRAME;
-            dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
-            coming++;
-            continue;
+            dir_fill_land(d->rally);
+            int walkable = dir_is_land(at);
+            static int last_log[32];
+            int idx = FIELD(house, 0x30, int) & 31;
+            if (CURRENT_FRAME - last_log[idx] > 1500) {
+                last_log[idx] = CURRENT_FRAME;
+                logmsg("director: house %d frame %d: ferry %d left its dock at %d,%d for %d,%d; %s", idx,
+                       CURRENT_FRAME, k, d->ferry_dock_at[k].X, d->ferry_dock_at[k].Y, at.X, at.Y,
+                       walkable ? "loads there" : "back to the dock");
+            }
+            if (walkable) {
+                d->ferry_dock_at[k] = at;
+            } else {
+                d->ferry_docked[k] = 0;
+                d->ferry_frame[k] = CURRENT_FRAME;
+                dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
+                coming++;
+                continue;
+            }
         }
         if (d->ferry_state[k] == 0) {
             docked++;
@@ -3453,6 +3497,14 @@ static void dir_ferry(BYTE *house, DirState *d)
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_ENTER, 0);
             ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, d->ferry[best], 1);
         }
+    }
+    if (bench_file && CURRENT_FRAME % 900 < 15) {
+        int free = 0;
+        for (int k = 0; k < DIR_CONVOY; k++)
+            free += room[k] > 0 ? room[k] : 0;
+        logmsg("director: house %d frame %d: convoy %d docked, %d ready, %d coming; %d called, %d in the pool, %d "
+               "far, %d busy; room left %d, waited %d", FIELD(house, 0x30, int), CURRENT_FRAME, docked, ready, coming,
+               called, npool, distant, busy, free, CURRENT_FRAME - d->convoy_since);
     }
     /* The convoy sails together: when every docked transport is ready, none is still on its way to
      * the dock and nobody is still walking over to board (each waited for up to 900 and 1800
