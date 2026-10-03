@@ -977,6 +977,10 @@ What it does, per Brutal house:
     In the MCV A/B, 8 of 9 strategy houses whose first attack went so lost the duel.
   - From frame 24,000 the army floor (12,000) drops to twice the opposition, from 4,000 up: an
     army of 8,600 sat at home against 2,600 until the time limit.
+  - The edge drops with patience: 0.2 after 6,000 frames without an attack, 0.4 after 12,000
+    (counted from frame 15,000 or the last attack's end). A duel's first attack waits 9,000
+    frames longer. Applied after every attack, that extra wait had both sides trade armies at
+    frame 36,000 and sit 21,000 frames more: 9 of 12 Rockets duels timed out, 4 of 12 since.
   - It attacks the nearest structures with focus fire. Units answer anything already able to
     shoot them, and units well ahead of the group wait for the rest.
   - It retreats a losing attack, measured at the front. It defends against enemies near its
@@ -1257,7 +1261,7 @@ of the game (`DIR_F_STRATEGY`, flag 16384, on by default). Code: `dir_choose_pla
   | Plan | Fits | What changes |
   |---|---|---|
   | balanced | always (weight 30) | the director as it was |
-  | rush | a short walk to the enemy (weight 35 under 70 cells, 15 under 110); a third as likely with 3+ enemies and again from a tier 2–3 base, never across water | launches at under half the usual army floor (the edge stays 1.2x: at 1.0x the defender won, and 3 of 12 rushes won the MCV duels), goes for refineries, factories and yards first, adds war factories at half the cash; ends with its first attack or at frame 14,000 |
+  | rush | a short walk to the enemy (weight 15 within 70 cells, 2 within 110, 1 beyond: at 73–80 cells about 3 of 12 MCV-duel rushes won, 7 of 11 closer); a third as likely with 3+ enemies and again from a tier 2–3 base, never across water | launches at under half the usual army floor (the edge stays 1.2x: at 1.0x the defender won, and 3 of 12 rushes won the MCV duels), goes for refineries, factories and yards first, adds war factories at half the cash; ends with its first attack or at frame 14,000. Called off at frame 8,000 if it hasn't struck and has under 0.8 of the target's army: 0 of 12 such rushes had won. Called off, the house keeps its extra factories and builds its economy; on the short maps rushes then won 5 of 7 (0 of 10 in the two runs before) |
   | boom | long walks, 3+ enemies, islands; never a duel within reach (0 of 3 won) | an extra refinery, the refinery schedule 3,000 frames early, an expansion from frame 4,500 without waiting for idle harvesters, a first strike only at 1.6x the floor; hands over at frame 20,000 |
   | siege | rarely as an opening (weight 10: nobody has defences yet; as an opening it placed 0.55 from built bases against balanced's 0.38), mostly later against a fortress | 15 points more siege in the unit mix (V3, Prism Tank, Magnetron) |
   | naval | our sea reaches an enemy (weight 35 across water, 10 otherwise; half for the Allies) | warships kept at 40% of the army's value, the fleet sailing once it is worth 8,000. Escorts first: anti-air (Aegis, Sea Scorpion; Yuri has none) and anti-submarine (Destroyer, Typhoon, Boomer) ships each make up 20% of the fleet, 35% once enemy aircraft or submarines are about. The rest are capital ships: Carriers, Dreadnoughts, Boomers. A fleet of Dreadnoughts alone sat helpless under aircraft and submarines. |
@@ -1298,6 +1302,13 @@ of the game (`DIR_F_STRATEGY`, flag 16384, on by default). Code: `dir_choose_pla
     - By plan: balanced (posture only) 14 of 21, siege 5 of 9, boom 4 of 7, rush 5 of 11.
     - 4 of the 5 lost rushes never launched. From tier-3 bases both armies grow alike, so rush is
       now a third as likely there.
+  - **Later runs of the same set (2026-10-03):** 23–25, 22–26, 23–25. From built bases the
+    strategy layer is level: over the three runs balanced won 42 of 79, siege 21 of 47, rush 3 of
+    10, boom 2 of 8.
+  - **MCV starts** (`strat_mcv`, 48 duels on Deep Freeze, Rockets, Carville and Round): 28–20,
+    then 18–30 (rushes 1 of 11, many never launching), 22–26 after the rush changes, 26–22 with
+    the duel patience fix, 23–25. Single maps swing from 3 to 8 of 12 between runs of the same
+    build.
 
 ### Naval yards no longer stall the war factories (2026-10-02)
 
@@ -1339,6 +1350,23 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
     crowded the dock, gave up and jammed the ramp to the beach. Yuri's slaves aren't called.
   - The rally stays on the base's level, turning 45 or 90 degrees aside if the way toward the
     enemy goes down a cliff. On islands it had been on the beach, on the dock itself.
+  - **Docks the army can reach.** The dock is a beach near the rally that our units can walk to
+    around buildings (`dir_fill_walk`). A transport kept from the dock loads where it stands only
+    on such land; otherwise the dock moves to the walkable beach nearest it. Transports waiting
+    in the water under a cliff-top base had the army called to the cliff edge for good.
+  - **Walk, then board.** Told to board from afar, a unit has an amphibious transport drive out to
+    meet it, and with callers all over the base the transports left the dock again and again.
+    Units walk to their transport and board from within 7 cells (any of them after 1,500 frames).
+    A transport moved off its dock loads where it now stands if that is walkable.
+  - **Stall recovery.** Units called and nobody aboard 3,000 frames on: the dock moves, the units
+    are let go, and the log lists what they were doing ("convoy stalled").
+  - **Boarding isn't broken off mid-way.** Units within 3 cells of their transport aren't called
+    off, and a transport doesn't sail while a unit beside it gets in. Broken off, a unit was
+    counted aboard but never joined the passenger list. Each director tick also checks every
+    convoy transport's passenger chain against the techno list and cuts it at anything dead
+    ("passenger list broken"). Isolation games crashed 4 times in 32 on corrupt units
+    (0x473491 in `PassengerClass::GetTotalSize`, 0x6F3731, 0x6F36FE and 0x7E1F2C from target
+    scans); the cause isn't confirmed.
 - **Landed troops attack.** Troops already across used to be ordered to the home army's rally
   while it gathered, which they can't walk to. Now they attack the target's nearest structure.
 - **Extra war factories on cramped islands:** the combat AI probes the stock base planner before
