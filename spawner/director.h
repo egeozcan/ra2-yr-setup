@@ -3492,7 +3492,15 @@ static void dir_ferry(BYTE *house, DirState *d)
             continue;   /* a smaller unit may still fit */
         room[best] -= size;
         called++;
-        if (!dir_recent_order(o, d->ferry[best], 300)) {
+        /* Told to board from afar, the unit has the transport drive out to meet it: with callers
+         * all over the base, transports left the dock again and again, chasing first one and then
+         * another, and nobody got aboard in 20000 frames. Units walk over first and board from
+         * within 7 cells (any of them once the convoy has waited 1500 frames). */
+        CellXY tc = object_cell(d->ferry[best]);
+        if (dir_dist2(object_cell(o), tc) > 7 * 7 && CURRENT_FRAME - d->convoy_since < 1500) {
+            if (!dir_recent_order(o, dir_cell(tc), 300))
+                dir_order(o, MISSION_MOVE, NULL, dir_cell(tc));
+        } else if (!dir_recent_order(o, d->ferry[best], 300)) {
             /* Entering a transport follows Destination, not Target */
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_ENTER, 0);
             ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, d->ferry[best], 1);
