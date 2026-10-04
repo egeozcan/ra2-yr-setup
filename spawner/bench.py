@@ -391,7 +391,16 @@ MIND = [(m, 3, [(8, s, 1 if on else NOMIND, 0), (9, 1 - s, 1, 0)], {"Superweapon
         for s in (0, 1)
         for on in (1, 0)
         for rep in (0, 1)]
-SUITES = {"mind": MIND, "strat": STRAT, "strat_iso": STRAT_ISO, "strat_mcv": STRAT_MCV, "tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
+# Ablation of the strategy layer's postures: plans without postures (DIR_F_DEFAULT | DIR_F_NO_POSTURE)
+# against no plans, as STRAT_MCV.
+NOPOSTURE = 32703 | 65536
+POSTURE = [(m, 3, [(a, s, NOPOSTURE if on == 0 else NOSTRAT, 0), (b, 1 - s, NOSTRAT if on == 0 else NOPOSTURE, 0)],
+            {"Superweapons": "0", "Crates": "1"})
+           for m in ("DeepFrze.yro", "Rockets.mmx", "Carville.mmx", "Round.mmx")
+           for a, b in ((0, 8), (0, 9), (8, 9))
+           for s in (0, 1)
+           for on in (0, 1)]
+SUITES = {"posture": POSTURE, "mind": MIND, "strat": STRAT, "strat_iso": STRAT_ISO, "strat_mcv": STRAT_MCV, "tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
 
 
 def suite_list(outdir, matches, frames=60000):

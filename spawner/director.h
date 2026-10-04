@@ -6079,7 +6079,7 @@ static void dir_replan(BYTE *house, DirState *d)
  * army is away. A posture lasts at least 900 frames, except that a threat to home ends any other. */
 static void dir_update_posture(BYTE *house, DirState *d)
 {
-    if (CURRENT_FRAME < d->next_posture)
+    if (CURRENT_FRAME < d->next_posture || (director_enabled(house) & DIR_F_NO_POSTURE))
         return;
     d->next_posture = CURRENT_FRAME + 450;
     int opposition = d->target_army + d->third_party + d->enemy_def / 2;

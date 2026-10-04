@@ -12,7 +12,9 @@ enum { DIR_F_PRODUCTION = 1, DIR_F_ARMY = 2, DIR_F_TAKEOVER = 4, DIR_F_FOCUS = 8
        /* defenses-first objectives lost 3 of 4 director-vs-director ablation matches: off */
        DIR_F_DEFAULT = DIR_F_ALL & ~DIR_F_DEFENSES_FIRST,
        /* opt-out, for ablation: no hunters, Bulldozers or blackouts against mind control */
-       DIR_F_NO_ANTIMIND = 32768 };
+       DIR_F_NO_ANTIMIND = 32768,
+       /* opt-out, for ablation: the strategy layer without postures (always normal) */
+       DIR_F_NO_POSTURE = 65536 };
 enum { ROLE_MAIN, ROLE_AA, ROLE_SIEGE, ROLE_SUPPORT, ROLE_COUNT };
 
 /* Launch once the army can beat what the enemy fields (its mobile army plus half its static
