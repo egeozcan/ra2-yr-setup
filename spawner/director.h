@@ -518,7 +518,11 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
     /* Soviet hunters for enemy mind-controllers: two per controller (and two more), up to ten,
      * Siege Choppers for every second Terror Drone once they can be built */
     /* Bulldozers (mod) for enemy Psychic Towers: two, which dir_dozers sends at them */
-    BYTE *dozer = side == 1 && d->enemy_psytowers && !ground_full ? find_type(UNITTYPE_ARRAY, "SBDOZR") : NULL;
+    /* both only once an army stands: built first, they replaced the early tanks and the Russians
+     * lost 11 of 12 duels with Yuri (from about half) */
+    int army_value = have[0] + have[1] + have[2] + have[3];
+    BYTE *dozer = side == 1 && d->enemy_psytowers && !ground_full && army_value >= 12000
+        ? find_type(UNITTYPE_ARRAY, "SBDOZR") : NULL;
     if (dozer && dir_owned_of(house, dozer) < 2 && dir_first_buildable(house, UNITTYPE_ARRAY, "SBDOZR", 1000)) {
         if (bench_file && CURRENT_FRAME - d->last_hunt_log > 3000) {
             d->last_hunt_log = CURRENT_FRAME;
@@ -531,7 +535,9 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
         BYTE *dron = find_type(UNITTYPE_ARRAY, "DRON"), *schp = find_type(UNITTYPE_ARRAY, "SCHP");
         int drones = dron ? dir_owned_of(house, dron) : 0, choppers = schp ? dir_owned_of(house, schp) : 0;
         int want = 2 * d->enemy_minds + 2 < 10 ? 2 * d->enemy_minds + 2 : 10;
-        BYTE *hunt = drones + choppers < want
+        /* hunters up to a fifth of the army's value */
+        int hunt_value = (dron ? drones * dir_cost(dron) : 0) + (schp ? choppers * dir_cost(schp) : 0);
+        BYTE *hunt = drones + choppers < want && hunt_value * 5 < army_value
             ? dir_first_buildable(house, UNITTYPE_ARRAY, choppers * 2 < drones ? "SCHP,DRON" : "DRON,SCHP", 1000) : NULL;
         if (hunt) {
             if (bench_file && CURRENT_FRAME - d->last_hunt_log > 3000) {
