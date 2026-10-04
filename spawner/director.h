@@ -5332,6 +5332,30 @@ static void dir_fill_walk(CellXY from)
     dir_fill_land_ex(from, 1);
 }
 
+/* Cell floor heights, read once a game (terrain heights don't change), and the cliff test: a step
+ * of over one and a half levels (104 leptons each) between neighbouring cells. A ramp climbs half a
+ * level from cell centre to cell centre. */
+static short dir_heights[512 * 512];
+static int dir_heights_frame = -1;
+static int dir_step_blocked(CellXY a, CellXY b)
+{
+    if (dir_heights_frame < 0 || CURRENT_FRAME < dir_heights_frame) {   /* a new game */
+        for (int i = 0; i < 512 * 512; i++)
+            dir_heights[i] = -32768;
+        dir_heights_frame = CURRENT_FRAME;
+    }
+    short *ha = &dir_heights[a.Y * 512 + a.X], *hb = &dir_heights[b.Y * 512 + b.X];
+    if (*ha == -32768)
+        *ha = (short)dir_height(a);
+    if (*hb == -32768)
+        *hb = (short)dir_height(b);
+    if (abs(*ha - *hb) <= 156)
+        return 0;
+    /* a bridge deck's floor is the ground below it: on and off a bridge isn't a cliff */
+    BYTE *ca = dir_cell(a), *cb = dir_cell(b);
+    return !(ca && (FIELD(ca, C_FLAGS, DWORD) & 0x100)) && !(cb && (FIELD(cb, C_FLAGS, DWORD) & 0x100));
+}
+
 static void dir_fill_land_ex(CellXY from, int buildings_block)
 {
     memset(dir_land, 0, sizeof dir_land);
@@ -5353,6 +5377,10 @@ static void dir_fill_land_ex(CellXY from, int buildings_block)
                     continue;
                 if (buildings_block && ((FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || land == 4))
                     continue;   /* walls (LandType Wall) block walking too */
+                /* and cliffs: infantry on a plateau above a beach dock counted as able to walk to it
+                 * and stood 15 cells off for good, convoy after convoy */
+                if (buildings_block && dir_step_blocked((CellXY){ (short)x, (short)y }, n))
+                    continue;
                 dir_land[(n.Y * 512 + n.X) >> 3] |= 1 << (n.X & 7);
                 dir_sea_queue[tail++] = n.Y * 512 + n.X;
             }
@@ -5378,7 +5406,8 @@ static void dir_walk_steps(CellXY from)
                     continue;
                 int land = FIELD(cell, C_LANDTYPE, int);
                 if (((land == 2 || land == 3) && !(FIELD(cell, C_FLAGS, DWORD) & 0x100))
-                    || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || land == 4)
+                    || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || land == 4
+                    || dir_step_blocked((CellXY){ (short)x, (short)y }, n))
                     continue;
                 dir_walk[n.Y * 512 + n.X] = dir_walk[i] + 1;
                 dir_sea_queue[tail++] = n.Y * 512 + n.X;
