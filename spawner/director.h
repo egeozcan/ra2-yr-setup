@@ -147,6 +147,8 @@ struct DirState {
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *mcv_seen[8];                  /* MCVs logged already */
     int mcv_seen_next, yards_seen, next_crate_site, crate_frame;
+    CellXY miner_sent[4];               /* fields Slave Miners were sent to lately */
+    int miner_sent_frame[4], miner_sent_next;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
     int cover_frame;
 };
@@ -5636,6 +5638,11 @@ static void dir_slave_miners(BYTE *house, DirState *d)
                 taken[ntaken++] = dest && is_cell(dest) ? FIELD(dest, C_MAPCOORDS, CellXY) : object_cell(o);
             }
         }
+        /* and fields miners were sent to lately: a driving miner on Harvest keeps no destination
+         * (three went to 20,86, 20,88 and 21,87 within 3300 frames) */
+        for (int j = 0; j < 4 && ntaken < 32; j++)
+            if (d->miner_sent_frame[j] && CURRENT_FRAME - d->miner_sent_frame[j] < 6000)
+                taken[ntaken++] = d->miner_sent[j];
         if (!dir_find_ore_free(house, c, &site, taken, ntaken) || dir_dist2(site, c) < 12 * 12)
             continue;
         int there = dir_ore_reach(site, 8);
@@ -5647,6 +5654,8 @@ static void dir_slave_miners(BYTE *house, DirState *d)
         dir_miner_seen[k].seen = CURRENT_FRAME;
         d->miner_from = c;
         d->miner_site = site;
+        d->miner_sent[d->miner_sent_next % 4] = site;
+        d->miner_sent_frame[d->miner_sent_next++ % 4] = CURRENT_FRAME;
         d->miner_frame = CURRENT_FRAME;
         return;
     }
