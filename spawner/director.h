@@ -376,7 +376,8 @@ static int dir_poolable(BYTE *obj, int what)
 static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
     /* Mirage first: the Liberator, at 375 HP and half its fire rate, lost more than it killed (0.89) */
     { "MGTK,TNKD,MTNK,ATTNK", "FV", "SREF", "MGTK,FV" },
-    { "APOC,TTNK,HTNK", "HTK", "V3", "HTK" },
+    /* against infantry the Tesla Tank, then the Flak Track (fragile: lost to anything with a gun) */
+    { "APOC,TTNK,HTNK", "HTK", "V3", "TTNK,HTK" },
     { "MIND,LTNK", "YTNK", "TELE", "YTNK" },
 };
 /* Enemy out of reach by land: Robot Tanks hover over water, Kirovs, Siege Choppers and Discs fly. */

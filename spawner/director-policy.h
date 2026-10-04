@@ -68,7 +68,10 @@ static void dir_role_shares(int enemy_air, int enemy_infantry, int enemy_armor, 
                             int shares[ROLE_COUNT])
 {
     int total = enemy_air + enemy_infantry + enemy_armor + 1;
-    int aa = 10 + 40 * enemy_air / total;
+    /* no anti-air share against next to no aircraft (Soviets built Flak Tracks by the dozen with
+     * none in the sky, and lost them to tanks); aircraft seen near home or the army still bring
+     * anti-air at once (dir_watch_air) */
+    int aa = enemy_air >= 1500 ? 10 + 40 * enemy_air / total : 0;
     int support = 10 + 30 * enemy_infantry / total;
     int siege = enemy_defense > 6000 ? 25 : enemy_defense > 2500 ? 18 : 10;
     shares[ROLE_AA] = aa;
@@ -288,12 +291,15 @@ static int dir_should_launch_plan(int army_value, int army_count, int enemy_army
  * below a quarter. */
 static void dir_plan_shares(const DirPlanLevers *p, int shares[ROLE_COUNT])
 {
+    int no_air = shares[ROLE_AA] == 0;
     shares[ROLE_SIEGE] += p->share_siege;
     shares[ROLE_SUPPORT] += p->share_support;
     shares[ROLE_AA] += p->share_aa;
     for (int r = ROLE_AA; r < ROLE_COUNT; r++)
         if (shares[r] < 5)
             shares[r] = 5;
+    if (no_air)   /* none against no aircraft, unless the plan itself asks for some */
+        shares[ROLE_AA] = p->share_aa > 0 ? p->share_aa : 0;
     shares[ROLE_MAIN] = 100 - shares[ROLE_AA] - shares[ROLE_SUPPORT] - shares[ROLE_SIEGE];
     if (shares[ROLE_MAIN] < 25)
         shares[ROLE_MAIN] = 25;

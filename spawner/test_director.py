@@ -65,13 +65,15 @@ class PolicyTests(unittest.TestCase):
             /* composition follows the enemy */
             int s[ROLE_COUNT];
             dir_role_shares(0, 0, 10000, 0, s);
-            assert(s[ROLE_AA] == 10 && s[ROLE_SUPPORT] == 10 && s[ROLE_SIEGE] == 10 && s[ROLE_MAIN] == 70);
+            assert(s[ROLE_AA] == 0 && s[ROLE_SUPPORT] == 10 && s[ROLE_SIEGE] == 10 && s[ROLE_MAIN] == 80);
+            dir_role_shares(1000, 0, 10000, 0, s);
+            assert(s[ROLE_AA] == 0);   /* next to no aircraft: no anti-air share */
             dir_role_shares(10000, 0, 0, 7000, s);
             assert(s[ROLE_AA] >= 49 && s[ROLE_SIEGE] == 25 && s[ROLE_MAIN] == 25);
             dir_role_shares(0, 10000, 0, 3000, s);
             assert(s[ROLE_SUPPORT] >= 39 && s[ROLE_SIEGE] == 18);
             int have[ROLE_COUNT] = { 7000, 0, 1000, 1000 }, all[ROLE_COUNT] = { 1, 1, 1, 1 };
-            dir_role_shares(0, 0, 10000, 0, s);
+            dir_role_shares(2000, 0, 10000, 0, s);
             assert(dir_pick_role(s, have, all) == ROLE_AA);
             int no_aa[ROLE_COUNT] = { 1, 0, 1, 1 };
             assert(dir_pick_role(s, have, no_aa) != ROLE_AA);
