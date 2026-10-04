@@ -3637,7 +3637,6 @@ static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
 {
     dir_fill_walk(from);
     dir_walk_steps(from);
-    int zone = dir_zone(from);   /* the engine's movement zone: the fills ignore height steps */
     CellXY best = { 0, 0 };
     int best_score = 0x7FFFFFFF;
     for (int dy = -30; dy <= 30; dy++)
@@ -3648,7 +3647,7 @@ static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
                 || !dir_is_land(c) || !dir_near_water(c, 2) || (avoid.X && dir_dist2(c, avoid) <= 6 * 6))
                 continue;
             int steps = dir_walk[c.Y * 512 + c.X];
-            if (steps == 0xFFFF || dir_zone(c) != zone)
+            if (steps == 0xFFFF)
                 continue;
             int score = steps + dir_isqrt(dx * dx + dy * dy);
             if (score < best_score) {
@@ -3972,11 +3971,8 @@ static void dir_ferry(BYTE *house, DirState *d)
             dir_fill_walk(object_cell(d->ferry[k]));
             break;
         }
-    /* and in the engine's movement zone of the dock: the walking fill ignores height steps, and
-     * infantry on a plateau above a beach dock counted as reachable stood 15 cells off for good */
-    int dock_zone = dir_zone(d->dock);
     for (int n = 0; n < npool; )
-        if (!dir_is_land(object_cell(pool[n])) || dir_zone(object_cell(pool[n])) != dock_zone) {
+        if (!dir_is_land(object_cell(pool[n]))) {
             unreachable++;
             npool--;
             pool[n] = pool[npool];
