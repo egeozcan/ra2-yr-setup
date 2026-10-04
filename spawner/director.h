@@ -459,12 +459,20 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
     return NULL;
 }
 
-static int dir_role_of(int side, const char *id)
+/* A unit counts toward every role whose list names it (anything unnamed is a main unit). Counted
+ * toward one role only, the anti-infantry units, each also in another list (Flak Track, IFV,
+ * Gattling Tank as anti-air; Tesla Tank as main), never filled their share, and the director built
+ * nothing else: Soviet armies of Flak Tracks, then of Tesla Tanks with no Apocalypse among them. */
+static void dir_count_roles(int side, const char *id, int cost, int have[ROLE_COUNT])
 {
-    for (int r = ROLE_COUNT - 1; r >= 0; r--)
-        if (in_list(dir_vehicle_roles[side][r], id) && r != ROLE_SUPPORT)
-            return r;
-    return in_list(dir_vehicle_roles[side][ROLE_SUPPORT], id) ? ROLE_SUPPORT : ROLE_MAIN;
+    int any = 0;
+    for (int r = 0; r < ROLE_COUNT; r++)
+        if (in_list(dir_vehicle_roles[side][r], id)) {
+            have[r] += cost;
+            any = 1;
+        }
+    if (!any)
+        have[ROLE_MAIN] += cost;
 }
 
 /* Cut off by water, ground vehicles only fight what reaches our shore or what the ferry carries
@@ -498,7 +506,7 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
     int side = FIELD(house, OIL_H_SIDE, int);
     if (side < 0 || side > 2 || dir_saving_for_refinery(house))
         return;
-    int shares[ROLE_COUNT], have[ROLE_COUNT] = { 0 }, available[ROLE_COUNT];
+    int shares[ROLE_COUNT], have[ROLE_COUNT] = { 0 }, available[ROLE_COUNT], army_value = 0;
     BYTE *pick[ROLE_COUNT];
     dir_role_shares(d->enemy_air, d->enemy_inf, d->enemy_armor, d->enemy_def, shares);
     dir_plan_shares(dir_levers(d), shares);
@@ -508,8 +516,10 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 1)
             continue;
         BYTE *type = dir_type(o);
-        if (type && dir_armed(o))
-            have[dir_role_of(side, (char *)type + T_ID)] += dir_cost(type);
+        if (type && dir_armed(o)) {
+            dir_count_roles(side, (char *)type + T_ID, dir_cost(type), have);
+            army_value += dir_cost(type);
+        }
     }
     int ground_full = dir_ground_full(house, d);
     for (int r = 0; r < ROLE_COUNT; r++) {
@@ -527,7 +537,6 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
     /* Bulldozers (mod) for enemy Psychic Towers: two, which dir_dozers sends at them */
     /* both only once an army stands: built first, they replaced the early tanks and the Russians
      * lost 11 of 12 duels with Yuri (from about half) */
-    int army_value = have[0] + have[1] + have[2] + have[3];
     BYTE *dozer = side == 1 && d->enemy_psytowers && !ground_full && army_value >= 12000
         ? find_type(UNITTYPE_ARRAY, "SBDOZR") : NULL;
     if (dozer && dir_owned_of(house, dozer) < 2 && dir_first_buildable(house, UNITTYPE_ARRAY, "SBDOZR", 1000)) {
