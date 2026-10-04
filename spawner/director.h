@@ -2836,7 +2836,27 @@ static void dir_engineers(BYTE *house, DirState *d)
         d->repair_hut = d->repair_engineer = NULL;
         job = NULL;
     }
+    /* a capturing engineer killed on the way: the target counts one failure (it is guarded, or
+     * the way there is), and the next engineer goes at once rather than when the job times out */
+    if (job && alive && !done && d->repair_mode == 1 && d->repair_engineer
+        && !(dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))) {
+        int *f = dir_job_fail_slot(house, job, 1);
+        ++*f;
+        logmsg("director: house %d frame %d: the engineer for the %.24s at %d,%d was killed at %d,%d, %d cells off (%d)%s",
+               FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(job) + T_ID, object_cell(job).X,
+               object_cell(job).Y, d->repair_eng_at.X, d->repair_eng_at.Y,
+               dir_isqrt(dir_dist2(d->repair_eng_at, object_cell(job))), *f, *f >= 2 ? "; given up" : "");
+        d->repair_hut = d->repair_engineer = NULL;
+        job = NULL;
+    }
     if (job && (done || CURRENT_FRAME - d->repair_frame > d->repair_timeout)) {
+        if (!done && d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer)
+            && oil_live(d->repair_engineer)) {
+            CellXY ec = object_cell(d->repair_engineer);
+            logmsg("director: house %d frame %d: engineer still at %d,%d, %d cells off, mission %d", FIELD(house, 0x30, int),
+                   CURRENT_FRAME, ec.X, ec.Y, dir_isqrt(dir_dist2(ec, object_cell(job))),
+                   FIELD(d->repair_engineer, COMBAT_MISSION, int));
+        }
         if (!done) {   /* out of reach (e.g. the hut is across the water): leave it for a while */
             d->failed_job = job;
             d->failed_frame = CURRENT_FRAME;
