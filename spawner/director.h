@@ -3424,12 +3424,15 @@ static void dir_ferry(BYTE *house, DirState *d)
             } else if (!dir_recent_order(t, dir_cell(d->landing), 450))
                 dir_order(t, MISSION_MOVE, NULL, dir_cell(d->landing));
         } else if (d->ferry_state[k] == 2) {   /* wait until empty, then go home for the next load */
-            if (!passengers || CURRENT_FRAME - d->ferry_frame[k] > 900) {
+            /* not off mid-unload: a passenger half out stayed counted aboard (lists broken at 2 of 4) */
+            int unloading = FIELD(t, COMBAT_MISSION, int) == MISSION_UNLOAD;
+            if (!passengers || (CURRENT_FRAME - d->ferry_frame[k] > 900 && !unloading)
+                || CURRENT_FRAME - d->ferry_frame[k] > 2700) {
                 d->ferry_state[k] = 3;
                 d->ferry_frame[k] = CURRENT_FRAME;
                 dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
-            } else if (!dir_recent_order(t, (BYTE *)2, 150))
-                dir_order(t, 16, NULL, NULL);
+            } else if (FIELD(t, COMBAT_MISSION, int) != MISSION_UNLOAD && !dir_recent_order(t, (BYTE *)2, 150))
+                dir_order(t, 16, NULL, NULL);   /* not again mid-unload (see dir_check_passengers) */
         } else if (dir_dist2(at, d->dock) <= 5 * 5 || CURRENT_FRAME - d->ferry_frame[k] > 6000) {
             d->ferry_state[k] = 0;
             d->ferry_frame[k] = CURRENT_FRAME;
@@ -4960,7 +4963,7 @@ static void dir_colonize(BYTE *house, DirState *d)
                     d->col_state = 2;
                     dir_order(t, MISSION_MOVE, NULL, dir_cell(alt));
                 }
-            } else if (!dir_recent_order(t, (BYTE *)4, 300))
+            } else if (FIELD(t, COMBAT_MISSION, int) != MISSION_UNLOAD && !dir_recent_order(t, (BYTE *)4, 300))
                 dir_order(t, MISSION_UNLOAD, NULL, NULL);
             return;
         }
