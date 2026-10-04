@@ -758,6 +758,26 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
 static BYTE *GFASTCALL dir_factory_pick(BYTE *house, BYTE *btype, int rtti, int zero)
 {
     BYTE *type = ((BYTE *(GTHISCALL *)(BYTE *, int, int))DIR_PRIMARY_IN_PRODUCTION)(house, rtti, zero);
+    /* Any computer player, director or stock, builds only what its buildings allow: CanBuild lets
+     * them skip prerequisites. The pick is cleared so the house chooses again. */
+    if (type && house && !house[H_ISHUMAN] && !dir_has_prereqs(house, type)) {
+        if (dir_type_index(UNITTYPE_ARRAY, type) >= 0)
+            FIELD(house, H_PRODUCING_UNIT, int) = -1;
+        else if (dir_type_index(INFANTRYTYPE_ARRAY, type) >= 0)
+            FIELD(house, H_PRODUCING_INF, int) = -1;
+        else if (dir_type_index(AIRCRAFTTYPE_ARRAY, type) >= 0)
+            FIELD(house, H_PRODUCING_AIR, int) = -1;
+        else if (dir_type_index(BUILDINGTYPE_ARRAY, type) >= 0)
+            FIELD(house, OIL_H_PRODUCING, int) = -1;
+        static int last_log[32];
+        int idx = FIELD(house, 0x30, int) & 31;
+        if (CURRENT_FRAME - last_log[idx] > 1500) {
+            last_log[idx] = CURRENT_FRAME;
+            logmsg("director: house %d frame %d: %.24s refused (prerequisites missing)", idx, CURRENT_FRAME,
+                   (char *)type + T_ID);
+        }
+        return NULL;
+    }
     /* never a construction yard as a building (yards come from MCVs): picked between the director's
      * queue checks, Yuri's yard put up fifteen of them */
     if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)
