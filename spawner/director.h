@@ -2443,6 +2443,27 @@ static int dir_find_ore(BYTE *house, CellXY from, CellXY *out)
     return best > 0;
 }
 
+/* dir_find_ore, away from (over 10 cells off) the given cells */
+static int dir_find_ore_free(BYTE *house, CellXY from, CellXY *out, const CellXY *avoid, int navoid)
+{
+    int best = 0;
+    for (int dy = -60; dy <= 60; dy += 3)
+        for (int dx = -60; dx <= 60; dx += 3) {
+            CellXY c = { (short)(from.X + dx), (short)(from.Y + dy) };
+            BYTE *cell = dir_cell(c);
+            if (!cell || dx * dx + dy * dy > 60 * 60 || ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(cell) <= 0)
+                continue;
+            int score = dir_ore_near(c, 2) - 40 * dir_isqrt(dx * dx + dy * dy), close = 0;
+            for (int k = 0; k < navoid && !close; k++)
+                close = dir_dist2(avoid[k], c) <= 10 * 10;
+            if (score > best && !close && !dir_ore_blocked(house, c)) {
+                best = score;
+                *out = c;
+            }
+        }
+    return best > 0;
+}
+
 /* Returns 1 when the harvester is stranded (counts as idle for refinery and expansion decisions). */
 static int dir_watch_harvester(BYTE *house, BYTE *o)
 {
@@ -5393,15 +5414,28 @@ static void dir_slave_miners(BYTE *house, DirState *d)
             continue;
         CellXY c = object_cell(b), site;
         int here = dir_ore_near(c, 8);
-        if (!dir_find_ore(house, c, &site) || dir_dist2(site, c) < 12 * 12)
-            continue;
-        int there = dir_ore_near(site, 8), taken = 0;
-        for (int j = 0; j < bv->Count && !taken; j++) {
+        /* the best field no other miner of ours works or is on its way to: three miners sent one
+         * after another to the same patch by a protected base (the first still driving when the
+         * next was sent) emptied it, and their slaves went in and out of them for the rest of the game */
+        CellXY taken[32];
+        int ntaken = 0;
+        for (int j = 0; j < bv->Count && ntaken < 31; j++) {
             BYTE *o = bv->Items[j];
-            taken = o != b && oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house
-                && !_stricmp((char *)dir_type(o) + T_ID, "YAREFN") && dir_dist2(object_cell(o), site) <= 10 * 10;
+            if (o != b && oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house
+                && !_stricmp((char *)dir_type(o) + T_ID, "YAREFN"))
+                taken[ntaken++] = object_cell(o);
         }
-        if (taken || there < here * 4 || there < 1500)
+        for (int j = 0; j < v->Count && ntaken < 31; j++) {
+            BYTE *o = v->Items[j];
+            if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && !_stricmp((char *)dir_type(o) + T_ID, "SMIN")) {
+                BYTE *dest = FIELD(o, COMBAT_DESTINATION, BYTE *);
+                taken[ntaken++] = dest && is_cell(dest) ? FIELD(dest, C_MAPCOORDS, CellXY) : object_cell(o);
+            }
+        }
+        if (!dir_find_ore_free(house, c, &site, taken, ntaken) || dir_dist2(site, c) < 12 * 12)
+            continue;
+        int there = dir_ore_near(site, 8);
+        if (there < here * 4 || there < 1500)
             continue;
         logmsg("director: house %d frame %d: Slave Miner at %d,%d packs up (ore around it %d, at %d,%d %d)",
                FIELD(house, 0x30, int), CURRENT_FRAME, c.X, c.Y, here, site.X, site.Y, there);
