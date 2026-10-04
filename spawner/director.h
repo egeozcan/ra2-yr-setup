@@ -103,6 +103,8 @@ struct DirState {
     BYTE *bunker_failed[8];                                 /* tanks that could not get in: skip a while */
     int bunker_failed_frame[8], bunker_failed_next, last_veto_log, last_pick_log, next_garrison;
     BYTE *garrison_unit[24], *garrison_site[24];                               /* infantry on their way into civilian buildings */
+    BYTE *garrison_bad[8];            /* our bunkers soldiers sent in never reached, and how often */
+    int garrison_bad_n[8];
     int garrison_frame[24], garrison_next, garrison_held, want_occupier;
     CellXY stranded_at;                                     /* units cut off by a fallen bridge */
     BYTE *outpost_anchor, *outpost_type, *outpost_built;    /* ore outpost by a captured building */
@@ -4553,12 +4555,33 @@ static void dir_garrison(BYTE *house, DirState *d)
         /* on the way: still outside and still entering, however long the walk (a timed window let
          * slow walkers lapse, and the extra soldiers sent after them found the bunker full); one
          * stuck outside for 1800 frames no longer holds the place */
-        int pending = 0;
+        int pending = 0, bad = -1;
+        for (int j = 0; j < 8; j++)
+            if (d->garrison_bad[j] == b)
+                bad = j;
         for (int k = 0; k < 24; k++) {
             BYTE *u = d->garrison_unit[k];
-            pending += d->garrison_site[k] == b && u && CURRENT_FRAME - d->garrison_frame[k] < 1800
-                && dir_object_listed(tv, u) && oil_live(u) && FIELD(u, COMBAT_MISSION, int) == MISSION_ENTER;
+            if (d->garrison_site[k] != b || !u)
+                continue;
+            int live = dir_object_listed(tv, u) && oil_live(u);
+            pending += CURRENT_FRAME - d->garrison_frame[k] < 1800 && live && FIELD(u, COMBAT_MISSION, int) == MISSION_ENTER;
+            /* still outside 1800 frames on: it couldn't get in (a doorway boxed in by buildings);
+             * after two, the bunker is left alone, or soldiers walked to it and back all game */
+            if (CURRENT_FRAME - d->garrison_frame[k] >= 1800 && live) {
+                d->garrison_unit[k] = NULL;
+                if (bad < 0) {
+                    bad = d->garrison_next % 8;
+                    d->garrison_bad[bad] = b;
+                    d->garrison_bad_n[bad] = 0;
+                }
+                if (++d->garrison_bad_n[bad] == 2)
+                    logmsg("director: house %d frame %d: soldiers can't get into our %.24s at %d,%d; left alone",
+                           FIELD(house, 0x30, int), CURRENT_FRAME, (char *)type + T_ID, object_cell(b).X,
+                           object_cell(b).Y);
+            }
         }
+        if (bad >= 0 && d->garrison_bad_n[bad] >= 2)
+            continue;
         int need = FIELD(type, BT_MAX_OCCUPANTS, int) - FIELD(b, B_OCCUPANT_COUNT, int) - pending;
         CellXY at = object_cell(b);
         while (need-- > 0 && sent < 3) {
