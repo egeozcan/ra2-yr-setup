@@ -2892,6 +2892,20 @@ static void dir_engineers(BYTE *house, DirState *d)
     d->want_engineer = 0;
     if (d->repair_hut && d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer)
         && oil_live(d->repair_engineer)) {
+        /* its order taken off it on the way (30 of 35 timed-out engineers stood on Area Guard): again */
+        BYTE *eng = d->repair_engineer;
+        int want = d->repair_mode ? MISSION_CAPTURE : MISSION_ENTER, m = FIELD(eng, COMBAT_MISSION, int);
+        if (m != want && m != MISSION_MOVE && !dir_recent_order(eng, d->repair_hut, 300)) {
+            static int last_log[32];
+            int idx = FIELD(house, 0x30, int) & 31;
+            if (CURRENT_FRAME - last_log[idx] > 1500) {
+                last_log[idx] = CURRENT_FRAME;
+                logmsg("director: house %d frame %d: engineer at %d,%d on mission %d, sent on again", idx, CURRENT_FRAME,
+                       object_cell(eng).X, object_cell(eng).Y, m);
+            }
+            dir_why = "engineer again";
+            dir_order(eng, want, d->repair_hut, NULL);
+        }
         dir_breach_fence(house, d);
         return;
     }
