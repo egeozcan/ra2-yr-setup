@@ -147,7 +147,7 @@ struct DirState {
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *mcv_seen[8];                  /* MCVs logged already */
     int mcv_seen_next, yards_seen, next_crate_site, crate_frame;
-    int outmatched;                     /* holding in the base against a far bigger army near home */
+    int outmatched, outmatched_frame;   /* holding in the base against a far bigger army near home */
     CellXY miner_sent[4];               /* fields Slave Miners were sent to lately */
     int miner_sent_frame[4], miner_sent_next;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
@@ -1930,8 +1930,15 @@ static void dir_army(BYTE *house, DirState *d)
      * until it has grown back. Sent at the raid or to a rally out front, fresh units walked one by
      * one into an army ten times theirs as they left the factory. */
     int near_enemy = d->threat_value > d->local_enemy ? d->threat_value : d->local_enemy;
-    int outmatched = (d->state == DIR_DEFEND || d->state == DIR_GATHER) && near_enemy > d->army_value * 2 + 3000;
+    /* on above twice and 3000, off below one and a half and 1500, and not within 600 frames of the
+     * last change (raiders stepping in and out of range flipped it every few dozen frames) */
+    int home = d->state == DIR_DEFEND || d->state == DIR_GATHER;
+    int outmatched = d->outmatched ? home && near_enemy * 2 > d->army_value * 3 + 3000
+                                   : home && near_enemy > d->army_value * 2 + 3000;
+    if (outmatched != d->outmatched && CURRENT_FRAME - d->outmatched_frame < 600)
+        outmatched = d->outmatched;
     if (outmatched != d->outmatched) {
+        d->outmatched_frame = CURRENT_FRAME;
         d->outmatched = outmatched;
         logmsg("director: house %d frame %d: %s (army %d, enemy near %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
                outmatched ? "outmatched at home: holding in the base" : "no longer outmatched", d->army_value, near_enemy);
@@ -2105,7 +2112,12 @@ static int dir_watch_harvester(BYTE *house, BYTE *o);
 static void dir_economy(BYTE *house, DirState *d)
 {
     int side = FIELD(house, OIL_H_SIDE, int);
-    if (side < 0 || side > 2 || !(director_enabled(house) & DIR_F_ECONOMY) || !oil_eligible(house))
+    /* a yard is enough: oil_eligible also asks for a refinery, and a house whose yard fled its lost
+     * base set up again with 44,000 to spend and built only walls and defences, never a power
+     * plant, refinery or factory */
+    if (side < 0 || side > 2 || !(director_enabled(house) & DIR_F_ECONOMY) || !house
+        || !oil_ai_active(SESSION->GameMode, house[H_ISHUMAN] || house[0x1ED], FIELD(house, OIL_H_DIFFICULTY, int),
+                          house[OIL_H_DEFEATED], house[H_PRODUCTION], FIELD(house, OIL_H_CONYARDS, int), 1))
         return;
     /* The first war factory as soon as a refinery stands: stock base plans (Allied especially) put
      * it behind airfields and walls, leaving the army nothing to come from for minutes. */
@@ -3132,6 +3144,34 @@ static int dir_ore_reach(CellXY c, int r)
     return sum;
 }
 
+/* The deploy check UnitClass::TryToDeploy makes (0x7394D2): the yard type's placement test
+ * (vtable 0xA8) on the MCV's cell, moved by (-1,-1) for a foundation over 2 cells (0x89F6A4). A
+ * spot picked without it (on a slope, say) refused the MCV again and again: a fled American yard
+ * crept from cell to cell for 4000 frames before it set up. */
+#define DIR_UNIT_DEPLOYS_INTO 0x404
+static int dir_yard_fits(BYTE *yard_type, CellXY c)
+{
+    if (!yard_type || !dir_cell(c))
+        return 0;
+    CellXY tl = { (short)(c.X - 1), (short)(c.Y - 1) };
+    return ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))VFUNC(yard_type, 0xA8))(yard_type, &tl, NULL) != 0;
+}
+
+/* The deployable spot nearest `at` within r cells, or 0,0. */
+static CellXY dir_yard_spot(BYTE *yard_type, CellXY at, int r)
+{
+    for (int k = 0; k <= r; k++)
+        for (int dy = -k; dy <= k; dy++)
+            for (int dx = -k; dx <= k; dx++) {
+                if (abs(dx) != k && abs(dy) != k)
+                    continue;
+                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
+                if (dir_yard_fits(yard_type, c))
+                    return c;
+            }
+    return (CellXY){ 0, 0 };
+}
+
 static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
 {
     int best = 0, max_ore = 0, with_ore = 0, rejected = 0;
@@ -3182,13 +3222,21 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
     }
     if (!best)
         return 0;
-    /* a clear 4x4 spot for the construction yard beside the ore */
-    CellXY out = { 0, 0 }, want = *site;
-    /* beside the field: buildings cannot stand on ore, so no overlay under the yard */
-    ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, -1, 0, 0, 4, 4, 1, 0, 0, 0, &want, 0, 0);
-    if (out.X <= 0 || dir_dist2(out, want) > 12 * 12)
+    /* a spot for the construction yard beside the ore, one it can deploy on (buildings cannot
+     * stand on ore, so no overlay under the yard) */
+    static const char *yards[3] = { "GACNST", "NACNST", "YACNST" };
+    int side = FIELD(house, OIL_H_SIDE, int);
+    CellXY want = *site, out = side >= 0 && side <= 2 ? dir_yard_spot(find_type(BUILDINGTYPE_ARRAY, yards[side]), want, 12)
+                                                      : (CellXY){ 0, 0 };
+    if (!out.X) {
+        ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, -1, 0, 0, 4, 4, 1, 0, 0, 0, &want, 0, 0);
+        if (out.X <= 0)
+            return 0;
+        out = (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
+    }
+    if (dir_dist2(out, want) > 12 * 12)
         return 0;
-    *site = (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
+    *site = out;
     return 1;
 }
 
@@ -3345,7 +3393,8 @@ static void dir_yard_escape(BYTE *house, DirState *d)
                 static const signed char dy16[16] = { 0, 4, 7, 9, 10, 9, 7, 4, 0, -4, -7, -9, -10, -9, -7, -4 };
                 CellXY c = { (short)(at.X + dx16[a] * r / 10), (short)(at.Y + dy16[a] * r / 10) };
                 BYTE *cell = dir_cell(c);
-                if (!cell || !dir_is_land(c) || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || dir_zone(c) != zone)
+                if (!cell || !dir_is_land(c) || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || dir_zone(c) != zone
+                    || !dir_yard_fits(type, c))   /* where the yard can actually go */
                     continue;
                 int nearest = 0x7FFFFFFF;
                 for (int k = 0; k < dir_enemy_count; k++)
@@ -3447,11 +3496,15 @@ static void dir_expansion(BYTE *house, DirState *d)
             }
             if (!dir_recent_order(mcv, (BYTE *)1, 120)) {
                 if (++d->deploy_tries > 2) {
-                    /* the spot is taken (units, a new building): the nearest clear 4x4 around it */
-                    CellXY out = { 0, 0 };
-                    ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &at, 1, -1, 0, 0, 4, 4, 1, 0, 0, 0, &at, 0, 0);
+                    /* the spot won't take the yard: the nearest one that will (the deploy's own test) */
+                    CellXY out = dir_yard_spot(FIELD(dir_type(mcv), DIR_UNIT_DEPLOYS_INTO, BYTE *), at, 12);
+                    if (!out.X) {   /* none: the old way, a clear 4x4 */
+                        ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &at, 1, -1, 0, 0, 4, 4, 1, 0, 0, 0, &at, 0, 0);
+                        if (out.X > 0)
+                            out = (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
+                    }
                     if (out.X > 0 && dir_dist2(out, at) <= 12 * 12)
-                        d->site = (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
+                        d->site = out;
                     d->deploy_tries = 0;
                 }
                 /* the player's deploy order: the Unload mission retries UnitClass::TryToDeploy each frame */
