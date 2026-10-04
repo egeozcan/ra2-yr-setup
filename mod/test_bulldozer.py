@@ -52,6 +52,9 @@ class BulldozerBuildTests(unittest.TestCase):
         self.assertEqual(unit['RequiredHouses'], unit['Owner'])
         self.assertEqual(unit['Prerequisite'], 'NAWEAP,NARADR')
         self.assertEqual(unit['Turret'], 'no')
+        # the Psychic Tower breaker: immune to mind control, cheaper, tougher and slower
+        self.assertEqual(unit['ImmuneToPsionics'], 'yes')
+        self.assertEqual((unit['Cost'], unit['Strength'], unit['Speed']), ('1500', '2400', '2'))
         self.assertEqual(unit['CrateGoodie'], 'no')
         art = self.art[unit['Image']]
         for ext in ['vxl','hva']:

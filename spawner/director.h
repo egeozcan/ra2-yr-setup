@@ -73,7 +73,7 @@ struct DirState {
     int army_value, army_count, enemy_army, target_army, local_enemy, local_ours, threat_value;
     int enemy_air, enemy_inf, enemy_armor, enemy_def;
     int enemy_minds;                    /* enemy mind-controllers: Yuri, Yuri Prime, Masterminds */
-    int last_hunt_log, power_focus;
+    int last_hunt_log, power_focus, enemy_psytowers;
     int unit_request, unit_request_frame;
     int blocked, blocked_frame, best_dist, progress_frame, state_frame;   /* ground army cannot reach the enemy: island map */
     int reached;                              /* this attack got within 15 cells of an objective */
@@ -495,7 +495,17 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
     int role = dir_pick_role(shares, have, available);
     /* Soviet hunters for enemy mind-controllers: two per controller (and two more), up to ten,
      * Siege Choppers for every second Terror Drone once they can be built */
-    if (side == 1 && d->enemy_minds && !ground_full) {
+    /* Bulldozers (mod) for enemy Psychic Towers: two, which dir_dozers sends at them */
+    BYTE *dozer = side == 1 && d->enemy_psytowers && !ground_full ? find_type(UNITTYPE_ARRAY, "SBDOZR") : NULL;
+    if (dozer && dir_owned_of(house, dozer) < 2 && dir_first_buildable(house, UNITTYPE_ARRAY, "SBDOZR", 1000)) {
+        if (bench_file && CURRENT_FRAME - d->last_hunt_log > 3000) {
+            d->last_hunt_log = CURRENT_FRAME;
+            logmsg("director: house %d frame %d: %d enemy Psychic Towers, building a Bulldozer", FIELD(house, 0x30, int),
+                   CURRENT_FRAME, d->enemy_psytowers);
+        }
+        pick[ROLE_SIEGE] = dozer;
+        role = ROLE_SIEGE;
+    } else if (side == 1 && d->enemy_minds && !ground_full) {
         BYTE *dron = find_type(UNITTYPE_ARRAY, "DRON"), *schp = find_type(UNITTYPE_ARRAY, "SCHP");
         int drones = dron ? dir_owned_of(house, dron) : 0, choppers = schp ? dir_owned_of(house, schp) : 0;
         int want = 2 * d->enemy_minds + 2 < 10 ? 2 * d->enemy_minds + 2 : 10;
@@ -797,7 +807,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
     dir_enemy_count = 0;
     d->enemy_army = d->enemy_air = d->enemy_inf = d->enemy_armor = d->enemy_def = d->target_army = 0;
     d->threat_value = d->naval_threat = d->third_party = d->air_near = 0;
-    d->threat_near = d->target_home = d->raid_inf = d->raid_armor = d->enemy_subs = d->enemy_minds = 0;
+    d->threat_near = d->target_home = d->raid_inf = d->raid_armor = d->enemy_subs = d->enemy_minds = d->enemy_psytowers = 0;
     CellXY target_base = d->enemy ? dir_house_center(d->enemy) : (CellXY){ 0, 0 };
     int threat_best = 0x7FFFFFFF;
     DynVec *v = OIL_TECHNO_ARRAY;
@@ -829,6 +839,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
         e->naval = !e->building && type[TT_NAVAL];
         d->enemy_subs += e->naval && in_list("SUB,BSUB", (char *)type + T_ID);
         d->enemy_minds += in_list(DIR_MIND_CONTROLLERS, (char *)type + T_ID);
+        d->enemy_psytowers += what == 6 && !_stricmp((char *)type + T_ID, "YAPSYT");
         Coord c = FIELD(o, O_LOCATION, Coord);
         int floor = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
         e->air = what == 2 || c.Z > floor + 128;
@@ -3811,6 +3822,39 @@ static void dir_ferry(BYTE *house, DirState *d)
     }
 }
 
+/* ---- Bulldozers on Psychic Towers ----
+ * The Soviet Bulldozer (mod) can't be mind-controlled, and its blade does double damage to
+ * buildings: every 150 frames each of ours goes for the nearest enemy Psychic Tower within 45 cells
+ * of it, out of any attack team. Other units sent at a tower come back as Yuri's. */
+static void dir_dozers(BYTE *house, DirState *d)
+{
+    (void)d;
+    DynVec *tv = OIL_TECHNO_ARRAY, *bv = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < tv->Count; i++) {
+        BYTE *o = tv->Items[i], *type;
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !(type = dir_type(o))
+            || _stricmp((char *)type + T_ID, "SBDOZR"))
+            continue;
+        CellXY at = object_cell(o);
+        BYTE *best = NULL;
+        int best_d = 45 * 45 + 1;
+        for (int k = 0; k < bv->Count; k++) {
+            BYTE *b = bv->Items[k], *bt = FIELD(b, B_TYPE, BYTE *);
+            int dd;
+            if (oil_live(b) && bt && !_stricmp((char *)bt + T_ID, "YAPSYT") && dir_hostile(house, FIELD(b, O_OWNER, BYTE *))
+                && (dd = dir_dist2(object_cell(b), at)) < best_d) {
+                best_d = dd;
+                best = b;
+            }
+        }
+        if (!best || FIELD(o, O_TARGET, BYTE *) == best || !dir_take_from_team(o))
+            continue;
+        dir_order(o, MISSION_ATTACK, best, NULL);
+        logmsg("director: house %d frame %d: Bulldozer at %d,%d goes for the Psychic Tower at %d,%d",
+               FIELD(house, 0x30, int), CURRENT_FRAME, at.X, at.Y, object_cell(best).X, object_cell(best).Y);
+    }
+}
+
 /* ---- navy ----
  * Stock AI leaves its ships to trigger teams, which rarely answer ships shelling the base. While
  * enemy ships are near our buildings, every armed ship of ours attacks the nearest one it can hit,
@@ -5675,6 +5719,8 @@ static void dir_update(BYTE *house)
     }
     dir_expansion(house, d);
     dir_ferry(house, d);
+    if (CURRENT_FRAME % 150 < 15)
+        dir_dozers(house, d);
     /* Allies need a Robot Control Center before Robot Tanks can cross water. */
     if ((d->blocked || d->island) && FIELD(house, OIL_H_SIDE, int) == 0 && FIELD(house, OIL_H_PRODUCING, int) == -1
         && !combat_building_count(house, "GAROBO")) {

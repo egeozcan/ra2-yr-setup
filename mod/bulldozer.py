@@ -7,8 +7,10 @@ OVERRIDES = {
     'Name': UNIT_NAME, 'UIName': f'Name:{UNIT_ID}', 'Image': UNIT_ID,
     'Prerequisite': 'NAWEAP,NARADR', 'Owner': SOVIETS, 'RequiredHouses': SOVIETS,
     'Primary': 'DozerBlade', 'ElitePrimary': 'DozerBladeE',
-    'Turret': 'no', 'Strength': '1800', 'Armor': 'heavy', 'Speed': '3',
-    'ROT': '5', 'Sight': '6', 'TechLevel': '5', 'Cost': '2000', 'Soylent': '2000',
+    # Immune to mind control, so it can walk up to Psychic Towers and level them; cheaper and
+    # tougher for that job, and slower to balance it (2026-10-04: was 2000, 1800 HP, speed 3)
+    'Turret': 'no', 'Strength': '2400', 'Armor': 'heavy', 'Speed': '2', 'ImmuneToPsionics': 'yes',
+    'ROT': '5', 'Sight': '6', 'TechLevel': '5', 'Cost': '1500', 'Soylent': '1500',
     'Points': '50', 'Weight': '6', 'Size': '6', 'Crusher': 'yes',
     'CrateGoodie': 'no', 'AllowedToStartInMultiplayer': 'no',
     'OpportunityFire': 'no', 'BuildTimeMultiplier': '1.0', 'ThreatPosed': '60',
