@@ -2163,6 +2163,7 @@ static void dir_economy(BYTE *house, DirState *d)
 static const char *dir_refineries[3] = { "GAREFN", "NAREFN", "YAREFN" };
 static int dir_object_listed(DynVec *v, BYTE *obj);
 static int dir_ore_near(CellXY c, int r);
+static int dir_ore_reach(CellXY c, int r);
 static const char *dir_light_defenses[3] = { "GAPILL", "NALASR", "YAGGUN" };
 static const char *dir_outpost_defenses[3] = { "NASAM", "NAFLAK", "YAGGUN" };
 
@@ -2453,10 +2454,13 @@ static int dir_find_ore_free(BYTE *house, CellXY from, CellXY *out, const CellXY
             BYTE *cell = dir_cell(c);
             if (!cell || dx * dx + dy * dy > 60 * 60 || ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(cell) <= 0)
                 continue;
-            int score = dir_ore_near(c, 2) - 40 * dir_isqrt(dx * dx + dy * dy), close = 0;
+            int close = 0;
             for (int k = 0; k < navoid && !close; k++)
                 close = dir_dist2(avoid[k], c) <= 10 * 10;
-            if (score > best && !close && !dir_ore_blocked(house, c)) {
+            if (close)
+                continue;
+            int score = dir_ore_reach(c, 3) - 200 * dir_isqrt(dx * dx + dy * dy);   /* 49 cells against the old 9 samples */
+            if (score > best && !dir_ore_blocked(house, c)) {
                 best = score;
                 *out = c;
             }
@@ -3012,6 +3016,43 @@ static int dir_ore_near(CellXY c, int r)
             if (cell)
                 sum += ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(cell);
         }
+    return sum;
+}
+
+/* Ore within r cells of c that can be walked to from c (around walls, fences, rock, water and
+ * buildings other than the one standing at c): Slave Miners deployed in a fenced lot by ore beyond
+ * the fence, counted as theirs, and their slaves went in and out of them all game. */
+static int dir_ore_reach(CellXY c, int r)
+{
+    enum { R = 10, W = 2 * R + 1 };
+    static unsigned char seen[W * W];
+    static CellXY queue[W * W];
+    if (r > R)
+        r = R;
+    memset(seen, 0, sizeof seen);
+    int head = 0, tail = 0, sum = 0;
+    queue[tail++] = c;
+    seen[R * W + R] = 1;
+    while (head < tail) {
+        CellXY q = queue[head++];
+        BYTE *cell = dir_cell(q);
+        if (cell)
+            sum += ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(cell);
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                CellXY n = { (short)(q.X + dx), (short)(q.Y + dy) };
+                int bx = n.X - c.X + R, by = n.Y - c.Y + R;
+                if ((!dx && !dy) || abs(n.X - c.X) > r || abs(n.Y - c.Y) > r || seen[by * W + bx])
+                    continue;
+                seen[by * W + bx] = 1;
+                BYTE *nc = dir_cell(n);
+                if (!nc || FIELD(nc, C_LANDTYPE, int) == 2 || FIELD(nc, C_LANDTYPE, int) == 3 || dir_wall_cell(nc))
+                    continue;
+                if ((FIELD(nc, C_OCCUPATION, DWORD) & 0x80) && dir_dist2(n, c) > 2 * 2)
+                    continue;
+                queue[tail++] = n;
+            }
+    }
     return sum;
 }
 
@@ -5410,13 +5451,13 @@ static void dir_slave_miners(BYTE *house, DirState *d)
             CellXY at = object_cell(b);
             if (CURRENT_FRAME > 600)
                 logmsg("director: house %d frame %d: Slave Miner deployed at %d,%d (ore around it %d)",
-                       FIELD(house, 0x30, int), CURRENT_FRAME, at.X, at.Y, dir_ore_near(at, 8));
+                       FIELD(house, 0x30, int), CURRENT_FRAME, at.X, at.Y, dir_ore_reach(at, 8));
             continue;
         }
         if (CURRENT_FRAME - dir_miner_seen[k].seen < 4500)
             continue;
         CellXY c = object_cell(b), site;
-        int here = dir_ore_near(c, 8);
+        int here = dir_ore_reach(c, 8);
         /* the best field no other miner of ours works or is on its way to: three miners sent one
          * after another to the same patch by a protected base (the first still driving when the
          * next was sent) emptied it, and their slaves went in and out of them for the rest of the game */
@@ -5437,7 +5478,7 @@ static void dir_slave_miners(BYTE *house, DirState *d)
         }
         if (!dir_find_ore_free(house, c, &site, taken, ntaken) || dir_dist2(site, c) < 12 * 12)
             continue;
-        int there = dir_ore_near(site, 8);
+        int there = dir_ore_reach(site, 8);
         if (there < here * 4 || there < 1500)
             continue;
         logmsg("director: house %d frame %d: Slave Miner at %d,%d packs up (ore around it %d, at %d,%d %d)",
