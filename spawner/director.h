@@ -145,6 +145,8 @@ struct DirState {
     int fleet_air;                      /* enemy aircraft over our ships */
     CellXY fleet_at;                    /* the fleet's centre */
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
+    BYTE *mcv_seen[8];                  /* MCVs logged already */
+    int mcv_seen_next, yards_seen;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
     int cover_frame;
 };
@@ -3322,11 +3324,32 @@ static void dir_expansion(BYTE *house, DirState *d)
     int yards = combat_building_count(house, "GACNST,NACNST,YACNST");
     BYTE *mcv = NULL;
     DynVec *v = OIL_TECHNO_ARRAY;
-    for (int i = 0; i < v->Count && !mcv; i++) {
+    for (int i = 0; i < v->Count; i++) {
         BYTE *o = v->Items[i];
-        if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 1
-            && in_list(dir_mcvs, (char *)dir_type(o) + T_ID))
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 1
+            || !in_list(dir_mcvs, (char *)dir_type(o) + T_ID))
+            continue;
+        if (!mcv)
             mcv = o;
+        /* where yards come from: each MCV of ours the first time it is seen (a Yuri base stood on
+         * eleven yards, three of them Allied) */
+        int seen = 0;
+        for (int k = 0; k < 8; k++)
+            seen |= d->mcv_seen[k] == o;
+        if (!seen) {
+            d->mcv_seen[d->mcv_seen_next++ % 8] = o;
+            CellXY c = object_cell(o);
+            BYTE *ctl = FIELD(o, T_MIND_CONTROLLED_BY, BYTE *);
+            logmsg("director: house %d frame %d: new %.24s at %d,%d (%d yards; %s, unit request %d, escaping %d)",
+                   FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(o) + T_ID, c.X, c.Y, yards,
+                   ctl ? "mind-controlled" : "ours", d->unit_request, d->escape_frame && CURRENT_FRAME - d->escape_frame < 6000);
+        }
+    }
+    if (yards != d->yards_seen) {
+        if (yards > d->yards_seen && CURRENT_FRAME > 300)
+            logmsg("director: house %d frame %d: %d construction yards (was %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   yards, d->yards_seen);
+        d->yards_seen = yards;
     }
     /* Drive an MCV we built to the site and deploy. Without a yard the stock AI redeploys it at home. */
     int escaping = d->escape_frame && CURRENT_FRAME - d->escape_frame < 6000;
@@ -4391,9 +4414,28 @@ static void dir_veto_production(BYTE *house, DirState *d)
      * yards (the base and one expansion) are enough; a lost yard can still be replaced */
     int pick = FIELD(house, H_PRODUCING_UNIT, int);
     DynVec *uts = UNITTYPE_ARRAY;
-    if (pick >= 0 && pick < uts->Count && in_list(dir_mcvs, (char *)uts->Items[pick] + T_ID) && !d->want_mcv
-        && pick != d->unit_request && combat_building_count(house, "GACNST,NACNST,YACNST") >= 2)
-        FIELD(house, H_PRODUCING_UNIT, int) = -1;
+    /* An MCV only to replace the last yard when no MCV is left (one packed up to flee counts), or
+     * the one the director itself asked for in the last 3000 frames: our own request once exempted
+     * every later stock pick of that type, and with a fleeing yard the house had none for a while;
+     * a Yuri base stood on eleven yards. */
+    if (pick >= 0 && pick < uts->Count && in_list(dir_mcvs, (char *)uts->Items[pick] + T_ID)) {
+        int yards = combat_building_count(house, "GACNST,NACNST,YACNST"), mcvs = 0;
+        DynVec *tv = OIL_TECHNO_ARRAY;
+        for (int i = 0; i < tv->Count; i++) {
+            BYTE *o = tv->Items[i];
+            mcvs += oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 1
+                    && in_list(dir_mcvs, (char *)dir_type(o) + T_ID);
+        }
+        int ours = pick == d->unit_request && CURRENT_FRAME - d->unit_request_frame < 3000 && yards < 2;
+        if (mcvs || (yards && !ours && !d->want_mcv)) {
+            FIELD(house, H_PRODUCING_UNIT, int) = -1;
+            if (CURRENT_FRAME - d->last_veto_log > 1500) {
+                d->last_veto_log = CURRENT_FRAME;
+                logmsg("director: house %d frame %d: no MCV (%d yards, %d MCVs)", FIELD(house, 0x30, int), CURRENT_FRAME,
+                       yards, mcvs);
+            }
+        }
+    }
     /* a stock pick the house can't build would hold the vehicle queue for good */
     if (pick >= 0 && pick < uts->Count && pick != d->unit_request
         && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, uts->Items[pick], 0, 1) <= 0)
