@@ -190,7 +190,7 @@ static void combat_queue_expansion(BYTE *house)
                                       : combat_need_airbase(owned_planes, plane_pending))) {
             continue;
         }
-        if (((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) <= 0)
+        if (!ai_can_build(house, type))
             continue;
         /* Native placement rejects inland yards and crowded/invalid terrain.
          * Probe before requesting production, so impossible yards don't stall it. */

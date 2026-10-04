@@ -429,27 +429,7 @@ static int dir_armed_vehicles(BYTE *house)
 }
 
 /* First type in the list the house can build now, within budget and caps. */
-/* TechnoTypeClass::Prerequisite (a list of building type indices at +0x638, as LoadFromINI fills it
- * at 0x714190; negative values are the [General] groups). HouseClass::CanBuild lets computer
- * players skip them: Apocalypse Tanks were picked at frame 2776, long before any Battle Lab. */
-#define TT_PREREQUISITE 0x638
-static int dir_has_prereqs(BYTE *house, BYTE *type)
-{
-    static const char *groups[7] = { "", "GAPOWR,NAPOWR,NANRCT,YAPOWR", "GAWEAP,NAWEAP,YAWEAP", "GAPILE,NAHAND,YABRCK",
-                                     "GAAIRC,AMRADR,NARADR,NAPSIS", "GATECH,NATECH,YATECH", "GAREFN,NAREFN,YAREFN" };
-    int count = FIELD(type, TT_PREREQUISITE + 0x10, int);
-    int *items = FIELD(type, TT_PREREQUISITE + 4, int *);
-    DynVec *bts = BUILDINGTYPE_ARRAY;
-    for (int i = 0; i < count && items; i++) {
-        int p = items[i];
-        if (p >= 0 && p < bts->Count) {
-            if (!combat_building_count(house, (char *)bts->Items[p] + T_ID))
-                return 0;
-        } else if (p < 0 && p >= -6 && !combat_building_count(house, groups[-p]))
-            return 0;
-    }
-    return 1;
-}
+#define dir_has_prereqs ai_has_prereqs
 
 static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, int reserve)
 {
@@ -467,7 +447,7 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
             if (type && types == UNITTYPE_ARRAY
                 && !combat_building_count(house, naval ? "GAYARD,NAYARD,YAYARD" : "GAWEAP,NAWEAP,YAWEAP"))
                 type = NULL;
-            if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
+            if (type && ai_can_build(house, type)
                 && dir_has_prereqs(house, type)
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
                 && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
@@ -2179,7 +2159,7 @@ static void dir_economy(BYTE *house, DirState *d)
     if (FIELD(house, OIL_H_PRODUCING, int) == -1 && !combat_building_count(house, factories[side])) {
         BYTE *type = find_type(BUILDINGTYPE_ARRAY, factories[side]);
         if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
-            && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+            && ai_can_build(house, type)) {
             FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
             logmsg("director: house %d queued its first war factory at frame %d", FIELD(house, 0x30, int), CURRENT_FRAME);
         }
@@ -2207,7 +2187,7 @@ static void dir_economy(BYTE *house, DirState *d)
     if (d->want_mcv && FIELD(house, OIL_H_PRODUCING, int) == -1 && !combat_building_count(house, depots[side])) {
         BYTE *type = find_type(BUILDINGTYPE_ARRAY, depots[side]);
         if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
-            && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+            && ai_can_build(house, type)) {
             FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
             logmsg("director: house %d queued %s for the expansion MCV", FIELD(house, 0x30, int), depots[side]);
         }
@@ -2239,7 +2219,7 @@ static void dir_economy(BYTE *house, DirState *d)
     static const char *refineries[] = { "GAREFN", "NAREFN", "YAREFN" };
     BYTE *type = find_type(BUILDINGTYPE_ARRAY, refineries[side]);
     if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
-        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+        && ai_can_build(house, type)) {
         /* a refinery that never appears could not be placed (cramped or cut-off ground): after
          * three in a row, stop trying for a while instead of tying up the build queue */
         int count = FIELD(house, OIL_H_REFINERIES, int);
@@ -2374,7 +2354,7 @@ static int dir_queue_building(BYTE *house, const char *id, BYTE **queued)
 {
     BYTE *type = find_type(BUILDINGTYPE_ARRAY, id);
     if (!type || FIELD(house, OIL_H_PRODUCING, int) != -1 || FIELD(house, OIL_H_CASH, int) < dir_cost(type)
-        || ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) <= 0)
+        || !ai_can_build(house, type))
         return 0;
     FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
     *queued = type;
@@ -4717,7 +4697,7 @@ static void dir_air_defense(BYTE *house, DirState *d)
     if (!standing && (!want || d->air_near < 1500))
         return;
     if (type && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)
-        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0) {
+        && ai_can_build(house, type)) {
         FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
         d->next_aa_defense = CURRENT_FRAME + 3000;
         logmsg("director: house %d frame %d: queued %s against air", FIELD(house, 0x30, int), CURRENT_FRAME,
@@ -6284,7 +6264,7 @@ static void dir_update(BYTE *house)
     if ((d->blocked || d->island || (robo && dir_owned_of(house, robo))) && FIELD(house, OIL_H_SIDE, int) == 0 && pick_free
         && !combat_building_count(house, "GAROBO")) {
         BYTE *type = find_type(BUILDINGTYPE_ARRAY, "GAROBO");
-        if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
+        if (type && ai_can_build(house, type)
             && FIELD(house, OIL_H_CASH, int) >= dir_cost(type)) {
             FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
             logmsg("director: house %d queued GAROBO for Robot Tanks", FIELD(house, 0x30, int));

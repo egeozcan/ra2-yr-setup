@@ -140,12 +140,52 @@ static int oil_spot(BYTE *type, BYTE *house, BYTE *oil, CellXY *out)
     return 0;
 }
 
+/* TechnoTypeClass::Prerequisite (a list of building type indices at +0x638, as LoadFromINI fills it
+ * at 0x714190; negative values are the [General] groups). HouseClass::CanBuild lets computer
+ * players skip them: Apocalypse Tanks were picked at frame 2776, long before any Battle Lab. */
+#define TT_PREREQUISITE 0x638
+static int ai_owns_any(BYTE *house, const char *ids)
+{
+    DynVec *v = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *b = v->Items[i], *t;
+        if (oil_live(b) && FIELD(b, O_OWNER, BYTE *) == house && (t = FIELD(b, B_TYPE, BYTE *)) && in_list(ids, (char *)t + T_ID))
+            return 1;
+    }
+    return 0;
+}
+
+static int ai_has_prereqs(BYTE *house, BYTE *type)
+{
+    static const char *groups[7] = { "", "GAPOWR,NAPOWR,NANRCT,YAPOWR", "GAWEAP,NAWEAP,YAWEAP", "GAPILE,NAHAND,YABRCK",
+                                     "GAAIRC,AMRADR,NARADR,NAPSIS", "GATECH,NATECH,YATECH", "GAREFN,NAREFN,YAREFN" };
+    int count = FIELD(type, TT_PREREQUISITE + 0x10, int);
+    int *items = FIELD(type, TT_PREREQUISITE + 4, int *);
+    DynVec *bts = BUILDINGTYPE_ARRAY;
+    for (int i = 0; i < count && items; i++) {
+        int p = items[i];
+        if (p >= 0 && p < bts->Count) {
+            if (!ai_owns_any(house, (char *)bts->Items[p] + T_ID))
+                return 0;
+        } else if (p < 0 && p >= -6 && !ai_owns_any(house, groups[-p]))
+            return 0;
+    }
+    return 1;
+}
+
+/* HouseClass::CanBuild, and the prerequisites it skips for computer players */
+static int ai_can_build(BYTE *house, BYTE *type)
+{
+    return ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
+        && ai_has_prereqs(house, type);
+}
+
 static BYTE *oil_buildable(BYTE *house, const char *id, int cost)
 {
     BYTE *type = find_type(BUILDINGTYPE_ARRAY, id);
     if (!type)
         return NULL;
-    int can = ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1);
+    int can = ai_can_build(house, type);
     return oil_can_budget(FIELD(house, OIL_H_CASH, int), cost,
         FIELD(house, OIL_H_POWER, int), FIELD(house, OIL_H_DRAIN, int),
         FIELD(type, OIL_BT_DRAIN, int), can) ? type : NULL;
