@@ -3415,7 +3415,7 @@ static void dir_ferry(BYTE *house, DirState *d)
             /* full; nobody boarded for a while (sooner with a few aboard: a load of tanks fills it by
              * size, four); soldiers walk over in a straggling line and board one by one */
             int still = CURRENT_FRAME - d->ferry_aboard_frame[k];
-            ready += dir_free_room(t) < 3 || (passengers && ((passengers >= 3 && still > 450) || still > 900));
+            ready += passengers && (dir_free_room(t) < 3 || (passengers >= 3 && still > 450) || still > 900);
         } else if (d->ferry_state[k] == 1) {   /* sail, then unload beside the enemy */
             if (dir_dist2(at, d->landing) <= 4 * 4 || CURRENT_FRAME - d->ferry_frame[k] > 4000) {
                 dir_order(t, 16, NULL, NULL);
@@ -3591,6 +3591,16 @@ static void dir_ferry(BYTE *house, DirState *d)
                    CURRENT_FRAME);
         return;
     }
+    /* none would go (empty, or held by a unit getting in): keep waiting; this "sailed" an empty
+     * convoy every tick for 17000 frames */
+    int sailable = 0;
+    if (waited > 4500)   /* a unit stuck beside a transport holds it no longer */
+        memset(boarding, 0, sizeof boarding);
+    for (int k = 0; k < DIR_CONVOY; k++)
+        sailable += d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k]
+            && FIELD(d->ferry[k], T_PASSENGERS, int) && !boarding[k];
+    if (!sailable)
+        return;
     d->landing = out;
     d->convoy_since = 0;
     int ships = 0, aboard = 0;
