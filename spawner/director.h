@@ -720,6 +720,11 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
 static BYTE *GFASTCALL dir_factory_pick(BYTE *house, BYTE *btype, int rtti, int zero)
 {
     BYTE *type = ((BYTE *(GTHISCALL *)(BYTE *, int, int))DIR_PRIMARY_IN_PRODUCTION)(house, rtti, zero);
+    /* never a construction yard as a building (yards come from MCVs): picked between the director's
+     * queue checks, Yuri's yard put up fifteen of them */
+    if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)
+        && in_list("GACNST,NACNST,YACNST", (char *)type + T_ID))
+        return NULL;
     /* a factory's Factory= is a type RTTI: UnitType is 0x28 (0x4FBD80 maps it and Unit, 1, alike) */
     if ((rtti != 1 && rtti != 0x28) || !btype || !btype[TT_NAVAL] || !dir_active(house)
         || !(director_enabled(house) & DIR_F_PRODUCTION))
@@ -2092,8 +2097,11 @@ static void dir_economy(BYTE *house, DirState *d)
      * building queue for good; free it for the next pick */
     int pick = FIELD(house, OIL_H_PRODUCING, int);
     DynVec *bts = BUILDINGTYPE_ARRAY;
+    /* nor a construction yard at all: the base plan's first node, it was queued over and over and
+     * at times built (a Yuri base put up fifteen, 160 buildings in all); yards come from MCVs */
     if (pick >= 0 && pick < bts->Count
-        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, bts->Items[pick], 0, 1) <= 0) {
+        && (in_list("GACNST,NACNST,YACNST", (char *)bts->Items[pick] + T_ID)
+            || ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, bts->Items[pick], 0, 1) <= 0)) {
         FIELD(house, OIL_H_PRODUCING, int) = -1;
         static int last_log[32];
         int idx = FIELD(house, 0x30, int) & 31;
