@@ -3544,12 +3544,21 @@ static void dir_ferry(BYTE *house, DirState *d)
         BYTE *o = pool[pick];
         pool[pick] = pool[n];
         pool_dist[pick] = pool_dist[n];
-        /* the transport with the most room that it fits in; called beyond the room, units crowded
-         * round full transports at the dock, gave up and jammed the way down for the rest */
-        int best = -1, size = dir_size(o);
-        for (int k = 0; k < DIR_CONVOY; k++)
-            if (room[k] >= size && (best < 0 || room[k] > room[best]))
+        /* the nearest transport it fits in; called beyond the room, units crowded round full
+         * transports at the dock, gave up and jammed the way down for the rest. (To the one with
+         * the most room, a unit's transport changed from tick to tick as others filled, and units
+         * walked back and forth beside the convoy: 198 of 511 in stalled convoys within 3 cells.) */
+        int best = -1, best_d = 0, size = dir_size(o);
+        CellXY oc = object_cell(o);
+        for (int k = 0; k < DIR_CONVOY; k++) {
+            if (room[k] < size)
+                continue;
+            int dd = dir_dist2(oc, object_cell(d->ferry[k]));
+            if (best < 0 || dd < best_d) {
                 best = k;
+                best_d = dd;
+            }
+        }
         if (best < 0)
             continue;   /* a smaller unit may still fit */
         room[best] -= size;
