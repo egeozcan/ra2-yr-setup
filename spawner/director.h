@@ -150,7 +150,10 @@ struct DirState {
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *mcv_seen[8];                  /* MCVs logged already */
     int mcv_seen_next, yards_seen, next_crate_site, crate_frame;
-    int outmatched, outmatched_frame, mcv_handed_frame;   /* holding in the base against a far bigger army near home */
+    int outmatched, outmatched_frame, mcv_handed_frame;
+    BYTE *walker[8];                    /* units called to walk to a transport */
+    CellXY walker_from[8], walker_to[8];
+    int walker_frame[8], walker_next;   /* holding in the base against a far bigger army near home */
     CellXY miner_sent[4];               /* fields Slave Miners were sent to lately */
     int miner_sent_frame[4], miner_sent_next;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
@@ -4040,8 +4043,21 @@ static void dir_ferry(BYTE *house, DirState *d)
          * toward callers came from transports docked in the water, which now dock only ashore. */
         CellXY tc = object_cell(d->ferry[best]);
         if (dir_dist2(object_cell(o), tc) > 7 * 7) {
-            if (!dir_recent_order(o, dir_cell(tc), 300))
+            if (!dir_recent_order(o, dir_cell(tc), 300)) {
                 dir_order(o, MISSION_MOVE, NULL, dir_cell(tc));
+                /* remember the walkers (for the stall report: which called units, from where) */
+                int w = -1;
+                for (int j = 0; j < 8 && w < 0; j++)
+                    if (d->walker[j] == o)
+                        w = j;
+                if (w < 0) {
+                    w = d->walker_next++ % 8;
+                    d->walker[w] = o;
+                    d->walker_from[w] = object_cell(o);
+                    d->walker_frame[w] = CURRENT_FRAME;
+                }
+                d->walker_to[w] = tc;
+            }
         } else if (!dir_recent_order(o, d->ferry[best], 300)) {
             /* Entering a transport follows Destination, not Target */
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_ENTER, 0);
@@ -4115,6 +4131,20 @@ static void dir_ferry(BYTE *house, DirState *d)
                 }
                 shown++;
             }
+        }
+        /* the called walkers themselves: where they started, where they stand, how far they got */
+        for (int j = 0; j < 8; j++) {
+            BYTE *u = d->walker[j];
+            if (!u || !dir_object_listed(v, u) || !oil_live(u) || CURRENT_FRAME - d->walker_frame[j] > 6000)
+                continue;
+            CellXY c = object_cell(u), f = d->walker_from[j], t = d->walker_to[j];
+            BYTE *dest = FIELD(u, COMBAT_DESTINATION, BYTE *);
+            CellXY dc = dest && is_cell(dest) ? FIELD(dest, C_MAPCOORDS, CellXY) : (CellXY){ -1, -1 };
+            logmsg("director: house %d frame %d:   walker %.8s called %d frames ago from %d,%d (%d cells off) now at %d,%d "
+                   "(%d off; moved %d), mission %d, dest %d,%d, heights %d->%d", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   (char *)dir_type(u) + T_ID, CURRENT_FRAME - d->walker_frame[j], f.X, f.Y, dir_isqrt(dir_dist2(f, t)),
+                   c.X, c.Y, dir_isqrt(dir_dist2(c, t)), dir_isqrt(dir_dist2(c, f)), FIELD(u, COMBAT_MISSION, int),
+                   dc.X, dc.Y, dir_height(c), dir_height(t));
         }
         CellXY to = dir_beach_near(d->rally, d->rally, stuck);
         logmsg("director: house %d frame %d: convoy stalled, %d called (%d can't walk there) and nobody aboard (transport at %d,%d, dock "
