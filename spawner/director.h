@@ -3672,6 +3672,22 @@ static void dir_ferry(BYTE *house, DirState *d)
             pool_dist[npool++] = dist;
         }
     }
+    /* only units that can walk to a docked transport: units on the plateau above a beach dock
+     * walked toward it for 3000 frames, 13-17 cells off, until the stall recovery let them go */
+    int unreachable = 0;
+    for (int k = 0; k < DIR_CONVOY; k++)
+        if (npool && room[k] > 0) {
+            dir_fill_walk(object_cell(d->ferry[k]));
+            break;
+        }
+    for (int n = 0; n < npool; )
+        if (!dir_is_land(object_cell(pool[n]))) {
+            unreachable++;
+            npool--;
+            pool[n] = pool[npool];
+            pool_dist[n] = pool_dist[npool];
+        } else
+            n++;
     /* nearest first: called in array order, units from the back of the army pushed through the
      * rest down a ramp to the beach and the whole crowd jammed there */
     for (int n = 0; n < npool; n++) {
@@ -3723,8 +3739,8 @@ static void dir_ferry(BYTE *house, DirState *d)
         for (int k = 0; k < DIR_CONVOY; k++)
             free += room[k] > 0 ? room[k] : 0;
         logmsg("director: house %d frame %d: convoy %d docked, %d ready, %d coming; %d called, %d in the pool, %d "
-               "far, %d busy; room left %d, waited %d", FIELD(house, 0x30, int), CURRENT_FRAME, docked, ready, coming,
-               called, npool, distant, busy, free, CURRENT_FRAME - d->convoy_since);
+               "far, %d busy, %d can't walk there; room left %d, waited %d", FIELD(house, 0x30, int), CURRENT_FRAME, docked,
+               ready, coming, called, npool, distant, busy, unreachable, free, CURRENT_FRAME - d->convoy_since);
     }
     /* Nobody aboard any docked transport 3000 frames after the first call, with units called: they
      * can't get to it (four landing craft clumped on a beach pocket sat empty for 45000 frames with
@@ -3734,7 +3750,7 @@ static void dir_ferry(BYTE *house, DirState *d)
     for (int k = 0; k < DIR_CONVOY; k++)
         if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k])
             aboard_docked += FIELD(d->ferry[k], T_PASSENGERS, int);
-    if (called && !aboard_docked && CURRENT_FRAME - d->convoy_since > 3000) {
+    if ((called || unreachable) && !aboard_docked && CURRENT_FRAME - d->convoy_since > 3000) {
         BYTE *t0 = NULL;
         for (int k = 0; k < DIR_CONVOY && !t0; k++)
             if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k])
@@ -3765,8 +3781,8 @@ static void dir_ferry(BYTE *house, DirState *d)
             }
         }
         CellXY to = dir_beach_near(d->rally, d->rally, stuck);
-        logmsg("director: house %d frame %d: convoy stalled, %d called and nobody aboard (transport at %d,%d, dock "
-               "%d,%d); dock moved to %d,%d; units:%s", FIELD(house, 0x30, int), CURRENT_FRAME, called, stuck.X, stuck.Y,
+        logmsg("director: house %d frame %d: convoy stalled, %d called (%d can't walk there) and nobody aboard (transport at %d,%d, dock "
+               "%d,%d); dock moved to %d,%d; units:%s", FIELD(house, 0x30, int), CURRENT_FRAME, called, unreachable, stuck.X, stuck.Y,
                d->dock.X, d->dock.Y, to.X, to.Y, seen);
         d->dock_failed = stuck;
         if (to.X)
