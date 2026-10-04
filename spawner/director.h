@@ -146,7 +146,7 @@ struct DirState {
     CellXY fleet_at;                    /* the fleet's centre */
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *mcv_seen[8];                  /* MCVs logged already */
-    int mcv_seen_next, yards_seen;
+    int mcv_seen_next, yards_seen, next_crate_site, crate_frame;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
     int cover_frame;
 };
@@ -3173,11 +3173,14 @@ static char GFASTCALL dir_try_deploy(BYTE *unit, void *unused)
     (void)unused;
     BYTE *house = FIELD(unit, O_OWNER, BYTE *);
     int idx = house ? FIELD(house, 0x30, int) : -1;
-    if (idx >= 0 && idx < 32 && dir_state[idx].house == house && dir_state[idx].escape_frame
-        && CURRENT_FRAME - dir_state[idx].escape_frame < 6000 && in_list(dir_mcvs, (char *)dir_type(unit) + T_ID)
-        && dir_dist2(object_cell(unit), dir_state[idx].site) > 3 * 3) {
+    /* nor a spare MCV sent to ore as an expansion, for 6000 frames (the stock AI set it up at home) */
+    if (idx >= 0 && idx < 32 && dir_state[idx].house == house
+        && ((dir_state[idx].escape_frame && CURRENT_FRAME - dir_state[idx].escape_frame < 6000)
+            || (dir_state[idx].crate_frame && CURRENT_FRAME - dir_state[idx].crate_frame < 6000
+                && dir_state[idx].site.X > 0))
+        && in_list(dir_mcvs, (char *)dir_type(unit) + T_ID) && dir_dist2(object_cell(unit), dir_state[idx].site) > 3 * 3) {
         if (bench_file && CURRENT_FRAME % 60 < 15)
-            logmsg("director: house %d frame %d: fleeing MCV kept from deploying at %d,%d", idx, CURRENT_FRAME,
+            logmsg("director: house %d frame %d: MCV kept from deploying at %d,%d (bound for its site)", idx, CURRENT_FRAME,
                    object_cell(unit).X, object_cell(unit).Y);
         return 0;
     }
@@ -3353,6 +3356,9 @@ static void dir_expansion(BYTE *house, DirState *d)
         if (yards > d->yards_seen && CURRENT_FRAME > 300)
             logmsg("director: house %d frame %d: %d construction yards (was %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
                    yards, d->yards_seen);
+        /* a new yard up: the expansion site is used (a fleeing yard's is cleared below) */
+        if (yards > d->yards_seen && !(d->escape_frame && CURRENT_FRAME - d->escape_frame < 6000))
+            d->site = (CellXY){ 0, 0 };
         d->yards_seen = yards;
     }
     /* Drive an MCV we built to the site and deploy. Without a yard the stock AI redeploys it at home. */
@@ -3363,6 +3369,22 @@ static void dir_expansion(BYTE *house, DirState *d)
         d->escape_frame = 0;
         d->site = (CellXY){ 0, 0 };
         escaping = 0;
+    }
+    /* An MCV nobody sent anywhere (from a crate, while the base stands): to a rich field away from
+     * the enemy as an expansion (dir_find_site: 2500 ore within 6 cells, no enemy building within
+     * 28 cells nor armed enemy within 14), else the stock AI sets it up at home. Free yards parked
+     * at home added nothing; by ore they claim it with refineries. */
+    if (mcv && yards && !escaping && d->site.X <= 0 && CURRENT_FRAME >= d->next_crate_site
+        && (director_enabled(house) & DIR_F_EXPANSION)) {
+        d->next_crate_site = CURRENT_FRAME + 900;
+        if (dir_find_site(house, d, &d->site)) {
+            CellXY at = object_cell(mcv);
+            logmsg("director: house %d frame %d: spare %.24s at %d,%d sent to the ore at %d,%d as an expansion",
+                   FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(mcv) + T_ID, at.X, at.Y, d->site.X, d->site.Y);
+            d->deploy_tries = 0;
+            d->crate_frame = CURRENT_FRAME;
+        } else
+            d->site = (CellXY){ 0, 0 };
     }
     if (mcv && (yards || escaping) && d->site.X > 0) {
         d->want_mcv = 0;
@@ -3389,7 +3411,9 @@ static void dir_expansion(BYTE *house, DirState *d)
                 logmsg("director: house %d deploying expansion MCV at %d,%d (mission %d)", FIELD(house, 0x30, int),
                        at.X, at.Y, FIELD(mcv, COMBAT_MISSION, int));
             }
-        } else if (cell && (!dir_recent_order(mcv, cell, 450) || (escaping && FIELD(mcv, COMBAT_MISSION, int) != MISSION_MOVE))) {
+        } else if (cell && (!dir_recent_order(mcv, cell, 450)
+                            || ((escaping || (d->crate_frame && CURRENT_FRAME - d->crate_frame < 6000))
+                                && FIELD(mcv, COMBAT_MISSION, int) != MISSION_MOVE))) {
             /* fleeing, the stock AI tells a yardless MCV to deploy where it stands: on the move again */
             dir_order(mcv, MISSION_MOVE, NULL, cell);
             if (escaping && bench_file && CURRENT_FRAME % 300 < 15)
