@@ -646,7 +646,11 @@ How it works (addresses in this exe, traced 2026-09-26; YRpp names):
 The shared installer now also adds **Bulldozer** (`SBDOZR`), a new Soviet tracked siege vehicle
 with its own voxel model, armored cab, hydraulic push arms, broad steel blade and sidebar cameo.
 All four Soviet countries can build it with a **War Factory and Radar** (`NAWEAP,NARADR`).
-It costs **2000**, has **1800 HP**, heavy armor, speed **3**, and no turret.
+It costs **1500**, has **2400 HP**, heavy armor, speed **2**, no turret, and is **immune to mind control**
+(`ImmuneToPsionics=yes`), so it can drive up to a Psychic Tower and level it. (2026-10-04: cheaper and tougher
+for that job, slower to balance it; it was 2000, 1800 HP, speed 3, and could be mind-controlled.) The
+director sends its Bulldozers at enemy Psychic Towers within 45 cells, out of any attack team, and a
+Soviet director house that has seen enemy Psychic Towers keeps two.
 It cannot appear in starting armies or crates. Soviet AI can build mixed assault teams of two bulldozers and four Rhinos
 once it has Radar and a War Factory, on easy, medium and hard difficulties.
 
