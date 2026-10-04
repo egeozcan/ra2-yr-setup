@@ -3691,9 +3691,14 @@ static void dir_ferry(BYTE *house, DirState *d)
          * all over the base, transports left the dock again and again, chasing first one and then
          * another, and nobody got aboard in 20000 frames. Units walk over first and board from
          * within 7 cells. (Letting any board after 1500 frames had the transports drive up a ramp
-         * into the waiting army and get wedged; units that never arrive are the stall recovery's.) */
+         * into the waiting army and get wedged; units that never arrive are the stall recovery's.)
+         * A transport on land boards them only once they stand beside it: from 7 cells it still drove
+         * toward them, off its dock, and being sent back it took nobody (French landing craft for
+         * 20000 frames with soldiers 1-3 cells off); one in the water has to come ashore anyway. */
         CellXY tc = object_cell(d->ferry[best]);
-        if (dir_dist2(object_cell(o), tc) > 7 * 7) {
+        BYTE *tcell = dir_cell(tc);
+        int board_r = tcell && FIELD(tcell, C_LANDTYPE, int) == 2 ? 7 : 2;
+        if (dir_dist2(object_cell(o), tc) > board_r * board_r) {
             if (!dir_recent_order(o, dir_cell(tc), 300))
                 dir_order(o, MISSION_MOVE, NULL, dir_cell(tc));
         } else if (!dir_recent_order(o, d->ferry[best], 300)) {
