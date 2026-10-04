@@ -3489,21 +3489,37 @@ static int dir_boardable(BYTE *house, DirState *d, BYTE *o, int *what)
 /* The beach cell nearest `at` (within 30 cells) on land our units can walk to from `from`, clear
  * of buildings, with water within 2 cells and away from `avoid` (a beach transports couldn't get
  * to; 0,0: none); 0,0 if there is none. */
+static void dir_walk_steps(CellXY from);
+static unsigned short dir_walk[512 * 512];   /* walking steps from the last dir_walk_steps origin */
+
+/* The beach cell within 30 cells of `at` that our units walking from `from` reach soonest (walking
+ * steps, plus the straight distance from `at`), clear of buildings. Picked by straight distance,
+ * docks lay below a cliff from the army, and called units stood 10-17 cells off, a cliff or our
+ * own base between them and the transport, until the convoy stalled (26 of 51 stalls: rock on
+ * the line; 17: a building). */
 static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
 {
     dir_fill_walk(from);
-    for (int r = 0; r <= 30; r++)
-        for (int dy = -r; dy <= r; dy++)
-            for (int dx = -r; dx <= r; dx++) {
-                if (abs(dx) != r && abs(dy) != r)
-                    continue;
-                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
-                BYTE *cell = dir_cell(c);
-                if (cell && FIELD(cell, C_LANDTYPE, int) == 6 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
-                    && dir_is_land(c) && dir_near_water(c, 2) && (!avoid.X || dir_dist2(c, avoid) > 6 * 6))
-                    return c;
+    dir_walk_steps(from);
+    CellXY best = { 0, 0 };
+    int best_score = 0x7FFFFFFF;
+    for (int dy = -30; dy <= 30; dy++)
+        for (int dx = -30; dx <= 30; dx++) {
+            CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
+            BYTE *cell = dir_cell(c);
+            if (!cell || FIELD(cell, C_LANDTYPE, int) != 6 || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
+                || !dir_is_land(c) || !dir_near_water(c, 2) || (avoid.X && dir_dist2(c, avoid) <= 6 * 6))
+                continue;
+            int steps = dir_walk[c.Y * 512 + c.X];
+            if (steps == 0xFFFF)
+                continue;
+            int score = steps + dir_isqrt(dx * dx + dy * dy);
+            if (score < best_score) {
+                best_score = score;
+                best = c;
             }
-    return (CellXY){ 0, 0 };
+        }
+    return best;
 }
 
 /* A transport's passengers: a count (T_PASSENGERS) and a chain through ObjectClass::NextObject
@@ -5199,9 +5215,36 @@ static void dir_fill_land_ex(CellXY from, int buildings_block)
                 int land = FIELD(cell, C_LANDTYPE, int);
                 if ((land == 2 || land == 3) && !(FIELD(cell, C_FLAGS, DWORD) & 0x100))
                     continue;
-                if (buildings_block && (FIELD(cell, C_OCCUPATION, DWORD) & 0x80))
-                    continue;
+                if (buildings_block && ((FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || land == 4))
+                    continue;   /* walls (LandType Wall) block walking too */
                 dir_land[(n.Y * 512 + n.X) >> 3] |= 1 << (n.X & 7);
+                dir_sea_queue[tail++] = n.Y * 512 + n.X;
+            }
+    }
+}
+
+/* Walking steps from `from` over the cells dir_fill_walk crosses (8 neighbours, a step each). */
+static void dir_walk_steps(CellXY from)
+{
+    memset(dir_walk, 0xFF, sizeof dir_walk);
+    if (!dir_cell(from))
+        return;
+    int head = 0, tail = 0;
+    dir_sea_queue[tail++] = from.Y * 512 + from.X;
+    dir_walk[from.Y * 512 + from.X] = 0;
+    while (head < tail) {
+        int i = dir_sea_queue[head++], x = i % 512, y = i / 512;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                CellXY n = { (short)(x + dx), (short)(y + dy) };
+                BYTE *cell = dir_cell(n);
+                if (!cell || dir_walk[n.Y * 512 + n.X] != 0xFFFF)
+                    continue;
+                int land = FIELD(cell, C_LANDTYPE, int);
+                if (((land == 2 || land == 3) && !(FIELD(cell, C_FLAGS, DWORD) & 0x100))
+                    || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || land == 4)
+                    continue;
+                dir_walk[n.Y * 512 + n.X] = dir_walk[i] + 1;
                 dir_sea_queue[tail++] = n.Y * 512 + n.X;
             }
     }
