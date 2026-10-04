@@ -3974,6 +3974,26 @@ static void dir_ferry(BYTE *house, DirState *d)
                 }
             continue;
         }
+        /* a walker on its way (reserved out of the pool): counted against its transport's room */
+        int walking = 0;
+        for (int j = 0; j < 8 && !walking; j++)
+            if (d->walker[j] == o && dir_is_reserved(o))   /* on its way, or arrived and stopped */
+                for (int k = 0; k < DIR_CONVOY; k++)
+                    if (d->ferry[k] && dir_dist2(object_cell(d->ferry[k]), d->walker_to[j]) <= 2 * 2) {
+                        room[k] -= dir_size(o);
+                        walking = 1;
+                        /* there: board (Entering a transport follows Destination, not Target) */
+                        if (dir_dist2(object_cell(o), object_cell(d->ferry[k])) <= 7 * 7
+                            && !dir_recent_order(o, d->ferry[k], 300)) {
+                            ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_ENTER, 0);
+                            ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, d->ferry[k], 1);
+                        }
+                        break;
+                    }
+        if (walking) {
+            called++;
+            continue;
+        }
         if (!dir_poolable(o, what)) {
             busy++;
             continue;
@@ -4045,6 +4065,9 @@ static void dir_ferry(BYTE *house, DirState *d)
         if (dir_dist2(object_cell(o), tc) > 7 * 7) {
             if (!dir_recent_order(o, dir_cell(tc), 300)) {
                 dir_order(o, MISSION_MOVE, NULL, dir_cell(tc));
+                /* out of the army pool on the way: the army's next pass sent it back to the rally on
+                 * Area Guard, and called walkers stood where they were called, moved 0 in 2000 frames */
+                dir_reserve(o, 900);
                 /* remember the walkers (for the stall report: which called units, from where) */
                 int w = -1;
                 for (int j = 0; j < 8 && w < 0; j++)
