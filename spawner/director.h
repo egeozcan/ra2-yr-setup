@@ -328,6 +328,25 @@ static int dir_take_from_team(BYTE *obj)
 
 /* Units the director may command: armed ground combat units, not harvesters, builders, infiltrators
  * or boats, and never while a trigger team owns them. */
+/* Units sent on a job of their own (a tank to a bunker, a soldier into a building) stay out of
+ * the army pool until it is done or lapses: the Enter mission takes over only at the unit's next
+ * mission update, and meanwhile the army or the convoy ordered it elsewhere (18 of 20 tanks sent
+ * to Yuri's bunkers never got there; the bunkers stood empty). */
+static struct { BYTE *unit; int until; } dir_reserved[1024];
+
+static void dir_reserve(BYTE *unit, int frames)
+{
+    unsigned k = ((DWORD)unit >> 3) % 1024;
+    dir_reserved[k].unit = unit;
+    dir_reserved[k].until = CURRENT_FRAME + frames;
+}
+
+static int dir_is_reserved(BYTE *unit)
+{
+    unsigned k = ((DWORD)unit >> 3) % 1024;
+    return dir_reserved[k].unit == unit && CURRENT_FRAME < dir_reserved[k].until;
+}
+
 static int dir_poolable(BYTE *obj, int what)
 {
     if (what != 1 && what != 15)
@@ -342,8 +361,8 @@ static int dir_poolable(BYTE *obj, int what)
         return 0;
     if (what == 1 && type[UT_HARVESTER])
         return 0;   /* any other harvester the list doesn't name */
-    if (FIELD(obj, T_BUNKER_LINK, BYTE *))
-        return 0;   /* garrisoning a tank bunker */
+    if (FIELD(obj, T_BUNKER_LINK, BYTE *) || dir_is_reserved(obj))
+        return 0;   /* garrisoning a tank bunker, or on its way to a job */
     int mission = FIELD(obj, COMBAT_MISSION, int);
     /* 7 Enter, 8 Capture, 16 Unload, 10 Harvest: busy with something the AI chose deliberately */
     return mission != 7 && mission != 8 && mission != 10 && mission != 16 && dir_take_from_team(obj);
@@ -4747,6 +4766,7 @@ static void dir_garrison(BYTE *house, DirState *d)
             d->garrison_site[g] = b;
             d->garrison_frame[g] = CURRENT_FRAME;
             dir_order(best, MISSION_ENTER, b, b);
+            dir_reserve(best, 1800);
             sent++;
             logmsg("director: house %d frame %d: %.24s into our %.24s at %d,%d (%d of %d inside)", FIELD(house, 0x30, int),
                    CURRENT_FRAME, (char *)dir_type(best) + T_ID, (char *)type + T_ID, at.X, at.Y,
@@ -4893,6 +4913,7 @@ static void dir_bunkers(BYTE *house, DirState *d)
         /* what a player's enter click does (FootClass::ClickedAction, Action::Enter at 0x4D76F6):
          * ClickedMission(Enter) with no target and the bunker as the destination */
         dir_order(best, MISSION_ENTER, NULL, b);
+        dir_reserve(best, 900);
         logmsg("director: house %d frame %d: %.24s garrisons the tank bunker at %d,%d", FIELD(house, 0x30, int),
                CURRENT_FRAME, (char *)dir_type(best) + T_ID, at.X, at.Y);
     }
