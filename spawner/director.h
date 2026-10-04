@@ -4868,7 +4868,10 @@ static void dir_garrison(BYTE *house, DirState *d)
             d->garrison_unit[g] = best;
             d->garrison_site[g] = b;
             d->garrison_frame[g] = CURRENT_FRAME;
-            dir_order(best, MISSION_ENTER, b, b);
+            /* the bunker as Destination only, as for civilian buildings: as the Target too, the
+             * soldier fired on it (an empty Battle Bunker shot at by a Conscript, given up as
+             * "can't get in" after two tries) */
+            dir_order(best, MISSION_ENTER, NULL, b);
             dir_reserve(best, 1800);
             sent++;
             logmsg("director: house %d frame %d: %.24s into our %.24s at %d,%d (%d of %d inside)", FIELD(house, 0x30, int),
