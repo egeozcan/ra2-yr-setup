@@ -429,6 +429,28 @@ static int dir_armed_vehicles(BYTE *house)
 }
 
 /* First type in the list the house can build now, within budget and caps. */
+/* TechnoTypeClass::Prerequisite (a list of building type indices at +0x638, as LoadFromINI fills it
+ * at 0x714190; negative values are the [General] groups). HouseClass::CanBuild lets computer
+ * players skip them: Apocalypse Tanks were picked at frame 2776, long before any Battle Lab. */
+#define TT_PREREQUISITE 0x638
+static int dir_has_prereqs(BYTE *house, BYTE *type)
+{
+    static const char *groups[7] = { "", "GAPOWR,NAPOWR,NANRCT,YAPOWR", "GAWEAP,NAWEAP,YAWEAP", "GAPILE,NAHAND,YABRCK",
+                                     "GAAIRC,AMRADR,NARADR,NAPSIS", "GATECH,NATECH,YATECH", "GAREFN,NAREFN,YAREFN" };
+    int count = FIELD(type, TT_PREREQUISITE + 0x10, int);
+    int *items = FIELD(type, TT_PREREQUISITE + 4, int *);
+    DynVec *bts = BUILDINGTYPE_ARRAY;
+    for (int i = 0; i < count && items; i++) {
+        int p = items[i];
+        if (p >= 0 && p < bts->Count) {
+            if (!combat_building_count(house, (char *)bts->Items[p] + T_ID))
+                return 0;
+        } else if (p < 0 && p >= -6 && !combat_building_count(house, groups[-p]))
+            return 0;
+    }
+    return 1;
+}
+
 static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, int reserve)
 {
     char id[32];
@@ -446,6 +468,7 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
                 && !combat_building_count(house, naval ? "GAYARD,NAYARD,YAYARD" : "GAWEAP,NAWEAP,YAWEAP"))
                 type = NULL;
             if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
+                && dir_has_prereqs(house, type)
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
                 && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
                 && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 2)    /* slow and costly: a pair at most */
@@ -2148,7 +2171,7 @@ static void dir_economy(BYTE *house, DirState *d)
     /* nor a construction yard at all: the base plan's first node, it was queued over and over and
      * at times built (a Yuri base put up fifteen, 160 buildings in all); yards come from MCVs */
     if (pick >= 0 && pick < bts->Count
-        && (in_list("GACNST,NACNST,YACNST", (char *)bts->Items[pick] + T_ID)
+        && (in_list("GACNST,NACNST,YACNST", (char *)bts->Items[pick] + T_ID) || !dir_has_prereqs(house, bts->Items[pick])
             || ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, bts->Items[pick], 0, 1) <= 0)) {
         FIELD(house, OIL_H_PRODUCING, int) = -1;
         static int last_log[32];
@@ -4555,6 +4578,14 @@ static void dir_report_intruders(BYTE *house)
  * infantry when the enemy is cut off by water (they can only wait at home). */
 static void dir_veto_production(BYTE *house, DirState *d)
 {
+    /* infantry and aircraft without their tech building, as for vehicles below */
+    int inf0 = FIELD(house, H_PRODUCING_INF, int);
+    DynVec *its = INFANTRYTYPE_ARRAY, *ats = AIRCRAFTTYPE_ARRAY;
+    if (inf0 >= 0 && inf0 < its->Count && !dir_has_prereqs(house, its->Items[inf0]))
+        FIELD(house, H_PRODUCING_INF, int) = -1;
+    int air0 = FIELD(house, H_PRODUCING_AIR, int);
+    if (air0 >= 0 && air0 < ats->Count && !dir_has_prereqs(house, ats->Items[air0]))
+        FIELD(house, H_PRODUCING_AIR, int) = -1;
     int air = FIELD(house, H_PRODUCING_AIR, int);
     DynVec *at = AIRCRAFTTYPE_ARRAY;
     if (air >= 0 && air < at->Count && !_stricmp((char *)at->Items[air] + T_ID, "ZEP")
@@ -4594,7 +4625,8 @@ static void dir_veto_production(BYTE *house, DirState *d)
     }
     /* a stock pick the house can't build would hold the vehicle queue for good */
     if (pick >= 0 && pick < uts->Count && pick != d->unit_request
-        && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, uts->Items[pick], 0, 1) <= 0)
+        && (((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, uts->Items[pick], 0, 1) <= 0
+            || !dir_has_prereqs(house, uts->Items[pick])))   /* tech units without their tech building */
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
     /* the mod's Allied AI teams order Liberators in threes; a pair is all that still pays */
     int unit = FIELD(house, H_PRODUCING_UNIT, int);
