@@ -3237,30 +3237,84 @@ static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
 }
 
 /* A transport's passengers: a count (T_PASSENGERS) and a chain through ObjectClass::NextObject
- * (0x30) from the first (T_PASSENGERS + 4). Twice on Isolation the game crashed walking a chain
- * with a dead object in it (0x473491, in PassengerClass::GetTotalSize, from a unit asking to
- * board; and earlier at 0x6F3731, perhaps the same). A chain that runs into anything not in the
- * techno list is cut there, before the engine walks it, and logged. */
+ * (0x30) from the first (T_PASSENGERS + 4). Map cells chain their occupiers through the same
+ * field. A unit boards by driving onto the transport's cell, and some came aboard still linked to
+ * the next occupier there: the passenger chain ran on into the cell's list (at once into the
+ * transport itself), ended early ("broken at 2 of 4") and, as more boarded, put units that are off
+ * the map into that cell's list. Isolation games crashed in target scans and cell code on them
+ * (0x6F3731, 0x6F36FE, 0x7E1F2C, 0x47C538) and in PassengerClass::GetTotalSize (0x473491).
+ * Each tick the chain is checked: passengers (listed, owned, off the map: InLimbo +0x81) are
+ * collected along it, also those past where it ran into a cell's list, which are unlinked from
+ * there, and the chain is rebuilt from them. */
 #define O_NEXT_OBJECT 0x30
+
+/* The root of it: PassengerClass::AddPassenger (0x4733A0) limbos the unit (vtable 0xD4), which
+ * takes it out of its cell's list but leaves its NextObject pointing at the next occupier, and
+ * then adds the unit together with whatever chain of units hangs off its NextObject: the transport
+ * standing on that cell and the rest of the cell's list came aboard with it. Right after the
+ * Limbo (before it, the cell's unlink still needs the link), a NextObject that points at a unit on
+ * the map is cleared: that is a cell neighbour, and a chain of passengers is all off the map.
+ * Testing whether the boarding unit had been on the map missed some: it was limboed earlier. */
+#define DIR_ADD_PASSENGER_LIMBO 0x4733AC   /* mov eax,[esi] / mov ecx,esi / call [eax+0xD4] */
+static void __attribute__((naked)) dir_add_passenger_limbo(void)
+{
+    __asm__ volatile(
+        "movl (%esi), %eax\n\t"
+        "movl %esi, %ecx\n\t"
+        "call *0xd4(%eax)\n\t"
+        "movl 0x30(%esi), %eax\n\t"   /* NextObject */
+        "testl %eax, %eax\n\t"
+        "jz 1f\n\t"
+        "cmpb $0, 0x81(%eax)\n\t"     /* on the map: a cell neighbour, not a passenger */
+        "jne 1f\n\t"
+        "movl $0, 0x30(%esi)\n\t"
+        "1: pushl $0x4733b6\n\t"
+        "ret\n\t");
+}
 static void dir_check_passengers(BYTE *house, BYTE *t)
 {
     int count = FIELD(t, T_PASSENGERS, int);
-    BYTE *prev = NULL, *p = FIELD(t, T_PASSENGERS + 4, BYTE *);
+    BYTE *p = FIELD(t, T_PASSENGERS + 4, BYTE *);
     int i = 0;
-    for (; i < count && p && dir_object_listed(OIL_TECHNO_ARRAY, p) && FIELD(p, O_OWNER, BYTE *); i++) {
-        prev = p;
+    for (; i < count && p && dir_object_listed(OIL_TECHNO_ARRAY, p) && FIELD(p, O_OWNER, BYTE *) && p[0x81]; i++)
         p = FIELD(p, O_NEXT_OBJECT, BYTE *);
+    if (i == count && (!p || !p[0x81] || !dir_object_listed(OIL_TECHNO_ARRAY, p)))
+        return;   /* sound (whatever follows the last isn't a passenger) */
+    BYTE *keep[32];
+    int n = 0, moved = 0, steps = 0;
+    const char *why = !p ? "ends early" : !dir_object_listed(OIL_TECHNO_ARRAY, p) ? "runs into a dead object"
+        : p[0x81] ? "runs on past its count" : "runs into a unit on the map";
+    BYTE *stop = p;
+    for (BYTE *q = FIELD(t, T_PASSENGERS + 4, BYTE *); q && q != stop && n < 32; q = FIELD(q, O_NEXT_OBJECT, BYTE *))
+        keep[n++] = q;
+    /* past the break, along a cell's list: off-map units of ours are passengers put there; unlink
+     * them, keeping the on-map occupiers' chain whole */
+    if (stop && dir_object_listed(OIL_TECHNO_ARRAY, stop) && !stop[0x81]) {
+        BYTE *prev = stop, *q = FIELD(stop, O_NEXT_OBJECT, BYTE *);
+        while (q && steps++ < 64 && dir_object_listed(OIL_TECHNO_ARRAY, q)) {
+            BYTE *next = FIELD(q, O_NEXT_OBJECT, BYTE *);
+            int dup = 0;
+            for (int j = 0; j < n; j++)
+                dup |= keep[j] == q;
+            if (dup)
+                break;   /* a loop back into the passengers */
+            if (q[0x81] && FIELD(q, O_OWNER, BYTE *) == FIELD(t, O_OWNER, BYTE *) && n < 32) {
+                FIELD(prev, O_NEXT_OBJECT, BYTE *) = next;
+                keep[n++] = q;
+                moved++;
+            } else
+                prev = q;
+            q = next;
+        }
     }
-    if (i == count)
-        return;
-    logmsg("director: house %d frame %d: %.24s passenger list broken at %d of %d (%p, vtable %#x, health %d); cut "
-           "there", FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(t) + T_ID, i, count, (void *)p,
-           p ? FIELD(p, 0, DWORD) : 0, p ? FIELD(p, 0x6C, int) : 0);
-    if (prev)
-        FIELD(prev, O_NEXT_OBJECT, BYTE *) = NULL;
-    else
-        FIELD(t, T_PASSENGERS + 4, BYTE *) = NULL;
-    FIELD(t, T_PASSENGERS, int) = i;
+    for (int j = 0; j < n; j++)
+        FIELD(keep[j], O_NEXT_OBJECT, BYTE *) = j + 1 < n ? keep[j + 1] : NULL;
+    FIELD(t, T_PASSENGERS + 4, BYTE *) = n ? keep[0] : NULL;
+    FIELD(t, T_PASSENGERS, int) = n;
+    logmsg("director: house %d frame %d: %.24s at %d,%d passenger list %s at %d of %d (%.24s); rebuilt with %d "
+           "(%d taken back from a cell's list)", FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(t) + T_ID,
+           object_cell(t).X, object_cell(t).Y, why, i, count,
+           stop && dir_object_listed(OIL_TECHNO_ARRAY, stop) ? (char *)dir_type(stop) + T_ID : "-", n, moved);
 }
 
 static void dir_ferry(BYTE *house, DirState *d)
@@ -5551,6 +5605,13 @@ static void patch_director(void)
         const BYTE call[5] = { 0xE8, (BYTE)rel, (BYTE)(rel >> 8), (BYTE)(rel >> 16), (BYTE)(rel >> 24) };
         if (patch_checked("director yard escape", at, call, sizeof call))
             patch_rel(at, 0xE8, (DWORD)dir_may_undeploy);
+    }
+    {
+        static const BYTE limbo[10] = { 0x8B, 0x06, 0x8B, 0xCE, 0xFF, 0x90, 0xD4, 0x00, 0x00, 0x00 };
+        if (patch_checked("director passenger links", DIR_ADD_PASSENGER_LIMBO, limbo, sizeof limbo)) {
+            patch_rel(DIR_ADD_PASSENGER_LIMBO, 0xE9, (DWORD)dir_add_passenger_limbo);
+            patch(DIR_ADD_PASSENGER_LIMBO + 5, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90 }, 5);
+        }
     }
     {
         DWORD rel = DIR_NODE_CELL_OK - (DIR_NODE_CELL_CALL + 5);

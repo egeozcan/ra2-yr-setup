@@ -205,6 +205,9 @@ class HookTests(unittest.TestCase):
         self.assertEqual(image[0x50B77B - base:0x50B77E - base], bytes([0xC2, 0x08, 0x00]))
         # PassengerClass::GetTotalSize, on TechnoClass +0x114: push ecx / push ebx / mov ebx,[ecx] / mov ecx,[ecx+4]
         self.assertEqual(image[0x473460 - base:0x473467 - base], bytes([0x51, 0x53, 0x8B, 0x19, 0x8B, 0x49, 0x04]))
+        # PassengerClass::AddPassenger: obj->Limbo() at 0x4733AC, then mov eax,[esi+30h] (NextObject) at 0x4733B6
+        self.assertEqual(image[0x4733AC - base:0x4733B9 - base],
+                         bytes([0x8B, 0x06, 0x8B, 0xCE, 0xFF, 0x90, 0xD4, 0, 0, 0, 0x8B, 0x46, 0x30]))
         # The base planner's type test: mov edi,[edx+ecx*4] / cmp edi,eax / jge 0x505E33 / cmp edi,-4; the
         # next entry at 0x505EAD (mov ecx,[esp+10h])
         self.assertEqual(image[0x505DA5 - base:0x505DB3 - base],
