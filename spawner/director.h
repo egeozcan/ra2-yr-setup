@@ -56,6 +56,9 @@ static unsigned dir_next_roll(DirState *d);
 static int dir_ore_blocked(BYTE *house, CellXY c);
 typedef int (GTHISCALL *dir_prod_fn)(BYTE *);
 static const char *dir_mcvs = "AMCV,SMCV,PCV";
+/* the house's own MCV: the game lets Yuri build the Allied one too, and the first buildable of
+ * dir_mcvs gave Yuri four Allied MCVs at once (one from each war factory) and Allied yards */
+static const char *dir_side_mcv[3] = { "AMCV", "SMCV", "PCV" };
 #define DIR_WALLS "GAWALL,NAWALL,YAWALL,GAFWLL"
 /* Mind-controllers, and the units that hunt them: Terror Drones are robots and Siege Choppers fly, so
  * neither can be taken over (anything else sent at Yuri may come back as his) */
@@ -147,7 +150,7 @@ struct DirState {
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *mcv_seen[8];                  /* MCVs logged already */
     int mcv_seen_next, yards_seen, next_crate_site, crate_frame;
-    int outmatched, outmatched_frame;   /* holding in the base against a far bigger army near home */
+    int outmatched, outmatched_frame, mcv_handed_frame;   /* holding in the base against a far bigger army near home */
     CellXY miner_sent[4];               /* fields Slave Miners were sent to lately */
     int miner_sent_frame[4], miner_sent_next;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
@@ -630,13 +633,13 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, "DISK", 0);   /* air cover for the fleet */
     if (!warship && d->want_col_ferry && side0 >= 0 && side0 <= 2)   /* a transport to colonise an island */
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side0], 1000);
-    BYTE *urgent = d->want_mcv ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_mcvs, 0)
+    BYTE *urgent = d->want_mcv ? (side0 >= 0 && side0 <= 2 ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_side_mcv[side0], 0) : NULL)
         : (d->island || d->blocked) && dir_ferry_count(d) < d->ferry_want && side0 >= 0 && side0 <= 2
         ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side0], 1000) : warship;
     if (urgent && current != -1 && current != d->unit_request)
         current = -1;   /* only when the one-off unit can actually be built now */
-    if (current == -1 && d->want_mcv) {
-        BYTE *type = dir_first_buildable(house, UNITTYPE_ARRAY, dir_mcvs, 0);
+    if (current == -1 && d->want_mcv && side0 >= 0 && side0 <= 2) {
+        BYTE *type = dir_first_buildable(house, UNITTYPE_ARRAY, dir_side_mcv[side0], 0);
         int index = type ? dir_type_index(UNITTYPE_ARRAY, type) : -1;
         if (index >= 0) {
             FIELD(house, H_PRODUCING_UNIT, int) = current = d->unit_request = index;
@@ -737,6 +740,14 @@ static BYTE *GFASTCALL dir_factory_pick(BYTE *house, BYTE *btype, int rtti, int 
     if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)
         && in_list("GACNST,NACNST,YACNST", (char *)type + T_ID))
         return NULL;
+    /* one MCV at a time: every war factory took the house's MCV pick at once */
+    if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION) && in_list(dir_mcvs, (char *)type + T_ID)) {
+        DirState *dm = dir_get(house);
+        if (dm && dm->mcv_handed_frame && CURRENT_FRAME - dm->mcv_handed_frame < 3000)
+            return NULL;
+        if (dm)
+            dm->mcv_handed_frame = CURRENT_FRAME;
+    }
     /* a factory's Factory= is a type RTTI: UnitType is 0x28 (0x4FBD80 maps it and Unit, 1, alike) */
     if ((rtti != 1 && rtti != 0x28) || !btype || !btype[TT_NAVAL] || !dir_active(house)
         || !(director_enabled(house) & DIR_F_PRODUCTION))
