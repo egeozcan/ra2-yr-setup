@@ -147,6 +147,7 @@ struct DirState {
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *mcv_seen[8];                  /* MCVs logged already */
     int mcv_seen_next, yards_seen, next_crate_site, crate_frame;
+    int outmatched;                     /* holding in the base against a far bigger army near home */
     CellXY miner_sent[4];               /* fields Slave Miners were sent to lately */
     int miner_sent_frame[4], miner_sent_next;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
@@ -1915,7 +1916,20 @@ static void dir_army(BYTE *house, DirState *d)
     }
     CellXY goal = d->rally;
     int engage = (director_enabled(house) & DIR_F_FOCUS) != 0;
-    if (d->state == DIR_DEFEND)
+    /* Far outmatched at home (the enemy army by the base or the rally worth over twice ours, and
+     * 3000 more): the army keeps together in the base among its defences, fighting what comes in,
+     * until it has grown back. Sent at the raid or to a rally out front, fresh units walked one by
+     * one into an army ten times theirs as they left the factory. */
+    int near_enemy = d->threat_value > d->local_enemy ? d->threat_value : d->local_enemy;
+    int outmatched = (d->state == DIR_DEFEND || d->state == DIR_GATHER) && near_enemy > d->army_value * 2 + 3000;
+    if (outmatched != d->outmatched) {
+        d->outmatched = outmatched;
+        logmsg("director: house %d frame %d: %s (army %d, enemy near %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
+               outmatched ? "outmatched at home: holding in the base" : "no longer outmatched", d->army_value, near_enemy);
+    }
+    if (outmatched)
+        goal = d->base;
+    else if (d->state == DIR_DEFEND)
         goal = d->threat_at;
     else if (d->state == DIR_RETREAT)
         engage = 0;
@@ -5620,10 +5634,12 @@ static void dir_slave_miners(BYTE *house, DirState *d)
                        FIELD(house, 0x30, int), CURRENT_FRAME, at.X, at.Y, dir_ore_reach(at, 8));
             continue;
         }
-        if (CURRENT_FRAME - dir_miner_seen[k].seen < 4500)
-            continue;
         CellXY c = object_cell(b), site;
         int here = dir_ore_reach(c, 8);
+        /* a miner by no ore its slaves can walk to (set up by the stock AI at the foot of a plateau
+         * with the ore on top) moves after 900 frames, not 4500 */
+        if (CURRENT_FRAME - dir_miner_seen[k].seen < (here < 300 ? 900 : 4500))
+            continue;
         /* the best field no other miner of ours works or is on its way to: three miners sent one
          * after another to the same patch by a protected base (the first still driving when the
          * next was sent) emptied it, and their slaves went in and out of them for the rest of the game */
@@ -5647,7 +5663,9 @@ static void dir_slave_miners(BYTE *house, DirState *d)
         for (int j = 0; j < 4 && ntaken < 32; j++)
             if (d->miner_sent_frame[j] && CURRENT_FRAME - d->miner_sent_frame[j] < 6000)
                 taken[ntaken++] = d->miner_sent[j];
-        if (!dir_find_ore_free(house, c, &site, taken, ntaken) || dir_dist2(site, c) < 12 * 12)
+        /* with none, sharing a field beats standing idle: other miners don't keep it off */
+        if (!dir_find_ore_free(house, c, &site, taken, here < 300 ? 0 : ntaken)
+            || (here >= 300 && dir_dist2(site, c) < 12 * 12))   /* the plateau above may be near */
             continue;
         int there = dir_ore_reach(site, 8);
         if (there < here * 4 || there < 1500)
