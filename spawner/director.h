@@ -57,6 +57,12 @@ static int dir_ore_blocked(BYTE *house, CellXY c);
 typedef int (GTHISCALL *dir_prod_fn)(BYTE *);
 static const char *dir_mcvs = "AMCV,SMCV,PCV";
 #define DIR_WALLS "GAWALL,NAWALL,YAWALL,GAFWLL"
+/* Mind-controllers, and the units that hunt them: Terror Drones are robots and Siege Choppers fly, so
+ * neither can be taken over (anything else sent at Yuri may come back as his) */
+#define DIR_MIND_CONTROLLERS "YURI,YURIPR,MIND"
+#define DIR_MIND_HUNTERS "DRON,SCHP"
+#define DIR_POWERED_DEFENSES "YAPSYT,ATESLA,TESLA,GTGCAN"
+#define DIR_POWER_PLANTS "GAPOWR,NAPOWR,NANRCT,YAPOWR"
 static const char *dir_transports[3] = { "LCRF", "SAPC", "YHVR" };   /* amphibious ferries */
 static dir_prod_fn dir_unit_original, dir_inf_original;
 
@@ -66,6 +72,8 @@ struct DirState {
     int state, next_think, launch_value, launch_frame, last_log;
     int army_value, army_count, enemy_army, target_army, local_enemy, local_ours, threat_value;
     int enemy_air, enemy_inf, enemy_armor, enemy_def;
+    int enemy_minds;                    /* enemy mind-controllers: Yuri, Yuri Prime, Masterminds */
+    int last_hunt_log, power_focus;
     int unit_request, unit_request_frame;
     int blocked, blocked_frame, best_dist, progress_frame, state_frame;   /* ground army cannot reach the enemy: island map */
     int reached;                              /* this attack got within 15 cells of an objective */
@@ -485,6 +493,25 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
         available[r] = pick[r] != NULL;
     }
     int role = dir_pick_role(shares, have, available);
+    /* Soviet hunters for enemy mind-controllers: two per controller (and two more), up to ten,
+     * Siege Choppers for every second Terror Drone once they can be built */
+    if (side == 1 && d->enemy_minds && !ground_full) {
+        BYTE *dron = find_type(UNITTYPE_ARRAY, "DRON"), *schp = find_type(UNITTYPE_ARRAY, "SCHP");
+        int drones = dron ? dir_owned_of(house, dron) : 0, choppers = schp ? dir_owned_of(house, schp) : 0;
+        int want = 2 * d->enemy_minds + 2 < 10 ? 2 * d->enemy_minds + 2 : 10;
+        BYTE *hunt = drones + choppers < want
+            ? dir_first_buildable(house, UNITTYPE_ARRAY, choppers * 2 < drones ? "SCHP,DRON" : "DRON,SCHP", 1000) : NULL;
+        if (hunt) {
+            if (bench_file && CURRENT_FRAME - d->last_hunt_log > 3000) {
+                d->last_hunt_log = CURRENT_FRAME;
+                logmsg("director: house %d frame %d: %d enemy mind-controllers, hunters %d drones %d choppers, "
+                       "building %.24s", FIELD(house, 0x30, int), CURRENT_FRAME, d->enemy_minds, drones, choppers,
+                       (char *)hunt + T_ID);
+            }
+            pick[ROLE_MAIN] = hunt;
+            role = ROLE_MAIN;
+        }
+    }
     if (bench_file && CURRENT_FRAME - d->last_pick_log > 1500) {
         d->last_pick_log = CURRENT_FRAME;
         logmsg("director: house %d frame %d pick: cash %d shares %d/%d/%d/%d have %d/%d/%d/%d picks %s %s %s %s -> %d",
@@ -770,7 +797,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
     dir_enemy_count = 0;
     d->enemy_army = d->enemy_air = d->enemy_inf = d->enemy_armor = d->enemy_def = d->target_army = 0;
     d->threat_value = d->naval_threat = d->third_party = d->air_near = 0;
-    d->threat_near = d->target_home = d->raid_inf = d->raid_armor = d->enemy_subs = 0;
+    d->threat_near = d->target_home = d->raid_inf = d->raid_armor = d->enemy_subs = d->enemy_minds = 0;
     CellXY target_base = d->enemy ? dir_house_center(d->enemy) : (CellXY){ 0, 0 };
     int threat_best = 0x7FFFFFFF;
     DynVec *v = OIL_TECHNO_ARRAY;
@@ -801,6 +828,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
         e->focus = e->threat = 0;
         e->naval = !e->building && type[TT_NAVAL];
         d->enemy_subs += e->naval && in_list("SUB,BSUB", (char *)type + T_ID);
+        d->enemy_minds += in_list(DIR_MIND_CONTROLLERS, (char *)type + T_ID);
         Coord c = FIELD(o, O_LOCATION, Coord);
         int floor = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
         e->air = what == 2 || c.Z > floor + 128;
@@ -926,10 +954,26 @@ static BYTE *dir_pick_enemy(BYTE *house, CellXY base)
 static BYTE *dir_pick_objective(DirState *d, CellXY from)
 {
     BYTE *best = NULL;
-    int best_score = 0x7FFFFFFF, buildings = 0, eco = dir_levers(d)->eco_targets;
-    for (int i = 0; i < dir_enemy_count; i++)
-        buildings += dir_enemies[i].building && !dir_enemies[i].capturable
-                     && FIELD(dir_enemies[i].obj, O_OWNER, BYTE *) == d->enemy;
+    int best_score = 0x7FFFFFFF, buildings = 0, eco = dir_levers(d)->eco_targets, towers = 0, plants = 0;
+    for (int i = 0; i < dir_enemy_count; i++) {
+        DirEnemy *e = &dir_enemies[i];
+        if (!e->building || e->capturable || FIELD(e->obj, O_OWNER, BYTE *) != d->enemy)
+            continue;
+        buildings++;
+        towers += in_list(DIR_POWERED_DEFENSES, (char *)dir_type(e->obj) + T_ID);
+        plants += in_list(DIR_POWER_PLANTS, (char *)dir_type(e->obj) + T_ID);
+    }
+    /* Psychic Towers (and Prism Towers, Tesla Coils, Grand Cannons) stop without power: when
+     * three plants or fewer stand between the target and a blackout, the attack goes for them */
+    int power = d->enemy ? FIELD(d->enemy, OIL_H_POWER, int) : 0, drain = d->enemy ? FIELD(d->enemy, OIL_H_DRAIN, int) : 0;
+    int per = plants ? power / plants : 0, need = per > 0 ? (power - drain) / per + 1 : 99;
+    int blackout = towers && plants && need <= 3;
+    if (blackout != d->power_focus) {
+        d->power_focus = blackout;
+        logmsg("director: house %d frame %d: %s the target's power (%d towers, %d plants, power %d of %d drawn, %d "
+               "plants to a blackout)", FIELD(d->house, 0x30, int), CURRENT_FRAME, blackout ? "goes for" : "leaves",
+               towers, plants, power, drain, need);
+    }
     for (int i = 0; i < dir_enemy_count; i++) {
         DirEnemy *e = &dir_enemies[i];
         /* structures first; with none left, whatever keeps the player alive (an MCV, a last unit) */
@@ -949,6 +993,8 @@ static BYTE *dir_pick_objective(DirState *d, CellXY from)
         if (eco && e->building && in_list("GAREFN,NAREFN,YAREFN,GAWEAP,NAWEAP,YAWEAP,GACNST,NACNST,YACNST",
                                           (char *)dir_type(e->obj) + T_ID))
             score /= 2;
+        if (blackout && in_list(DIR_POWER_PLANTS, (char *)dir_type(e->obj) + T_ID))
+            score /= 4;   /* a plant up to twice as far beats the nearest tower */
         if (score < best_score) {
             best_score = score;
             best = e->obj;
@@ -1077,13 +1123,17 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
     BYTE *current = FIELD(unit, O_TARGET, BYTE *);
     int reach = dir_weapon_cells(unit) + 3, best_score = -1000000, keep_score = -1000000;
     DirEnemy *best = NULL, *keep = NULL;
+    int hunter = in_list(DIR_MIND_HUNTERS, (char *)dir_type(unit) + T_ID);
     if (engage) {
         for (int i = 0; i < dir_enemy_count; i++) {
             DirEnemy *e = &dir_enemies[i];
             int dd = dir_dist2(at, e->at);
             /* in our reach, or already able to shoot us: never walk through fire without answering */
             int answer = (dir_flags & DIR_F_ANSWER) && e->range + 1 > reach ? e->range + 1 : reach;
-            if (dd > answer * answer || (dd > reach * reach && !e->armed))
+            /* a hunter goes for a mind-controller within 30 cells, wherever the army is headed */
+            int mind = in_list(DIR_MIND_CONTROLLERS, (char *)dir_type(e->obj) + T_ID);
+            if (hunter && mind && dd <= 30 * 30) {
+            } else if (dd > answer * answer || (dd > reach * reach && !e->armed))
                 continue;
             if (e->obj == current && !e->capturable)
                 keep = e;
@@ -1092,6 +1142,8 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
              * captives switch back; while it is close by, its captives are the wrong target */
             if (FIELD(e->obj, T_CAPTURE_MANAGER, BYTE *))
                 priority += 80;
+            if (hunter && mind)
+                priority += 250;
             BYTE *controller = FIELD(e->obj, T_MIND_CONTROLLED_BY, BYTE *);
             if (controller && oil_live(controller)
                 && dir_dist2(object_cell(controller), at) <= (reach + 6) * (reach + 6))
