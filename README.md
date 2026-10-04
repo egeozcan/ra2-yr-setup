@@ -1390,6 +1390,20 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   (`dir_fallback_spot`, the nearest one the engine accepts, 2–20 cells from the base centre). On
   Isolation, Yuri had one war factory all game with 40k unspent.
 
+### Against mind control (2026-10-04, from the user's notes)
+
+- **Hunters.** Terror Drones (robots) and Siege Choppers (aircraft) can't be mind-controlled. In the
+  army they go for Yuri, Yuri Prime and Masterminds within 30 cells first (+250 priority), wherever
+  the army is headed. A Soviet house facing mind-controllers keeps two hunters per controller,
+  plus two, up to ten, with a Siege Chopper for every second Terror Drone once it can build them
+  ("hunters" in the log).
+- **Bulldozers** (mod, now immune to mind control) go for enemy Psychic Towers within 45 cells;
+  a Soviet house that has seen enemy towers keeps two.
+- **Blackouts.** Psychic Towers, Prism Towers, Tesla Coils and Grand Cannons stop without power. An
+  attack estimates how many of the target's plants must fall for its power to drop below its
+  drain (output over plants); at three or fewer, plants count as twice as near when it picks its
+  next structure ("goes for the target's power").
+
 ### Economy, defence and watching (2026-10-02, from the user's playtest notes)
 
 - **Power ahead of need.** The combat AI adds war factories only with 50 power to spare, and stock
