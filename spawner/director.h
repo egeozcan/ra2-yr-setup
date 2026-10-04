@@ -867,8 +867,10 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
         e->focus = e->threat = 0;
         e->naval = !e->building && type[TT_NAVAL];
         d->enemy_subs += e->naval && in_list("SUB,BSUB", (char *)type + T_ID);
-        d->enemy_minds += in_list(DIR_MIND_CONTROLLERS, (char *)type + T_ID);
-        d->enemy_psytowers += what == 6 && !_stricmp((char *)type + T_ID, "YAPSYT");
+        if (!(director_enabled(house) & DIR_F_NO_ANTIMIND)) {
+            d->enemy_minds += in_list(DIR_MIND_CONTROLLERS, (char *)type + T_ID);
+            d->enemy_psytowers += what == 6 && !_stricmp((char *)type + T_ID, "YAPSYT");
+        }
         Coord c = FIELD(o, O_LOCATION, Coord);
         int floor = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
         e->air = what == 2 || c.Z > floor + 128;
@@ -1007,7 +1009,7 @@ static BYTE *dir_pick_objective(DirState *d, CellXY from)
      * three plants or fewer stand between the target and a blackout, the attack goes for them */
     int power = d->enemy ? FIELD(d->enemy, OIL_H_POWER, int) : 0, drain = d->enemy ? FIELD(d->enemy, OIL_H_DRAIN, int) : 0;
     int per = plants ? power / plants : 0, need = per > 0 ? (power - drain) / per + 1 : 99;
-    int blackout = towers && plants && need <= 3;
+    int blackout = towers && plants && need <= 3 && !(director_enabled(d->house) & DIR_F_NO_ANTIMIND);
     if (blackout != d->power_focus) {
         d->power_focus = blackout;
         logmsg("director: house %d frame %d: %s the target's power (%d towers, %d plants, power %d of %d drawn, %d "

@@ -383,7 +383,15 @@ ISO = "Maps/2024/2024 - (2-8) Isolation 1.2 NP.yro"
 STRAT_ISO = [(ISO, 0, [(c, k + 1, 1 if (k + flip) % 2 == 0 else NOSTRAT, 0) for k, c in enumerate(order)], dict(USER))
              for order in ((0, 8, 9, 1, 2, 5, 7), (9, 0, 8, 7, 1, 2, 5))
              for flip in (0, 1)]
-SUITES = {"strat": STRAT, "strat_iso": STRAT_ISO, "strat_mcv": STRAT_MCV, "tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
+# Against mind control: Russia with its hunters, Bulldozers and blackouts (1) or without them
+# (DIR_F_DEFAULT | DIR_F_NO_ANTIMIND), against Yuri, on the MCV maps, starts both ways round, twice.
+NOMIND = 32703 | 32768
+MIND = [(m, 3, [(8, s, 1 if on else NOMIND, 0), (9, 1 - s, 1, 0)], {"Superweapons": "0", "Crates": "1"})
+        for m in ("DeepFrze.yro", "Rockets.mmx", "Carville.mmx", "Round.mmx")
+        for s in (0, 1)
+        for on in (1, 0)
+        for rep in (0, 1)]
+SUITES = {"mind": MIND, "strat": STRAT, "strat_iso": STRAT_ISO, "strat_mcv": STRAT_MCV, "tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
 
 
 def suite_list(outdir, matches, frames=60000):
