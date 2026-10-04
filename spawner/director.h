@@ -2450,6 +2450,31 @@ static int dir_object_listed(DynVec *v, BYTE *obj)
 /* Engineer jobs, one at a time: repair the nearest broken bridge within reach, otherwise capture an
  * enemy tech building (oil derrick first) near our army or base once no armed enemy guards it. */
 struct dir_dead_hut { BYTE *hut; int tries; };
+/* Engineer targets a house gave up on: two timed-out jobs, or none reachable on foot from where
+ * the engineer stood. Retried every 9000 frames, engineers walked to an outpost or a bridge hut and
+ * back home all game (3 and 4 tries on Carville). */
+static struct { BYTE *house, *obj; int fails; } dir_job_fails[64];
+static int dir_job_fail_count;
+
+static int *dir_job_fail_slot(BYTE *house, BYTE *obj, int add)
+{
+    for (int k = 0; k < dir_job_fail_count; k++)
+        if (dir_job_fails[k].house == house && dir_job_fails[k].obj == obj)
+            return &dir_job_fails[k].fails;
+    if (!add)
+        return NULL;
+    int k = dir_job_fail_count < 64 ? dir_job_fail_count++ : (int)(CURRENT_FRAME % 64);
+    dir_job_fails[k].house = house;
+    dir_job_fails[k].obj = obj;
+    dir_job_fails[k].fails = 0;
+    return &dir_job_fails[k].fails;
+}
+
+static int dir_job_given_up(BYTE *house, BYTE *obj)
+{
+    int *f = dir_job_fail_slot(house, obj, 0);
+    return f && *f >= 2;
+}
 static struct dir_dead_hut dir_dead_huts[32];
 static int dir_dead_hut_count;
 
@@ -2696,6 +2721,10 @@ static void dir_engineers(BYTE *house, DirState *d)
         if (!done) {   /* out of reach (e.g. the hut is across the water): leave it for a while */
             d->failed_job = job;
             d->failed_frame = CURRENT_FRAME;
+            int *f = dir_job_fail_slot(house, job, 1);
+            ++*f;
+            logmsg("director: house %d frame %d: engineer job at %d,%d timed out (%d)%s", FIELD(house, 0x30, int),
+                   CURRENT_FRAME, object_cell(job).X, object_cell(job).Y, *f, *f >= 2 ? "; given up" : "");
         }
         if (alive && done)
             logmsg("director: house %d frame %d: engineer job done (%s)", FIELD(house, 0x30, int), CURRENT_FRAME,
@@ -2730,7 +2759,7 @@ static void dir_engineers(BYTE *house, DirState *d)
         dd = df < dd ? df : dd;
         if (d->stranded_frame && CURRENT_FRAME - d->stranded_frame < 1500 && dir_dist2(c, d->stranded_at) <= 25 * 25)
             dd = 0;   /* our units are cut off behind this one: mend it first, wherever it is */
-        if (dd >= best || (b == d->failed_job && CURRENT_FRAME - d->failed_frame < 9000))
+        if (dd >= best || (b == d->failed_job && CURRENT_FRAME - d->failed_frame < 9000) || dir_job_given_up(house, b))
             continue;
         int guarded = 0;   /* an engineer walking into enemy guns is only lost: the army clears it first */
         for (int k = 0; k < dir_enemy_count && !guarded; k++)
@@ -2761,7 +2790,8 @@ static void dir_engineers(BYTE *house, DirState *d)
             for (int k = 0; k < dir_enemy_count && !guarded; k++)
                 guarded = dir_enemies[k].armed && !dir_enemies[k].capturable
                           && dir_dist2(dir_enemies[k].at, e->at) <= 7 * 7;
-            if (guarded || (e->obj == d->failed_job && CURRENT_FRAME - d->failed_frame < 9000))
+            if (guarded || (e->obj == d->failed_job && CURRENT_FRAME - d->failed_frame < 9000)
+                || dir_job_given_up(house, e->obj))
                 continue;
             best = dd;
             target = e->obj;
@@ -2780,6 +2810,14 @@ static void dir_engineers(BYTE *house, DirState *d)
     }
     if (!engineer) {
         d->want_engineer = 1;
+        return;
+    }
+    /* not a walk that can't arrive (over a broken bridge, across water): given up at once */
+    dir_fill_land(object_cell(engineer));
+    if (!dir_land_reachable(object_cell(target))) {
+        *dir_job_fail_slot(house, target, 1) = 2;
+        logmsg("director: house %d frame %d: %.24s at %d,%d can't be reached on foot; given up", FIELD(house, 0x30, int),
+               CURRENT_FRAME, (char *)dir_type(target) + T_ID, object_cell(target).X, object_cell(target).Y);
         return;
     }
     d->repair_hut = target;
