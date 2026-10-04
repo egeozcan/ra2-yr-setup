@@ -1362,11 +1362,23 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
     are let go, and the log lists what they were doing ("convoy stalled").
   - **Boarding isn't broken off mid-way.** Units within 3 cells of their transport aren't called
     off, and a transport doesn't sail while a unit beside it gets in. Broken off, a unit was
-    counted aboard but never joined the passenger list. Each director tick also checks every
-    convoy transport's passenger chain against the techno list and cuts it at anything dead
-    ("passenger list broken"). Isolation games crashed 4 times in 32 on corrupt units
-    (0x473491 in `PassengerClass::GetTotalSize`, 0x6F3731, 0x6F36FE and 0x7E1F2C from target
-    scans); the cause isn't confirmed.
+    counted aboard but never joined the passenger list. A transport also doesn't unload again
+    mid-unload or head home mid-unload (before 2,700 frames).
+- **The passenger-chain crash (engine bug).** Isolation games crashed 6 times in 56 on corrupt
+  units: 0x473491 in `PassengerClass::GetTotalSize`, and 0x6F3731, 0x6F36FE, 0x7E1F2C and
+  0x47C538 in target scans and cell code. A transport's passengers are chained through
+  `ObjectClass::NextObject` (+0x30), and map cells chain their occupiers through the same field.
+  `PassengerClass::AddPassenger` (0x4733A0) limbos the boarding unit, which takes it out of its
+  cell's list but leaves its `NextObject` pointing at the next occupier of the cell it drove onto,
+  usually the transport itself. It then adds the unit together with the chain hanging off it. So
+  the transport and the rest of the cell's list came aboard, and later passengers went into the
+  cell's list while off the map, where scans tripped over them.
+  - A hook on the Limbo call (0x4733AC) clears a `NextObject` that points at a unit on the map,
+    right after the Limbo; the cell's unlink still needs it until then.
+  - Each director tick also checks every convoy transport's chain (listed, owned, off the map:
+    `InLimbo` +0x81) and rebuilds a broken one, taking passengers back out of cell lists
+    ("passenger list … rebuilt").
+  - A smoke game before the hook found 4 and 6 passengers in cell lists; after it, none.
 - **Landed troops attack.** Troops already across used to be ordered to the home army's rally
   while it gathered, which they can't walk to. Now they attack the target's nearest structure.
 - **Extra war factories on cramped islands:** the combat AI probes the stock base planner before
@@ -1622,6 +1634,9 @@ plus army value, and within 20% count as a draw.
 | 2026-10-03 build (strategy layer, placement and convoy fixes): held-out set 1 | **13/13**, all 10 duels and all 3 FFAs |
 | 2026-10-03 build: held-out set 2 | **13W 1L**: 12/12 duels and the Potomac FFA (at the time limit, far ahead); lost the 6-AI FFA on Powder Keg (its only refinery fell and it never built another, since fixed) |
 | 2026-10-03 build: 1 director vs 2 allied stock Brutals | 3W 2D 1L |
+| 2026-10-03 evening build: held-out set 1 | **12W 1D**: all 10 duels and 2 of 3 FFAs; GoldSt FFA at the time limit with the director's house well ahead on buildings and army but second on score |
+| 2026-10-03 evening build: held-out set 2 | **13W 1L**: 12/12 duels and Potomac; Powder Keg (1 director vs 5) at the time limit, alive but behind |
+| Strategy A/B from built bases, 2026-10-04 build | 26–22 for the strategy layer (the three runs before: 23–25, 22–26, 23–25) |
 
 | 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
 | 2026-10-01, 7 directors FFA on *Don't Step on The Crocodile* (user's settings) | old build: no house ever launched an attack by frame 40k; new build: 40–54 attack launches per match, 5 of 7 houses eliminated in each of 5 full-length matches, and one match won outright at frame 48,640 |
@@ -1655,6 +1670,9 @@ plus army value, and within 20% count as a draw.
 - A bridge whose hut is across the water can't be repaired. An engineer that times out skips
   that hut for 9000 frames.
 - Director-vs-director matches are dominated by start position on the tuning maps.
+- Rockets duels often reach the time limit (4–9 of 12 per MCV run). A house that loses its army
+  can spend everything on the stock AI's defences and power and build no units for 20,000
+  frames, while the other side can't break the towers.
 
 ### Install and roll back
 
