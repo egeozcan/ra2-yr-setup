@@ -3528,7 +3528,12 @@ static void dir_ferry(BYTE *house, DirState *d)
                    FIELD(house, 0x30, int), k, (char *)dir_type(t) + T_ID, d->ferry_state[k], passengers, at.X, at.Y,
                    d->dock.X, d->dock.Y, FIELD(t, COMBAT_MISSION, int));
         if (d->ferry_state[k] == 0 && !d->ferry_docked[k]) {   /* come ashore first */
-            if (dir_dist2(at, d->dock) <= 6 * 6 || CURRENT_FRAME - d->ferry_frame[k] > 600) {
+            /* docked once ashore by the dock: still in the water there, it drove inland to meet each
+             * unit called within reach (9 cells, toward the rally), was sent back, and the convoy's
+             * wait began again every 1700 frames */
+            BYTE *atcell = dir_cell(at);
+            int ashore = atcell && FIELD(atcell, C_LANDTYPE, int) != 2;
+            if ((dir_dist2(at, d->dock) <= 6 * 6 && ashore) || CURRENT_FRAME - d->ferry_frame[k] > 600) {
                 /* Kept from the dock, it loads where it stands, but only on land our units can walk
                  * to: transports waiting in the water under a cliff-top base had the army called to
                  * the cliff edge, where it crowded for good and no convoy sailed again. Off that
