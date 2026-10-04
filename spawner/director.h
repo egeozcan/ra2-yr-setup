@@ -120,6 +120,7 @@ struct DirState {
     BYTE *col_target, *col_ferry, *col_eng, *col_failed[8];  /* colonising islands by transport */
     CellXY col_landing;
     int col_state, col_frame, next_col, want_col_ferry, col_failed_count;
+    int repair_timeout;                 /* frames the engineer job has (longer for a long walk) */
     BYTE *col_return;                   /* a colonising transport sent home after giving up, to unload there */
     int col_tries;                      /* landing cells tried for this target */
     int col_return_frame;
@@ -2808,7 +2809,7 @@ static void dir_engineers(BYTE *house, DirState *d)
         d->repair_hut = d->repair_engineer = NULL;
         job = NULL;
     }
-    if (job && (done || CURRENT_FRAME - d->repair_frame > 4000)) {
+    if (job && (done || CURRENT_FRAME - d->repair_frame > d->repair_timeout)) {
         if (!done) {   /* out of reach (e.g. the hut is across the water): leave it for a while */
             d->failed_job = job;
             d->failed_frame = CURRENT_FRAME;
@@ -2864,10 +2865,12 @@ static void dir_engineers(BYTE *house, DirState *d)
         /* derricks within 40 cells of the base, the rally (where the army waits) or the front;
          * other tech buildings closer in. At 18 cells a house whose derricks lay further out never
          * sent an engineer all game, sitting out a stalemate with its ore gone. */
-        best = 40 * 40;
+        /* Further out (up to 100 cells), derricks away from enemy bases (none within 25 cells):
+         * derricks a long walk off on open land stayed neutral all game. */
+        best = 100 * 100;
         for (int i = 0; i < dir_enemy_count; i++) {
             DirEnemy *e = &dir_enemies[i];
-            if (!e->capturable)
+            if (!e->capturable || (d->col_state && e->obj == d->col_target))
                 continue;
             int dd = dir_dist2(e->at, d->base), df = dir_dist2(e->at, d->front), dr = dir_dist2(e->at, d->rally);
             dd = df < dd ? df : dd;
@@ -2877,6 +2880,14 @@ static void dir_engineers(BYTE *house, DirState *d)
                 dd += 22 * 22;
             if (dd >= best)
                 continue;
+            if (dd >= 40 * 40) {
+                int contested = !oil;
+                for (int k = 0; k < dir_enemy_count && !contested; k++)
+                    contested = dir_enemies[k].building && !dir_enemies[k].capturable
+                                && dir_dist2(dir_enemies[k].at, e->at) <= 25 * 25;
+                if (contested)
+                    continue;
+            }
             int guarded = 0;
             for (int k = 0; k < dir_enemy_count && !guarded; k++)
                 guarded = dir_enemies[k].armed && !dir_enemies[k].capturable
@@ -2914,6 +2925,9 @@ static void dir_engineers(BYTE *house, DirState *d)
     d->repair_hut = target;
     d->repair_engineer = engineer;
     d->repair_frame = CURRENT_FRAME;
+    /* 4000 frames, and 40 more a cell past 40 cells: a long walk isn't a failure */
+    int cells = dir_isqrt(dir_dist2(object_cell(engineer), object_cell(target)));
+    d->repair_timeout = 4000 + (cells > 40 ? (cells - 40) * 40 : 0);
     d->repair_mode = mode;
     dir_order(engineer, mode ? MISSION_CAPTURE : MISSION_ENTER, target, NULL);
     CellXY c = object_cell(target);
@@ -3138,26 +3152,39 @@ static void dir_yard_escape(BYTE *house, DirState *d)
     for (int i = 0; i < bv->Count; i++) {
         BYTE *b = bv->Items[i], *type;
         if (!oil_live(b) || FIELD(b, O_OWNER, BYTE *) != house || !(type = dir_type(b))
-            || !in_list("GACNST,NACNST,YACNST", (char *)type + T_ID)
-            || (FIELD(b, O_HEALTH, int) * 10 >= FIELD(type, OT_STRENGTH, int) * 7 && !bench_test_escape))
+            || !in_list("GACNST,NACNST,YACNST", (char *)type + T_ID))
             continue;
         CellXY at = object_cell(b);
-        int theirs = 0, ours = 0;
+        int theirs = 0, ours = 0, theirs_base = 0, ours_base = 0;
         for (int k = 0; k < dir_enemy_count; k++)
-            if (dir_enemies[k].armed && !dir_enemies[k].building && dir_dist2(dir_enemies[k].at, at) <= 10 * 10)
-                theirs += dir_enemies[k].value;
+            if (dir_enemies[k].armed && !dir_enemies[k].building) {
+                int dd = dir_dist2(dir_enemies[k].at, at);
+                theirs += dd <= 10 * 10 ? dir_enemies[k].value : 0;
+                theirs_base += dd <= 18 * 18 ? dir_enemies[k].value : 0;
+            }
         for (int k = 0; k < tv->Count; k++) {
             BYTE *o = tv->Items[k];
-            if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) != 6 && dir_armed(o)
-                && dir_dist2(object_cell(o), at) <= 10 * 10)
-                ours += dir_cost(dir_type(o));
+            if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !dir_armed(o))
+                continue;
+            int dd = dir_dist2(object_cell(o), at), cost = dir_cost(dir_type(o));
+            if (dir_whatami(o) != 6)
+                ours += dd <= 10 * 10 ? cost : 0;
+            ours_base += dd <= 18 * 18 ? (dir_whatami(o) == 6 ? cost / 2 : cost) : 0;
         }
+        /* A big army in the base with nothing to answer it: no defenders or defences worth a third of
+         * it there, nor an army anywhere worth two thirds. Waiting for the yard to be hurt, it packed
+         * up with the enemy already at it and died in the middle of packing. */
+        int overrun = theirs_base >= 6000 && theirs_base > ours_base * 3 && theirs_base * 2 > d->army_value * 3;
+        if (FIELD(b, O_HEALTH, int) * 10 >= FIELD(type, OT_STRENGTH, int) * 7 && !overrun && !bench_test_escape)
+            continue;
         /* under 40%, outgunned; under 70%, hopelessly (packing up takes a while, and a yard at 40% under
          * a big attack died in the middle of it) */
         int low = FIELD(b, O_HEALTH, int) * 10 < FIELD(type, OT_STRENGTH, int) * 4;
         int test = bench_test_escape && CURRENT_FRAME >= 600 && FIELD(house, 0x30, int) == 1;   /* bench test */
-        if (!test && (theirs < 2000 || theirs <= ours || (!low && theirs < ours * 3 + 3000)))
+        if (!test && !overrun && (theirs < 2000 || theirs <= ours || (!low && theirs < ours * 3 + 3000)))
             continue;
+        if (overrun)
+            theirs = theirs_base, ours = ours_base;
         bench_test_escape = 0;
         /* where to: 20-35 cells off, on land reachable from here (and in the engine's movement zone of
          * the ground beside the yard), as far from armed enemies as can be */
@@ -3192,8 +3219,9 @@ static void dir_yard_escape(BYTE *house, DirState *d)
             }
         if (!best.X || best_d < 15 * 15 || !dir_way_out(b, 12))
             continue;   /* nowhere safe to go, or boxed in by its own base: it stays and fights */
-        logmsg("director: house %d frame %d: %.24s at %d,%d is falling (%d vs %d), packing up for %d,%d",
-               FIELD(house, 0x30, int), CURRENT_FRAME, (char *)type + T_ID, at.X, at.Y, theirs, ours, best.X, best.Y);
+        logmsg("director: house %d frame %d: %.24s at %d,%d is %s (%d vs %d, army %d), packing up for %d,%d",
+               FIELD(house, 0x30, int), CURRENT_FRAME, (char *)type + T_ID, at.X, at.Y, overrun ? "overrun" : "falling",
+               theirs, ours, d->army_value, best.X, best.Y);
         dir_announce(house, "construction yard packing up to escape");
         FIELD(b, T_FOCUS, BYTE *) = dir_cell(best);
         dir_escape_house[FIELD(house, 0x30, int) & 31] = CURRENT_FRAME;
@@ -5112,8 +5140,11 @@ static void dir_colonize(BYTE *house, DirState *d)
     if (d->col_state && (CURRENT_FRAME - d->col_frame > 3000 || !d->col_target
                          || !dir_object_listed(bv, d->col_target) || !oil_live(d->col_target)
                          || (towner != house && !dir_passive(towner)))) {   /* taken by someone else first */
-        logmsg("director: house %d frame %d: colonising given up (step %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
-               d->col_state);
+        BYTE *ttype = find_type(UNITTYPE_ARRAY, dir_transports[side]);
+        logmsg("director: house %d frame %d: colonising given up (step %d; transport %s, engineer %s)",
+               FIELD(house, 0x30, int), CURRENT_FRAME, d->col_state,
+               d->col_ferry ? "found" : ttype && dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side], 0)
+               ? "can be built" : "can't be built", d->col_eng ? "found" : "none");
         if (d->col_target)
             d->col_failed[d->col_failed_count++ % 8] = d->col_target;
         BYTE *ft = d->col_ferry;
@@ -5132,6 +5163,15 @@ static void dir_colonize(BYTE *house, DirState *d)
         if (CURRENT_FRAME < d->next_col || CURRENT_FRAME < 6000)
             return;
         d->next_col = CURRENT_FRAME + 3000;
+        /* no transport to be had (no shipyard): nothing to try (50 of 66 tries timed out waiting) */
+        int transports = 0;
+        for (int i = 0; i < tv->Count && !transports; i++) {
+            BYTE *o = tv->Items[i];
+            transports = oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 1
+                         && !_stricmp((char *)dir_type(o) + T_ID, dir_transports[side]) && !dir_is_ferry(d, o);
+        }
+        if (!transports && !dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side], 0))
+            return;
         dir_fill_land(d->rally);
         BYTE *best = NULL;
         int best_d = 90 * 90 + 1;
@@ -5146,9 +5186,22 @@ static void dir_colonize(BYTE *house, DirState *d)
                 failed |= d->col_failed[k] == b;
             for (int k = 0; k < dir_enemy_count && !armed; k++)
                 armed = dir_enemies[k].armed && dir_dist2(dir_enemies[k].at, at) <= 12 * 12;
-            int dd = dir_dist2(at, d->base) * (_stricmp((char *)type + T_ID, "CAOILD") ? 2 : 1);   /* oil first */
-            if (failed || armed || dir_land_reachable(at) || dd >= best_d)
+            int oil = !_stricmp((char *)type + T_ID, "CAOILD");
+            int dd = dir_dist2(at, d->base) * (oil ? 1 : 2);   /* oil first */
+            if (failed || armed || dd >= best_d || b == d->repair_hut)
                 continue;
+            /* on our land, a derrick out of the engineers' walk (40 cells from the base, the rally and
+             * the front) and away from enemy bases: carried there, it pays over a long game, where
+             * walking engineers never went */
+            if (dir_land_reachable(at)) {
+                int near_us = dir_dist2(at, d->base) <= 40 * 40 || dir_dist2(at, d->rally) <= 40 * 40
+                              || dir_dist2(at, d->front) <= 40 * 40, contested = 0;
+                for (int k = 0; k < dir_enemy_count && !contested; k++)
+                    contested = dir_enemies[k].building && !dir_enemies[k].capturable
+                                && dir_dist2(dir_enemies[k].at, at) <= 25 * 25;
+                if (!oil || near_us || contested)
+                    continue;
+            }
             best_d = dd;
             best = b;
         }
@@ -5160,8 +5213,9 @@ static void dir_colonize(BYTE *house, DirState *d)
         d->col_tries = 0;
         d->col_frame = CURRENT_FRAME;
         CellXY at = object_cell(best);
-        logmsg("director: house %d frame %d: colonising the %.24s at %d,%d across the water", FIELD(house, 0x30, int),
-               CURRENT_FRAME, (char *)FIELD(best, B_TYPE, BYTE *) + T_ID, at.X, at.Y);
+        logmsg("director: house %d frame %d: colonising the %.24s at %d,%d %s", FIELD(house, 0x30, int),
+               CURRENT_FRAME, (char *)FIELD(best, B_TYPE, BYTE *) + T_ID, at.X, at.Y,
+               dir_land_reachable(at) ? "far off on our land" : "across the water");
         return;
     }
     BYTE *t = d->col_ferry, *e = d->col_eng;
