@@ -2929,11 +2929,15 @@ static void dir_engineers(BYTE *house, DirState *d)
                 dd += 22 * 22;
             if (dd >= best)
                 continue;
+            /* and on our side of the map: nearer our base than any enemy building (engineers sent
+             * across the middle were killed 20-60 cells short, two per derrick) */
             if (dd >= 40 * 40) {
-                int contested = !oil;
-                for (int k = 0; k < dir_enemy_count && !contested; k++)
-                    contested = dir_enemies[k].building && !dir_enemies[k].capturable
-                                && dir_dist2(dir_enemies[k].at, e->at) <= 25 * 25;
+                int contested = !oil, ours = dir_dist2(e->at, d->base);
+                for (int k = 0; k < dir_enemy_count && !contested; k++) {
+                    int de = dir_enemies[k].building && !dir_enemies[k].capturable
+                             ? dir_dist2(dir_enemies[k].at, e->at) : 0x7FFFFFFF;
+                    contested = de <= 25 * 25 || de <= ours;
+                }
                 if (contested)
                     continue;
             }
@@ -4928,7 +4932,7 @@ static void dir_garrison(BYTE *house, DirState *d)
             if (d->garrison_site[k] != b || !u)
                 continue;
             int live = dir_object_listed(tv, u) && oil_live(u);
-            pending += CURRENT_FRAME - d->garrison_frame[k] < 1800 && live && FIELD(u, COMBAT_MISSION, int) == MISSION_ENTER;
+            pending += CURRENT_FRAME - d->garrison_frame[k] < 1800 && live && FIELD(u, COMBAT_MISSION, int) == MISSION_CAPTURE;
             /* still outside 1800 frames on: it couldn't get in (a doorway boxed in by buildings);
              * after two, the bunker is left alone, or soldiers walked to it and back all game */
             if (CURRENT_FRAME - d->garrison_frame[k] >= 1800 && live) {
@@ -4973,10 +4977,12 @@ static void dir_garrison(BYTE *house, DirState *d)
             d->garrison_unit[g] = best;
             d->garrison_site[g] = b;
             d->garrison_frame[g] = CURRENT_FRAME;
-            /* the bunker as Destination only, as for civilian buildings: as the Target too, the
-             * soldier fired on it (an empty Battle Bunker shot at by a Conscript, given up as
-             * "can't get in" after two tries) */
-            dir_order(best, MISSION_ENTER, NULL, b);
+            /* what a player's garrison click does (FootClass::ClickedAction 0x4D7716): Capture with
+             * the building as Destination. Infantry go in only under Capture (InfantryClass checks
+             * BuildingClass::CanBeOccupiedBy 0x457CE0 at 0x5196D4 for mission 8); sent with Enter they
+             * stood beside the bunker for good, 0 of 5 inside after 71 sends; with the bunker as
+             * Target they fired on it */
+            dir_order(best, MISSION_CAPTURE, NULL, b);
             dir_reserve(best, 1800);
             sent++;
             logmsg("director: house %d frame %d: %.24s into our %.24s at %d,%d (%d of %d inside)", FIELD(house, 0x30, int),
@@ -5028,7 +5034,7 @@ static void dir_garrison(BYTE *house, DirState *d)
         d->garrison_unit[g] = best;   /* out of the army until it is inside */
         d->garrison_site[g] = b;
         d->garrison_frame[g] = CURRENT_FRAME;
-        dir_order(best, MISSION_ENTER, NULL, b);
+        dir_order(best, MISSION_CAPTURE, NULL, b);   /* garrisoning is Capture (see above) */
         logmsg("director: house %d frame %d: %.24s garrisons the %.24s at %d,%d (%d held)", FIELD(house, 0x30, int),
                CURRENT_FRAME, (char *)dir_type(best) + T_ID, (char *)type + T_ID, at.X, at.Y, held);
     }
