@@ -440,6 +440,9 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
                 && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
                 && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 2)    /* slow and costly: a pair at most */
                 && (_stricmp(id, "ZEP") || dir_owned_of(house, type) < 4)      /* Kirovs: slow and costly */
+                /* Robot Tanks stand dead without a Robot Control Center: 44 of them jammed an Isolation
+                 * base after it fell, and more kept coming */
+                && (_stricmp(id, "ROBO") || combat_building_count(house, "GAROBO"))
                 /* Tank Destroyers only hurt vehicles: a third of the tanks at most, never the army */
                 && (_stricmp(id, "TNKD") || dir_owned_of(house, type) * 3 < dir_armed_vehicles(house) + 3))
                 return type;
@@ -5750,8 +5753,16 @@ static void dir_update(BYTE *house)
     dir_ferry(house, d);
     if (CURRENT_FRAME % 150 < 15)
         dir_dozers(house, d);
-    /* Allies need a Robot Control Center before Robot Tanks can cross water. */
-    if ((d->blocked || d->island) && FIELD(house, OIL_H_SIDE, int) == 0 && FIELD(house, OIL_H_PRODUCING, int) == -1
+    /* Allies need a Robot Control Center before Robot Tanks can cross water, and to keep the ones
+     * they have running. It takes the building queue from anything but a refinery, factory or
+     * power plant: waiting for an idle queue, it was queued 4 times in 50000 frames behind Prism
+     * Towers and walls. */
+    BYTE *robo = find_type(UNITTYPE_ARRAY, "ROBO");
+    int pending_pick = FIELD(house, OIL_H_PRODUCING, int);
+    DynVec *pick_types = BUILDINGTYPE_ARRAY;
+    int pick_free = pending_pick < 0 || pending_pick >= pick_types->Count
+        || !in_list("GAREFN,GAWEAP,GAPOWR,GAROBO", (char *)pick_types->Items[pending_pick] + T_ID);
+    if ((d->blocked || d->island || (robo && dir_owned_of(house, robo))) && FIELD(house, OIL_H_SIDE, int) == 0 && pick_free
         && !combat_building_count(house, "GAROBO")) {
         BYTE *type = find_type(BUILDINGTYPE_ARRAY, "GAROBO");
         if (type && ((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, type, 0, 1) > 0
