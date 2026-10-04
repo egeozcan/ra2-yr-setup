@@ -3756,7 +3756,7 @@ static void dir_ferry(BYTE *house, DirState *d)
             if (d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k])
                 t0 = d->ferry[k];
         CellXY stuck = t0 ? object_cell(t0) : d->dock;
-        char seen[200];
+        char seen[320];
         int len = 0, shown = 0;
         seen[0] = 0;
         for (int i = 0; i < v->Count; i++) {
@@ -3777,6 +3777,28 @@ static void dir_ferry(BYTE *house, DirState *d)
                 CellXY c = object_cell(o);
                 len += sprintf(seen + len, " %.6s@%d,%d/m%d/%dc", (char *)dir_type(o) + T_ID, c.X, c.Y, m,
                                dir_isqrt(dir_dist2(c, to_ferry && dest ? object_cell(dest) : stuck)));
+                /* the first unit's straight line to the transport: what stands in the way */
+                if (!shown && len < 100) {
+                    CellXY e = to_ferry && dest ? object_cell(dest) : stuck;
+                    int steps = dir_isqrt(dir_dist2(c, e)), cars = 0, infantry = 0, blocked = 0;
+                    for (int st = 1; st < steps && !blocked; st++) {
+                        CellXY q = { (short)(c.X + (e.X - c.X) * st / steps), (short)(c.Y + (e.Y - c.Y) * st / steps) };
+                        BYTE *cell = dir_cell(q);
+                        if (!cell)
+                            break;
+                        DWORD occ = FIELD(cell, C_OCCUPATION, DWORD);
+                        int land = FIELD(cell, C_LANDTYPE, int);
+                        cars += (occ & 0x20) != 0;
+                        infantry += (occ & 0x1F) != 0;
+                        if ((occ & 0x80) || land == 3 || (land == 2 && !(FIELD(cell, C_FLAGS, DWORD) & 0x100))) {
+                            blocked = 1;
+                            len += sprintf(seen + len, " [line: %s at %d,%d", occ & 0x80 ? "building" : land == 3 ? "rock"
+                                           : "water", q.X, q.Y);
+                        }
+                    }
+                    len += sprintf(seen + len, "%s%d cells with vehicles, %d with infantry]", blocked ? ", " : " [line clear, ",
+                                   cars, infantry);
+                }
                 shown++;
             }
         }
