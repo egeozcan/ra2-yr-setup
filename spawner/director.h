@@ -3512,7 +3512,7 @@ static void dir_ferry(BYTE *house, DirState *d)
                  * the cliff edge, where it crowded for good and no convoy sailed again. Off that
                  * land, the dock moves to the beach on it nearest the transport. */
                 dir_fill_walk(d->rally);
-                if (dir_dist2(at, d->dock) > 6 * 6 && !dir_is_land(at)) {
+                if (dir_dist2(at, d->dock) > 6 * 6 && (!dir_is_land(at) || !dir_near_water(at, 3))) {
                     CellXY to = dir_beach_near(at, d->rally, d->dock);
                     if (to.X) {
                         logmsg("director: house %d frame %d: ferry %d can't get from %d,%d to the dock at %d,%d; "
@@ -3544,7 +3544,9 @@ static void dir_ferry(BYTE *house, DirState *d)
          * back to the dock only from water or land they can't reach. */
         if (d->ferry_state[k] == 0 && dir_dist2(at, d->ferry_dock_at[k]) > 8 * 8) {
             dir_fill_walk(d->rally);
-            int walkable = dir_is_land(at);
+            /* and by the water: loading up on a cliff top among the waiting army, four transports
+             * were wedged in there with their loads and never got out */
+            int walkable = dir_is_land(at) && dir_near_water(at, 3);
             static int last_log[32];
             int idx = FIELD(house, 0x30, int) & 31;
             if (CURRENT_FRAME - last_log[idx] > 1500) {
@@ -3669,9 +3671,10 @@ static void dir_ferry(BYTE *house, DirState *d)
         /* Told to board from afar, the unit has the transport drive out to meet it: with callers
          * all over the base, transports left the dock again and again, chasing first one and then
          * another, and nobody got aboard in 20000 frames. Units walk over first and board from
-         * within 7 cells (any of them once the convoy has waited 1500 frames). */
+         * within 7 cells. (Letting any board after 1500 frames had the transports drive up a ramp
+         * into the waiting army and get wedged; units that never arrive are the stall recovery's.) */
         CellXY tc = object_cell(d->ferry[best]);
-        if (dir_dist2(object_cell(o), tc) > 7 * 7 && CURRENT_FRAME - d->convoy_since < 1500) {
+        if (dir_dist2(object_cell(o), tc) > 7 * 7) {
             if (!dir_recent_order(o, dir_cell(tc), 300))
                 dir_order(o, MISSION_MOVE, NULL, dir_cell(tc));
         } else if (!dir_recent_order(o, d->ferry[best], 300)) {
