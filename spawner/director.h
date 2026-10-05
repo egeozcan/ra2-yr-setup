@@ -1168,11 +1168,16 @@ static int dir_recent_order(BYTE *unit, BYTE *what, int hold)
 static const char *dir_why = "other";
 static struct { BYTE *unit; CellXY at; int frame, count; const char *last; int logged; } dir_churn[1024];
 
+static struct { BYTE *unit; const char *why; int frame, mission; } dir_last_order[1024];   /* who ordered it last */
+
 static void dir_note_order(BYTE *unit)
 {
     if (!bench_file)
         return;
     unsigned k = ((DWORD)unit >> 3) % 1024;
+    dir_last_order[k].unit = unit;
+    dir_last_order[k].why = dir_why;
+    dir_last_order[k].frame = CURRENT_FRAME;
     CellXY at = object_cell(unit);
     if (dir_churn[k].unit != unit || CURRENT_FRAME - dir_churn[k].frame > 600 || dir_dist2(dir_churn[k].at, at) > 3 * 3) {
         dir_churn[k].unit = unit;
@@ -4064,6 +4069,7 @@ static void dir_ferry(BYTE *house, DirState *d)
         CellXY tc = object_cell(d->ferry[best]);
         if (dir_dist2(object_cell(o), tc) > 7 * 7) {
             if (!dir_recent_order(o, dir_cell(tc), 300)) {
+                dir_why = "convoy walk";
                 dir_order(o, MISSION_MOVE, NULL, dir_cell(tc));
                 /* out of the army pool on the way: the army's next pass sent it back to the rally on
                  * Area Guard, and called walkers stood where they were called, moved 0 in 2000 frames */
@@ -4164,10 +4170,13 @@ static void dir_ferry(BYTE *house, DirState *d)
             BYTE *dest = FIELD(u, COMBAT_DESTINATION, BYTE *);
             CellXY dc = dest && is_cell(dest) ? FIELD(dest, C_MAPCOORDS, CellXY) : (CellXY){ -1, -1 };
             logmsg("director: house %d frame %d:   walker %.8s called %d frames ago from %d,%d (%d cells off) now at %d,%d "
-                   "(%d off; moved %d), mission %d, dest %d,%d, heights %d->%d", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   "(%d off; moved %d), mission %d, dest %d,%d, heights %d->%d; last order: %s %d frames ago",
+                   FIELD(house, 0x30, int), CURRENT_FRAME,
                    (char *)dir_type(u) + T_ID, CURRENT_FRAME - d->walker_frame[j], f.X, f.Y, dir_isqrt(dir_dist2(f, t)),
                    c.X, c.Y, dir_isqrt(dir_dist2(c, t)), dir_isqrt(dir_dist2(c, f)), FIELD(u, COMBAT_MISSION, int),
-                   dc.X, dc.Y, dir_height(c), dir_height(t));
+                   dc.X, dc.Y, dir_height(c), dir_height(t),
+                   dir_last_order[((DWORD)u >> 3) % 1024].unit == u ? dir_last_order[((DWORD)u >> 3) % 1024].why : "?",
+                   dir_last_order[((DWORD)u >> 3) % 1024].unit == u ? CURRENT_FRAME - dir_last_order[((DWORD)u >> 3) % 1024].frame : -1);
         }
         CellXY to = dir_beach_near(d->rally, d->rally, stuck);
         logmsg("director: house %d frame %d: convoy stalled, %d called (%d can't walk there) and nobody aboard (transport at %d,%d, dock "
