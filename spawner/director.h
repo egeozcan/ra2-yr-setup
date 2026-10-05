@@ -510,10 +510,11 @@ static int dir_saving_for_refinery(BYTE *house)
         && FIELD(house, OIL_H_CASH, int) < 2500;
 }
 
+#define DIR_ARMY_CAP 150   /* past this many combat units, no more (dir_veto_production) */
 static void dir_choose_vehicle(BYTE *house, DirState *d)
 {
     int side = FIELD(house, OIL_H_SIDE, int);
-    if (side < 0 || side > 2 || dir_saving_for_refinery(house))
+    if (side < 0 || side > 2 || dir_saving_for_refinery(house) || d->army_count >= DIR_ARMY_CAP)
         return;
     int shares[ROLE_COUNT], have[ROLE_COUNT] = { 0 }, available[ROLE_COUNT], army_value = 0;
     BYTE *pick[ROLE_COUNT];
@@ -812,6 +813,8 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
     DirState *dd = dir_get(house);
     if (dd && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)) {
         dir_veto_production(house, dd);   /* right after the stock pick, before a factory takes it */
+        if (dd->army_count >= DIR_ARMY_CAP)
+            return result;
         int s0 = FIELD(house, OIL_H_SIDE, int);
         BYTE *aa = dd->want_aa && s0 >= 0 && s0 <= 2 && *dir_aa_infantry[s0]
             ? dir_first_buildable(house, INFANTRYTYPE_ARRAY, dir_aa_infantry[s0], 0) : NULL;
@@ -4697,8 +4700,20 @@ static void dir_report_intruders(BYTE *house)
 /* Stock trigger teams pick their own production. Two picks are vetoed: more Kirovs once four are
  * out or while the base is being hit (slow and costly, they left bases undefended), and more
  * infantry when the enemy is cut off by water (they can only wait at home). */
+/* Past 150 combat units no more of them: two 200-unit armies jammed on a bridge slowed the game to
+ * a crawl, and the cash keeps for when units are lost */
 static void dir_veto_production(BYTE *house, DirState *d)
 {
+    if (d->army_count >= DIR_ARMY_CAP) {
+        int u = FIELD(house, H_PRODUCING_UNIT, int), i = FIELD(house, H_PRODUCING_INF, int);
+        DynVec *ut = UNITTYPE_ARRAY, *it = INFANTRYTYPE_ARRAY;
+        if (u >= 0 && u < ut->Count && u != d->unit_request
+            && !in_list("HARV,CMIN,SMIN,AMCV,SMCV,PCV,LCRF,SAPC,YHVR", (char *)ut->Items[u] + T_ID)
+            && !((BYTE *)ut->Items[u])[UT_HARVESTER])
+            FIELD(house, H_PRODUCING_UNIT, int) = -1;
+        if (i >= 0 && i < it->Count && !in_list("ENGINEER,SENGINEER,YENGINEER", (char *)it->Items[i] + T_ID))
+            FIELD(house, H_PRODUCING_INF, int) = -1;
+    }
     /* infantry and aircraft without their tech building, as for vehicles below */
     int inf0 = FIELD(house, H_PRODUCING_INF, int);
     DynVec *its = INFANTRYTYPE_ARRAY, *ats = AIRCRAFTTYPE_ARRAY;
