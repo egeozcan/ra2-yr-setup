@@ -2229,6 +2229,21 @@ static void dir_economy(BYTE *house, DirState *d)
                    (char *)type + T_ID, FIELD(house, OIL_H_POWER, int), FIELD(house, OIL_H_DRAIN, int));
         }
     }
+    /* Tech on time: radar, then the battle lab, once two refineries and a war factory stand. Stock
+     * plans put them late or never (Americans built a Battle Lab at frames 13000-28000 if at all,
+     * so their tanks were Grizzlies against Yuri's Lashers; they won none of ten). */
+    static const char *radars[3] = { "GAAIRC,AMRADR", "NARADR", "NAPSIS" }, *labs[3] = { "GATECH", "NATECH", "YATECH" };
+    if (FIELD(house, OIL_H_PRODUCING, int) == -1 && CURRENT_FRAME >= 9000 && FIELD(house, OIL_H_REFINERIES, int) >= 2
+        && combat_building_count(house, factories[side]) && !combat_building_count(house, labs[side])
+        && FIELD(house, OIL_H_POWER, int) - FIELD(house, OIL_H_DRAIN, int) >= 100) {
+        BYTE *type = combat_building_count(house, radars[side]) ? dir_first_buildable(house, BUILDINGTYPE_ARRAY, labs[side], 2000)
+                                                               : dir_first_buildable(house, BUILDINGTYPE_ARRAY, radars[side], 2000);
+        if (type) {
+            FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+            logmsg("director: house %d frame %d: queued %.24s (tech)", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   (char *)type + T_ID);
+        }
+    }
     if (CURRENT_FRAME >= d->next_economy) {
         d->next_economy = CURRENT_FRAME + 450;
         d->idle_harvesters = dir_idle_harvesters(house);
