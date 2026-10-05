@@ -2129,6 +2129,14 @@ static void dir_army(BYTE *house, DirState *d)
                 continue;
             }
         }
+        /* cut off by water and still on our side: an attack goes by ferry, so they wait at the rally.
+         * Sent at the objective across the sea, they crowded the cliff edge above the beach, as near
+         * as they could walk, and jammed the ramp the walkers to the transports had to take. */
+        if ((d->blocked || d->island) && d->state == DIR_ATTACK && !dir_crosses(pool[i]) && !dir_landed(d, c)) {
+            dir_why = "wait for the ferry";
+            dir_command(pool[i], d->rally, NULL, engage);
+            continue;
+        }
         if (d->state != DIR_DEFEND && (dir_flags & DIR_F_UNSTICK))
             dir_track_stuck(house, d, pool[i], c, goal);
         dir_why = d->state == DIR_ATTACK ? "attack" : d->state == DIR_DEFEND ? "defend" : d->state == DIR_RETREAT ? "retreat" : "gather";
@@ -5076,8 +5084,29 @@ static char GFASTCALL dir_node_cell_ok(BYTE *house, void *unused, BYTE *type, Ce
     return 0;
 }
 
+/* Captured buildings across the water (colonised derricks) let the stock planner build beside
+ * them: Bio Reactors went up on an outpost island by another house's base, and a war factory there
+ * would strand its units. Off the base's own land, only refineries and defences may stand; anything
+ * else goes near the base centre. */
+static void dir_keep_home(BYTE *house, BYTE *type, CellXY *out)
+{
+    if (out->X <= 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
+        || in_list("GAREFN,NAREFN,YAREFN,GAYARD,NAYARD,YAYARD," DIR_WALLS, (char *)type + T_ID) || type[TT_NAVAL]
+        || oil_defense_kind((char *)type + T_ID))
+        return;
+    dir_fill_land(dir_house_center(house));
+    if (dir_land_reachable(*out))
+        return;
+    CellXY was = *out;
+    if (!dir_fallback_spot(house, type, out))
+        *out = (CellXY){ 0, 0 };
+    logmsg("director: house %d frame %d: %.24s at %d,%d is off the base's land, %s %d,%d", FIELD(house, 0x30, int),
+           CURRENT_FRAME, (char *)type + T_ID, was.X, was.Y, out->X ? "placed at" : "no spot at home,", out->X, out->Y);
+}
+
 static void dir_check_passage(BYTE *house, BYTE *type, CellXY *out)
 {
+    dir_keep_home(house, type, out);
     if (out->X <= 0 || !dir_active(house) || !(director_enabled(house) & DIR_F_ECONOMY)
         || in_list("GAYARD,NAYARD,YAYARD", (char *)type + T_ID) || type[TT_NAVAL])
         return;   /* shipyards sit on water, by a beach (the ramp rule took that for a ramp) */
