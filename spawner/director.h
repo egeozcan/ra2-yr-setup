@@ -2420,7 +2420,9 @@ static int dir_refinery_place(BYTE *house, DirState *d, BYTE *type, CellXY *out)
                 ore = c;
             }
         }
-    if (!best)
+    /* a field worth the trip: for an ore value of 275 a refinery went up far out by captured
+     * derricks, alone and unguarded; with none, the stock planner puts it by the base */
+    if (best < 1500)
         return 0;
     /* on the ore's own level: the nearest spot as the crow flies was at times down a cliff, which
      * harvesters reach only the long way round (and refineries on the beach blocked its ramp) */
