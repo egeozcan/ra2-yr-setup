@@ -4069,8 +4069,11 @@ static void dir_ferry(BYTE *house, DirState *d)
         CellXY tc = object_cell(d->ferry[best]);
         if (dir_dist2(object_cell(o), tc) > 7 * 7) {
             if (!dir_recent_order(o, dir_cell(tc), 300)) {
+                /* as the army moves its units: Area Guard around the transport's cell. A Move order
+                 * never took: on Area Guard, they went straight back to guarding where they stood
+                 * (walkers "moved 0", mission 11, the last order our Move 0-2000 frames before) */
                 dir_why = "convoy walk";
-                dir_order(o, MISSION_MOVE, NULL, dir_cell(tc));
+                dir_command(o, tc, NULL, 0);
                 /* out of the army pool on the way: the army's next pass sent it back to the rally on
                  * Area Guard, and called walkers stood where they were called, moved 0 in 2000 frames */
                 dir_reserve(o, 900);
