@@ -10,7 +10,9 @@ enum { DIR_F_PRODUCTION = 1, DIR_F_ARMY = 2, DIR_F_TAKEOVER = 4, DIR_F_FOCUS = 8
        DIR_F_EXPANSION = 512, DIR_F_REGROUP = 1024, DIR_F_NAVY = 2048, DIR_F_UNSTICK = 4096,
        DIR_F_BUNKERS = 8192, DIR_F_STRATEGY = 16384, DIR_F_ALL = 32767,
        /* defenses-first objectives lost 3 of 4 director-vs-director ablation matches: off */
-       DIR_F_DEFAULT = DIR_F_ALL & ~DIR_F_DEFENSES_FIRST,
+       /* postures off by default: plans with them won 19 of 48 MCV duels against no plans, without
+        * them 20 of 41 (even); on Isolation they made no difference (0.50 each) */
+       DIR_F_DEFAULT = (DIR_F_ALL & ~DIR_F_DEFENSES_FIRST) | 65536,
        /* opt-out, for ablation: no hunters, Bulldozers or blackouts against mind control */
        DIR_F_NO_ANTIMIND = 32768,
        /* opt-out, for ablation: the strategy layer without postures (always normal) */
