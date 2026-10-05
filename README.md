@@ -1270,7 +1270,11 @@ of the game (`DIR_F_STRATEGY`, flag 16384, on by default). Code: `dir_choose_pla
   | siege | rarely as an opening (weight 10: nobody has defences yet; as an opening it placed 0.55 from built bases against balanced's 0.38), mostly later against a fortress | 15 points more siege in the unit mix (V3, Prism Tank, Magnetron) |
   | naval | our sea reaches an enemy (weight 35 across water, 10 otherwise; half for the Allies) | warships kept at 40% of the army's value, the fleet sailing once it is worth 8,000. Escorts first: anti-air (Aegis, Sea Scorpion; Yuri has none) and anti-submarine (Destroyer, Typhoon, Boomer) ships each make up 20% of the fleet, 35% once enemy aircraft or submarines are about. The rest are capital ships: Carriers, Dreadnoughts, Boomers. A fleet of Dreadnoughts alone sat helpless under aircraft and submarines. |
 
-- **Posture**, re-checked every 450 frames, kept for at least 900 frames unless home is threatened:
+- **Posture** (off by default since 2026-10-05; `DirectorFlags` without bit 65536 turns it on).
+  In the first MCV round with every fix in from the start, plans with postures won 19 of 48 duels
+  against the director without plans; plans without postures won 20 of 41, even. On Isolation
+  postures made no difference (placement 0.50 on and off). Re-checked every 450 frames, kept for
+  at least 900 frames unless home is threatened:
   - **press**: our army is at least 1.6x the target's army plus half its defences. Launches need
     an edge 0.2 smaller, and fresh units reinforce the front instead of waiting at the rally.
   - **hold**: armed enemy units within 35 cells of home are worth more than 1.5x our army (and over
@@ -1553,7 +1557,9 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   8 focus fire, 16 economy, 32 answer fire, 64 defences-first objectives, 128 cohesion,
   256 engineers, 512 expansion, 1024 regroup, 2048 navy, 4096 walled-in units, 8192 tank bunkers,
   16384 strategy (plans and posture). `DirectorFlags=16319` is the director without the strategy layer.
-  - The default is everything except 64. Defences-first lost 3 of 4 director-vs-director
+  Opt-out bits, for ablations: 32768 no hunters, Bulldozers or blackouts against mind control;
+  65536 no postures (set in the default).
+  - The default is everything except 64, plus 65536. Defences-first lost 3 of 4 director-vs-director
     ablation matches.
 
 ### Benchmark (`spawner/bench.py`)
