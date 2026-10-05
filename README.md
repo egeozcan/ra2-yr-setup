@@ -1408,6 +1408,48 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   drain (output over plants); at three or fewer, plants count as twice as near when it picks its
   next structure ("goes for the target's power").
 
+### Fair play, tech and bases (2026-10-04/05, from the user's notes)
+
+- **Prerequisites for every computer player.** `HouseClass::CanBuild` lets computer players skip
+  prerequisites: the director picked Apocalypse Tanks at frame 2,776, and stock AIs did the same.
+  Every AI pick (director or stock, units, infantry, aircraft, buildings) is now checked against
+  `TechnoTypeClass::Prerequisite` (+0x638, building type indices; negative values are the
+  `[General]` groups: power, factory, barracks, radar, tech, refinery). A factory's pick without
+  them is refused where the factory takes it (0x45032D) and the house chooses again; the combat
+  AI, oil defences and director check before queueing (`ai_can_build`).
+- **Tech on time.** Radar, then the battle lab, once two refineries and a war factory stand, from
+  frame 9,000 ("queued … (tech)"). Stock plans built them late or never; with prerequisites
+  enforced, Americans fought Lashers with Grizzlies and won 0 of 10, then 10 of 22 with this.
+- **Role counting.** A vehicle counts toward every role whose list names it. Counted toward one
+  only, the anti-infantry units (each also named as anti-air or main) never filled their share and
+  were built without end: Soviet armies of Flak Tracks, then of Tesla Tanks. No anti-air share
+  against under 1,500 of enemy aircraft; Soviets answer infantry with Tesla Tanks first.
+- **Construction yards** are never built as buildings (Yuri's base plan put up fifteen). An
+  expansion MCV is the house's own type, one war factory at a time (the first buildable of
+  AMCV,SMCV,PCV gave Yuri four Allied MCVs at once). A spare MCV (from a crate) goes to a rich,
+  uncontested field as an expansion.
+- **A fled yard rebuilds.** The economy (power, refineries, first war factory) runs for any house
+  with a yard; it used to need a refinery, so a yard that fled its lost base set up again with
+  44,000 and built only walls. Escape and expansion sites must pass the yard's own placement test
+  (vtable 0xA8, as `UnitClass::TryToDeploy` checks at 0x7394D2). A yard also flees early when a
+  big army it can't answer is in the base ("is overrun").
+- **Not feeding a bigger army.** Far outmatched at home (enemy near the base or front worth over
+  twice our army plus 3,000), the army holds in the base until it has grown back (with
+  hysteresis). An attack is called off when the target's army has grown to 1.5x ours and the front
+  isn't going our way. A raid outweighing our army 1.5x is always met with a barracks flood.
+- **Garrisons.** Soldiers garrison buildings with the Capture mission, as a player's click does
+  (infantry go in only under Capture, checked at 0x5196D4); sent with Enter they stood beside our
+  Battle Bunkers for good.
+- **Engineers** go for uncontested derricks on our side of the map up to 100 cells off; one killed
+  on the way counts a failure, and one whose order was taken off is sent on again.
+- **Slave Miners** count only ore their slaves can walk to, keep off fields other miners work or
+  were sent to, and leave a dead spot after 900 frames.
+- **Islands.** Off the base's own land (beside colonised derricks) only refineries and defences go
+  up. Convoy docks are beaches in the engine's movement zone of the rally (out to 80 cells); only
+  units in the transport's zone are called; walkers are kept out of the army pool and moved as the
+  army moves units (Area Guard around the goal; a Move order didn't take on units in Area Guard).
+  Island armies wait at the rally during an attack instead of crowding the shore.
+
 ### Economy, defence and watching (2026-10-02, from the user's playtest notes)
 
 - **Power ahead of need.** The combat AI adds war factories only with 50 power to spare, and stock
@@ -1661,6 +1703,11 @@ plus army value, and within 20% count as a draw.
 | 2026-10-03 evening build: held-out set 1 | **12W 1D**: all 10 duels and 2 of 3 FFAs; GoldSt FFA at the time limit with the director's house well ahead on buildings and army but second on score |
 | 2026-10-03 evening build: held-out set 2 | **13W 1L**: 12/12 duels and Potomac; Powder Keg (1 director vs 5) at the time limit, alive but behind |
 | Strategy A/B from built bases, 2026-10-04 build | 26–22 for the strategy layer (the three runs before: 23–25, 22–26, 23–25) |
+| Strategy A/B from MCVs, 2026-10-05, postures on (first clean round) | 19–29 |
+| Plans without postures vs no plans, 2026-10-05 | 25–23 |
+| Strategy A/B from MCVs, postures off by default | 31–17, then 25–23, 25–23 |
+| 2026-10-05 build: held-out set 1 (stock AIs now bound by prerequisites) | **13/13** |
+| 2026-10-05 build: 1 director vs 2 allied stock Brutals | 6/6, and the 4-AI FFA won by the other director |
 
 | 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
 | 2026-10-01, 7 directors FFA on *Don't Step on The Crocodile* (user's settings) | old build: no house ever launched an attack by frame 40k; new build: 40–54 attack launches per match, 5 of 7 houses eliminated in each of 5 full-length matches, and one match won outright at frame 48,640 |
@@ -1690,6 +1737,9 @@ plus army value, and within 20% count as a draw.
 - Ships defend only against enemy ships near the base; the fleet does not attack on its own.
 - The stock AI sometimes sets an expansion MCV to Hunt, so the director keeps re-issuing the deploy.
 
+- Island convoys still stall 15–30 times a game on Isolation and ship 30–80 units: many called
+  units' paths fail at once (destination set, then cleared, moved 0), some on the transport's own
+  level, and the cause isn't pinned down.
 - The water fallback relies on stall evidence, so a cut-off army first wastes some attack time.
 - A bridge whose hut is across the water can't be repaired. An engineer that times out skips
   that hut for 9000 frames.
