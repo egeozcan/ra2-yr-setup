@@ -1904,7 +1904,9 @@ static void dir_army(BYTE *house, DirState *d)
         *x ^= *x << 13;
         *x ^= *x >> 17;
         *x ^= *x << 5;
-        d->inf_defense = *x % 4 == 0;
+        /* always when the raid outweighs our army half as much again: a Yuri rush at frame 4240 met
+         * an American base with no army and its first war factory half built, and took it */
+        d->inf_defense = *x % 4 == 0 || d->threat_value * 2 > d->army_value * 3;
         if (d->inf_defense)
             logmsg("director: house %d frame %d: meeting the raid (%d infantry, %d vehicles) with infantry",
                    FIELD(house, 0x30, int), CURRENT_FRAME, d->raid_inf, d->raid_armor);
