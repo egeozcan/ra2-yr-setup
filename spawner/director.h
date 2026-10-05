@@ -3219,6 +3219,29 @@ typedef CellXY *(GTHISCALL *nearby_fn)(void *, CellXY *, CellXY *, int, int, int
 /* Rally a third of the way toward the enemy (at most 14 cells out), on a clear 5x5 patch of land,
  * no bridge, reachable from the base. A straight-line point can land on a bridge or at a choke,
  * and an army gathering there jams it. */
+static int dir_step_blocked(CellXY a, CellXY b);
+static short dir_heights[512 * 512];
+/* Level ground for r cells around c (sampled every other cell): no ramp or cliff edge there. The
+ * waiting army stood at the top of the one ramp down to the convoy dock and the walkers to the
+ * transports couldn't get through it. */
+static int dir_flat_around(CellXY c, int r)
+{
+    dir_step_blocked(c, c);   /* fills the height cache for a new game */
+    int h0 = dir_height(c);
+    for (int dy = -r; dy <= r; dy += 2)
+        for (int dx = -r; dx <= r; dx += 2) {
+            CellXY q = { (short)(c.X + dx), (short)(c.Y + dy) };
+            if (!dir_cell(q))
+                return 0;
+            short *h = &dir_heights[q.Y * 512 + q.X];
+            if (*h == -32768)
+                *h = (short)dir_height(q);
+            if (abs(*h - h0) > 52)
+                return 0;
+        }
+    return 1;
+}
+
 static CellXY dir_pick_rally(DirState *d)
 {
     if (!d->enemy)
@@ -3235,6 +3258,7 @@ static CellXY dir_pick_rally(DirState *d)
      * dock, and in the one ramp down to it. */
     /* toward the enemy first, then turned 45 and 90 degrees either way (scaled back to length) */
     static const int turn[5][4] = { {1,0,0,1}, {1,-1,1,1}, {1,1,-1,1}, {0,-1,1,0}, {0,1,-1,0} };
+    for (int flat = 1; flat >= 0; flat--)   /* level ground all round first, then as before */
     for (int t = 0; t < 5; t++)
     for (int step = 12; step <= 24 && step < len; step += 4) {
         int vx = turn[t][0] * dx + turn[t][1] * dy, vy = turn[t][2] * dx + turn[t][3] * dy;
@@ -3247,7 +3271,8 @@ static CellXY dir_pick_rally(DirState *d)
         if (out.X <= 0 || out.Y <= 0 || dir_dist2(out, want) > 10 * 10)
             continue;
         CellXY c = { (short)(out.X + 2), (short)(out.Y + 2) };   /* the patch's centre */
-        if (dir_dist2(c, d->base) >= 10 * 10 && !dir_near_own_building(NULL, c, 8) && abs(dir_height(c) - level) <= 104)
+        if (dir_dist2(c, d->base) >= 10 * 10 && !dir_near_own_building(NULL, c, 8) && abs(dir_height(c) - level) <= 104
+            && (!flat || dir_flat_around(c, 6)))
             return c;
     }
     return fallback;
@@ -5595,7 +5620,6 @@ static void dir_fill_walk(CellXY from)
 /* Cell floor heights, read once a game (terrain heights don't change), and the cliff test: a step
  * of over one and a half levels (104 leptons each) between neighbouring cells. A ramp climbs half a
  * level from cell centre to cell centre. */
-static short dir_heights[512 * 512];
 static int dir_heights_frame = -1;
 static int dir_step_blocked(CellXY a, CellXY b)
 {
