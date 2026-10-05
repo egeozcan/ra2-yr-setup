@@ -1746,6 +1746,43 @@ static void dir_recall_guards(BYTE *house, DirState *d)
                CURRENT_FRAME, d->threat_value, d->army_value, n);
 }
 
+/* Bridge decks (cell flag 0x100), grouped into up to 64 bridges: the centre of each group of deck
+ * cells within 4 of one another. Scanned once a game. */
+static CellXY dir_bridge_at[64];
+static int dir_bridge_count = -1, dir_bridge_frame = -1;
+static int dir_bridges_scan(void)
+{
+    if (dir_bridge_count >= 0 && CURRENT_FRAME >= dir_bridge_frame)
+        return dir_bridge_count;
+    dir_bridge_frame = CURRENT_FRAME;
+    dir_bridge_count = 0;
+    int sx[64], sy[64], cnt[64];
+    for (int y = 1; y < 512; y++)
+        for (int x = 1; x < 512; x++) {
+            BYTE *cell = dir_cell((CellXY){ (short)x, (short)y });
+            if (!cell || !(FIELD(cell, C_FLAGS, DWORD) & 0x100))
+                continue;
+            int b = 0;
+            for (; b < dir_bridge_count; b++) {
+                int cx = sx[b] / cnt[b], cy = sy[b] / cnt[b];
+                if ((cx - x) * (cx - x) + (cy - y) * (cy - y) <= 6 * 6)
+                    break;
+            }
+            if (b == dir_bridge_count) {
+                if (b >= 64)
+                    continue;
+                sx[b] = sy[b] = cnt[b] = 0;
+                dir_bridge_count++;
+            }
+            sx[b] += x;
+            sy[b] += y;
+            cnt[b]++;
+        }
+    for (int b = 0; b < dir_bridge_count; b++)
+        dir_bridge_at[b] = (CellXY){ (short)(sx[b] / cnt[b]), (short)(sy[b] / cnt[b]) };
+    return dir_bridge_count;
+}
+
 static void dir_army(BYTE *house, DirState *d)
 {
     dir_flags = director_enabled(house);
@@ -2095,9 +2132,34 @@ static void dir_army(BYTE *house, DirState *d)
             body_cells = dir_isqrt(dist[m / 2]);
         }
     }
-    int regrouping = 0, held = 0, waiting = 0;
+    int regrouping = 0, held = 0, waiting = 0, queued = 0;
+    /* Bridges cross in waves: our units on or by each bridge are counted, and while 10 are there,
+     * others bound across wait short of it. Two 200-unit armies shoved through one bridge at once
+     * jammed it and slowed the game to a crawl. */
+    int nb = dir_bridges_scan(), on_bridge[64] = { 0 };
+    if (d->state == DIR_ATTACK && nb)
+        for (int i = 0; i < n; i++) {
+            CellXY c = object_cell(pool[i]);
+            for (int b = 0; b < nb; b++)
+                if (dir_dist2(c, dir_bridge_at[b]) <= 5 * 5)
+                    on_bridge[b]++;
+        }
     for (int i = 0; i < n; i++) {
         CellXY c = object_cell(pool[i]);
+        if (d->state == DIR_ATTACK && nb && !FIELD(pool[i], O_TARGET, BYTE *) && !dir_on_bridge(c)) {
+            int wait = 0;
+            for (int b = 0; b < nb && !wait; b++) {
+                int db = dir_dist2(c, dir_bridge_at[b]);
+                wait = on_bridge[b] >= 10 && db > 5 * 5 && db <= 12 * 12
+                       && dir_dist2(dir_bridge_at[b], d->objective_at) < dir_dist2(c, d->objective_at);
+            }
+            if (wait) {
+                queued++;
+                dir_why = "bridge queue";
+                dir_command(pool[i], c, NULL, 1);   /* guard where it stands, fighting what comes */
+                continue;
+            }
+        }
         if (dir_bridge_evac(pool[i], c) || dir_dodge_air(house, pool[i], c)
             || dir_infantry_deploy(pool[i], c, d->state != DIR_RETREAT && !dir_on_bridge(c)))
             continue;
@@ -2170,8 +2232,9 @@ static void dir_army(BYTE *house, DirState *d)
         dir_command(pool[i], goal, d->state == DIR_ATTACK ? d->objective : NULL, engage);
     }
     if (bench_file && CURRENT_FRAME == d->last_log && d->state == DIR_ATTACK)
-        logmsg("director:   attack: %d held (radius %d), %d waiting at the rally, %d regrouping, front %d,%d",
-               held, hold > 0 ? dir_isqrt(hold) : -1, waiting, regrouping, d->front.X, d->front.Y);
+        logmsg("director:   attack: %d held (radius %d), %d waiting at the rally, %d regrouping, %d queued for a "
+               "bridge, front %d,%d", held, hold > 0 ? dir_isqrt(hold) : -1, waiting, regrouping, queued, d->front.X,
+               d->front.Y);
     if (regrouping && CURRENT_FRAME - d->last_regroup_log > 600) {
         d->last_regroup_log = CURRENT_FRAME;
         logmsg("director: house %d frame %d: %d units fall back to the main body at %d,%d", FIELD(house, 0x30, int),
