@@ -150,7 +150,7 @@ struct DirState {
     int escape_frame, next_escape;      /* a construction yard packed up to flee */
     BYTE *mcv_seen[8];                  /* MCVs logged already */
     int mcv_seen_next, yards_seen, next_crate_site, crate_frame;
-    int outmatched, outmatched_frame, mcv_handed_frame;
+    int outmatched, outmatched_frame, mcv_handed_frame, last_queue_log;
     BYTE *walker[8];                    /* units called to walk to a transport */
     CellXY walker_from[8], walker_to[8];
     int walker_frame[8], walker_next;   /* holding in the base against a far bigger army near home */
@@ -1780,6 +1780,9 @@ static int dir_bridges_scan(void)
         }
     for (int b = 0; b < dir_bridge_count; b++)
         dir_bridge_at[b] = (CellXY){ (short)(sx[b] / cnt[b]), (short)(sy[b] / cnt[b]) };
+    logmsg("director: %d bridge sections on the map%s", dir_bridge_count, dir_bridge_count ? ", the first at" : "");
+    for (int b = 0; b < dir_bridge_count && b < 6; b++)
+        logmsg("director:   bridge %d,%d (%d deck cells)", dir_bridge_at[b].X, dir_bridge_at[b].Y, cnt[b]);
     return dir_bridge_count;
 }
 
@@ -2154,6 +2157,11 @@ static void dir_army(BYTE *house, DirState *d)
                        && dir_dist2(dir_bridge_at[b], d->objective_at) < dir_dist2(c, d->objective_at);
             }
             if (wait) {
+                if (!queued && CURRENT_FRAME - d->last_queue_log > 900) {
+                    d->last_queue_log = CURRENT_FRAME;
+                    logmsg("director: house %d frame %d: units wait for a crowded bridge", FIELD(house, 0x30, int),
+                           CURRENT_FRAME);
+                }
                 queued++;
                 dir_why = "bridge queue";
                 dir_command(pool[i], c, NULL, 1);   /* guard where it stands, fighting what comes */
