@@ -761,6 +761,22 @@ static BYTE *GFASTCALL dir_factory_pick(BYTE *house, BYTE *btype, int rtti, int 
         }
         return NULL;
     }
+    /* no superweapon while money is short and the army behind: with its ore gone, a house put its
+     * last cash into an Iron Curtain, a missile silo and a battle lab, built no units for 20000
+     * frames, and its army sank to a third of the enemy's */
+    if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)
+        && in_list("NAIRON,NAMISL,GACSPH,GAWEAT,YAGNTC,NAPSYB", (char *)type + T_ID)) {
+        DirState *ds = dir_get(house);
+        if (ds && FIELD(house, OIL_H_CASH, int) < dir_cost(type) * 2 && ds->army_value < ds->target_army) {
+            FIELD(house, OIL_H_PRODUCING, int) = -1;
+            if (CURRENT_FRAME - ds->last_veto_log > 1500) {
+                ds->last_veto_log = CURRENT_FRAME;
+                logmsg("director: house %d frame %d: no %.24s now (cash %d, army %d vs %d)", FIELD(house, 0x30, int),
+                       CURRENT_FRAME, (char *)type + T_ID, FIELD(house, OIL_H_CASH, int), ds->army_value, ds->target_army);
+            }
+            return NULL;
+        }
+    }
     /* never a construction yard as a building (yards come from MCVs): picked between the director's
      * queue checks, Yuri's yard put up fifteen of them */
     if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)
