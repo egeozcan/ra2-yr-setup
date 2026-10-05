@@ -3674,26 +3674,29 @@ static unsigned short dir_walk[512 * 512];   /* walking steps from the last dir_
  * the line; 17: a building). */
 static CellXY dir_beach_near(CellXY at, CellXY from, CellXY avoid)
 {
+    /* in the engine's movement zone of `from`: a beach below a plateau with no way down is no dock,
+     * whatever the fills say (called units' paths failed at once, and they stood where they were
+     * called, moved 0); out to 80 cells, as the nearest way down can lie far along the coast */
     dir_fill_walk(from);
     dir_walk_steps(from);
+    int zone = dir_zone(from);
     CellXY best = { 0, 0 };
     int best_score = 0x7FFFFFFF;
-    for (int dy = -30; dy <= 30; dy++)
-        for (int dx = -30; dx <= 30; dx++) {
-            CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
-            BYTE *cell = dir_cell(c);
-            if (!cell || FIELD(cell, C_LANDTYPE, int) != 6 || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
-                || !dir_is_land(c) || !dir_near_water(c, 2) || (avoid.X && dir_dist2(c, avoid) <= 6 * 6))
-                continue;
-            int steps = dir_walk[c.Y * 512 + c.X];
-            if (steps == 0xFFFF)
-                continue;
-            int score = steps + dir_isqrt(dx * dx + dy * dy);
-            if (score < best_score) {
-                best_score = score;
-                best = c;
+    for (int r = 30; r <= 80 && !best.X; r += 25)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
+                BYTE *cell = dir_cell(c);
+                if (!cell || FIELD(cell, C_LANDTYPE, int) != 6 || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
+                    || !dir_near_water(c, 2) || (avoid.X && dir_dist2(c, avoid) <= 6 * 6) || dir_zone(c) != zone)
+                    continue;
+                int steps = dir_walk[c.Y * 512 + c.X];
+                int score = (steps == 0xFFFF ? 2 * r : steps) + dir_isqrt(dx * dx + dy * dy);
+                if (score < best_score) {
+                    best_score = score;
+                    best = c;
+                }
             }
-        }
     return best;
 }
 
@@ -4030,8 +4033,14 @@ static void dir_ferry(BYTE *house, DirState *d)
             dir_fill_walk(object_cell(d->ferry[k]));
             break;
         }
+    /* and in the engine's movement zone of the transport: the fills ignore some cliffs, and units
+     * on a plateau with no way down to the beach were called, their paths failed and they stood */
+    int dock_zone = -1;
+    for (int k = 0; k < DIR_CONVOY && dock_zone < 0; k++)
+        if (room[k] > 0 && dir_is_land(object_cell(d->ferry[k])))
+            dock_zone = dir_zone(object_cell(d->ferry[k]));
     for (int n = 0; n < npool; )
-        if (!dir_is_land(object_cell(pool[n]))) {
+        if (!dir_is_land(object_cell(pool[n])) || (dock_zone >= 0 && dir_zone(object_cell(pool[n])) != dock_zone)) {
             unreachable++;
             npool--;
             pool[n] = pool[npool];
