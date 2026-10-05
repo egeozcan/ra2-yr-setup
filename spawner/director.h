@@ -2392,6 +2392,21 @@ static BYTE *dir_built_near(BYTE *house, BYTE *type, CellXY at, int r)
     return NULL;
 }
 
+/* CanPlaceHere tests only the ground; the build radius (a building near one of ours) is a separate
+ * check the director's own spots skipped: a refinery went up 22 cells from the base with nothing
+ * of ours by it. An own building whose centre is within 7 cells of the spot's top-left. */
+static int dir_in_build_range(BYTE *house, CellXY c)
+{
+    DynVec *v = OIL_BUILDING_ARRAY;
+    for (int i = 0; i < v->Count; i++) {
+        BYTE *b = v->Items[i];
+        if (oil_live(b) && FIELD(b, O_OWNER, BYTE *) == house && dir_dist2(object_cell(b), c) <= 7 * 7
+            && !in_list(DIR_WALLS, (char *)FIELD(b, B_TYPE, BYTE *) + T_ID))
+            return 1;
+    }
+    return 0;
+}
+
 /* A refinery goes where the ore is: the placeable spot nearest the best field within 30 cells of
  * home (ore value minus 30 per cell of distance; fields a refinery of ours already serves count a
  * third), not wherever the stock base plan had a node. Fields by enemy buildings are skipped. */
@@ -2434,7 +2449,7 @@ static int dir_refinery_place(BYTE *house, DirState *d, BYTE *type, CellXY *out)
                 int dd = dx * dx + dy * dy;
                 if ((abs(dx) == r || abs(dy) == r) && dd < closest && dir_cell(c) && abs(dir_height(c) - level) <= 104
                     && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)
-                    && !dir_blocks_passage(type, c)) {
+                    && !dir_blocks_passage(type, c) && dir_in_build_range(house, c)) {
                     closest = dd;
                     *out = c;
                 }
@@ -5188,7 +5203,7 @@ static int dir_spot_near(BYTE *house, BYTE *type, CellXY base, int level, int fr
                 CellXY c = { (short)(base.X + dx), (short)(base.Y + dy) };
                 if (dir_cell(c) && abs(dir_height(c) - level) <= 104
                     && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)
-                    && !dir_blocks_passage(type, c)) {
+                    && !dir_blocks_passage(type, c) && dir_in_build_range(house, c)) {
                     *out = c;
                     return 1;
                 }
