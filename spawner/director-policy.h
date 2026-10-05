@@ -56,6 +56,15 @@ static int dir_should_retreat(int army_value, int launch_value, int local_ours, 
     return army_value * 100 < launch_value * 70 && local_enemy * 10 > local_ours * 13;
 }
 
+/* An attack the target has outgrown: its army now half as big again as ours, and the fight at the
+ * front not going our way. Reinforcements kept the army near its launch value, so the losses
+ * rule never fired: a rush went on into a Yuri army that grew from 2650 to 22000, and the Russian
+ * army was wiped out in one go. */
+static int dir_outgrown(int army_value, int target_army, int local_ours, int local_enemy)
+{
+    return target_army * 2 > army_value * 3 && local_enemy >= local_ours;
+}
+
 /* Base defense: a real raid, not a lone scout. */
 static int dir_base_threat(int threat_value, int army_value, int state)
 {

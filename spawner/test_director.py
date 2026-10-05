@@ -62,6 +62,10 @@ class PolicyTests(unittest.TestCase):
             assert(!dir_base_threat(2000, 10000, DIR_ATTACK));
             assert(dir_base_threat(6000, 10000, DIR_ATTACK));
             assert(dir_base_threat(800, 10000, DIR_DEFEND) && !dir_base_threat(799, 10000, DIR_DEFEND));
+            /* an attack the target has outgrown is called off; a winning fight goes on */
+            assert(dir_outgrown(12000, 22000, 3000, 5000));
+            assert(!dir_outgrown(12000, 22000, 6000, 3000));
+            assert(!dir_outgrown(12000, 15000, 3000, 5000));
             /* composition follows the enemy */
             int s[ROLE_COUNT];
             dir_role_shares(0, 0, 10000, 0, s);

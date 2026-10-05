@@ -1881,6 +1881,12 @@ static void dir_army(BYTE *house, DirState *d)
         }
         if (!d->enemy || n == 0 || dir_should_retreat(d->army_value, d->launch_value, d->local_ours, d->local_enemy))
             d->state = DIR_RETREAT;
+        else if (dir_outgrown(d->army_value, d->target_army, d->local_ours, d->local_enemy)) {
+            logmsg("director: house %d frame %d: attack called off, the target outgrew us (army %d, theirs %d, "
+                   "at the front %d vs %d)", FIELD(house, 0x30, int), CURRENT_FRAME, d->army_value, d->target_army,
+                   d->local_ours, d->local_enemy);
+            d->state = DIR_RETREAT;
+        }
     } else if (d->state == DIR_RETREAT) {
         if (!n || dir_dist2(d->centroid, d->rally) <= 10 * 10 || dwell > 1200)
             d->state = DIR_GATHER;   /* stragglers must not keep the whole army in retreat */
