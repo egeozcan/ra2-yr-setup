@@ -1875,8 +1875,12 @@ static void dir_army(BYTE *house, DirState *d)
          * the other's attack, and patience pays. It still ends: two capped armies sat to the time
          * limit. Not again after an attack: both houses reached the lower edge together at frame
          * 36000, traded armies and waited 21000 frames more (9 of 12 Rockets duels timed out). */
+        /* (4500 frames, from 9000: two even 100k armies stood off from frame 15000 to 36000) */
         if (dir_hostile_houses(house) < 2 && d->last_attack_end <= 15000)
-            waited = waited > 9000 ? waited - 9000 : 0;
+            waited = waited > 4500 ? waited - 4500 : 0;
+        /* at the army cap waiting adds nothing: the edge drops to its floor (0.8) at once */
+        if (n >= DIR_ARMY_CAP - 10 && waited < 12000)
+            waited = 12000;
         const DirPlanLevers *lv = dir_levers(d);
         int edge = lv->edge - (d->posture == POSTURE_PRESS ? 2 : 0);
         /* the target's army is away from home: what the strike meets is what stayed behind */
