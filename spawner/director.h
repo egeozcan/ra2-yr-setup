@@ -384,7 +384,9 @@ static int dir_poolable(BYTE *obj, int what)
 
 static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
     /* Mirage first: the Liberator, at 375 HP and half its fire rate, lost more than it killed (0.89) */
-    { "MGTK,TNKD,MTNK,ATTNK", "FV", "SREF", "MGTK,FV" },
+    /* against infantry Mirage, then Grizzly: an IFV with nobody aboard (the AI never loads one) is
+     * a light gun on thin armour, and Americans won 9 of 32 MCV games with it in this slot */
+    { "MGTK,TNKD,MTNK,ATTNK", "FV", "SREF", "MGTK,MTNK" },
     /* against infantry the Tesla Tank, then the Flak Track (fragile: lost to anything with a gun) */
     { "APOC,TTNK,HTNK", "HTK", "V3", "TTNK,HTK" },
     { "MIND,LTNK", "YTNK", "TELE", "YTNK" },
