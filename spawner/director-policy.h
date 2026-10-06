@@ -177,7 +177,9 @@ static const DirPlanLevers dir_plan_levers[PLAN_COUNT] = {
      * first strike, and factories to spend the money afterwards; 20000 frames */
     [PLAN_BOOM]     = { 160, 13, 8,   0,  0,  0,  1, 3000, 120, 4500, 0, 0, 20000,  0, 3000 },
     /* siege: more siege in the mix (V3s, Prism tanks, Magnetrons) against static defences */
-    [PLAN_SIEGE]    = { 110, 12, 6,  15, -5,  0,  0,    0, 100, 9000, 1, 0,     0,  0, 3000 },
+    /* (+5 siege, from +15: siege houses placed 0.58 over four MCV rounds against balanced's 0.48,
+     * the extra V3s and Prism tanks taken out of the main tanks) */
+    [PLAN_SIEGE]    = { 110, 12, 6,   5, -5,  0,  0,    0, 100, 9000, 1, 0,     0,  0, 3000 },
     /* naval: our sea reaches enemy buildings: a war fleet worth 40% of the army (Carriers and
      * Destroyers, Dreadnoughts, Boomers) that sails once it is worth 8000; the army as balanced */
     [PLAN_NAVAL]    = { 100, 12, 6,   0,  0,  0,  0,    0, 100, 9000, 1, 0,     0, 40, 8000 },

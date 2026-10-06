@@ -149,7 +149,7 @@ class PolicyTests(unittest.TestCase):
             /* the plan bends the mix and the schedule */
             dir_role_shares(0, 0, 10000, 0, s);
             dir_plan_shares(&dir_plan_levers[PLAN_SIEGE], s);
-            assert(s[ROLE_SIEGE] == 25 && s[ROLE_SUPPORT] == 5 && s[ROLE_MAIN] + s[ROLE_AA] + s[ROLE_SIEGE] + s[ROLE_SUPPORT] == 100);
+            assert(s[ROLE_SIEGE] == 15 && s[ROLE_SUPPORT] == 5 && s[ROLE_MAIN] + s[ROLE_AA] + s[ROLE_SIEGE] + s[ROLE_SUPPORT] == 100);
             assert(dir_want_refinery_plan(3500, 2, 2, 0, 5000, boom->refinery_bonus, boom->refinery_early));
             assert(!dir_want_refinery(3500, 2, 2, 0, 5000));
             assert(dir_want_refinery_plan(16000, 4, 4, 0, 5000, 1, 0) && !dir_want_refinery_plan(16000, 5, 5, 0, 5000, 1, 0));
