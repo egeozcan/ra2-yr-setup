@@ -815,6 +815,17 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
     DirState *dd = dir_get(house);
     if (dd && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)) {
         dir_veto_production(house, dd);   /* right after the stock pick, before a factory takes it */
+        /* Allied GIs from stock picks become Guardian GIs (the user's call: more of them in defence);
+         * the flood against an infantry raid below still trains GIs */
+        int pk = FIELD(house, H_PRODUCING_INF, int);
+        DynVec *its0 = INFANTRYTYPE_ARRAY;
+        if (FIELD(house, OIL_H_SIDE, int) == 0 && pk >= 0 && pk < its0->Count
+            && !_stricmp((char *)its0->Items[pk] + T_ID, "E1")) {
+            BYTE *ggi = dir_first_buildable(house, INFANTRYTYPE_ARRAY, "GGI", 0);
+            int gi = ggi ? dir_type_index(INFANTRYTYPE_ARRAY, ggi) : -1;
+            if (gi >= 0)
+                FIELD(house, H_PRODUCING_INF, int) = gi;
+        }
         if (dd->army_count >= DIR_ARMY_CAP)
             return result;
         int s0 = FIELD(house, OIL_H_SIDE, int);
@@ -5010,7 +5021,9 @@ static void dir_posts(BYTE *house, DirState *d)
                 int taken = 0;
                 for (int m = 0; m < 6; m++)
                     taken |= d->post_unit[m] == o;
-                int dd = dir_dist2(object_cell(o), d->post_cell[k]);
+                /* Guardian GIs first (the user's call: more of them in defence): a GI counts as 15
+                 * cells further off */
+                int dd = dir_dist2(object_cell(o), d->post_cell[k]) + (_stricmp((char *)ot + T_ID, "GGI") ? 15 * 15 : 0);
                 if (!taken && dd < best_d) {
                     best_d = dd;
                     u = o;
