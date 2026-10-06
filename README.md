@@ -1450,6 +1450,35 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   army moves units (Area Guard around the goal; a Move order didn't take on units in Area Guard).
   Island armies wait at the rally during an attack instead of crowding the shore.
 
+### Late fixes (2026-10-06, from the user's notes and the logs)
+
+- **Army size and bottlenecks.** No more combat units past 150 (director and stock picks); two
+  200-unit armies on one bridge had slowed the game to a crawl. Bridges (deck cells, flag 0x100,
+  found once a game: "N bridge sections on the map") are crossed in waves: while 10 of our units
+  are on or by one, others bound across wait 5–12 cells short of it, fighting what comes ("units
+  wait for a crowded bridge").
+- **Rally on level ground** for 6 cells around where any spot allows (away from ramps and cliff
+  edges): the waiting army stood at the top of the one ramp down to the convoy dock.
+- **Building spots in build range.** `BuildingTypeClass::CanPlaceHere` tests only the ground; the
+  director's own spots (refineries by the ore, fallback spots) now also need an own building within
+  7 cells, and a refinery goes by a field only if it scores 1,500 (one went up 22 cells out by an
+  ore patch worth 275).
+- **Standoffs.** A duel's first attack waits 4,500 frames longer (was 9,000), and an army at the
+  cap launches at the floor edge (0.8) at once: two even 100k armies had stood off from frame
+  15,000 to 36,000.
+- **Superweapons** aren't started while cash is under twice their cost and the army behind.
+- **Allies count.** The target's allies count as its army wherever they are: 93 units launched at
+  one of two allied stock AIs met both and twelve came back.
+- **Siege plan** adds 5 points of siege units (was 15; siege houses placed 0.58 against
+  balanced's 0.48 over four rounds).
+- **Allied infantry.** Allies answer infantry with Mirage, then Grizzly tanks (an empty IFV is a
+  light gun). Battle Fortresses fill with Guardian GIs first (GIs only while one holds fewer than
+  two); base posts take Guardian GIs first; stock GI picks become Guardian GIs while those are
+  fewer than the GIs. Swapping all of them, Americans won 5 of 32 MCV games twice and 1 of 16
+  (Yuri's Brutes and Initiates met anti-tank troops); at about half, 6 of 16, then 7 and 10 of 32.
+- **Engineers** the director wants outrank the stock infantry pick (up to two owned): derricks
+  captured went from 5.0 to 7.7 a game in the MCV rounds.
+
 ### Economy, defence and watching (2026-10-02, from the user's playtest notes)
 
 - **Power ahead of need.** The combat AI adds war factories only with 50 power to spare, and stock
@@ -1711,6 +1740,10 @@ plus army value, and within 20% count as a draw.
 | 2026-10-06 build: held-out set 2 | **13W 1D**: 12/12 duels and Potomac; Powder Keg at the time limit with the director far ahead (87 buildings to 17) |
 | 2026-10-06 build: strategy A/B from built bases / from MCVs | 26–22 / 26–22, 25–23 |
 | 2026-10-06 build: Isolation convoys | 58–114 units shipped a game (best so far), 12–33 stall recoveries |
+| 2026-10-06 final build: held-out set 1 | 12W 1L 1 other: 10/10 duels and Kaliforn; GoldSt won by a stock AI, Death by another house |
+| 2026-10-06 final build: 1 director vs 2 allied stock Brutals | no losses: 3 wins, 2 time limits led by the director, Kaliforn and Death won by the second director (the round before, without allies counted: 2 losses) |
+| Strategy A/B from MCVs, 14 rounds since postures went off (2026-10-05/06) | 348–324 for the strategy layer (rounds ranged from 31–17 to 20–28) |
+| Isolation convoys, last rounds | 47–114 units shipped a game, 8–33 stall recoveries |
 
 | 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
 | 2026-10-01, 7 directors FFA on *Don't Step on The Crocodile* (user's settings) | old build: no house ever launched an attack by frame 40k; new build: 40–54 attack launches per match, 5 of 7 houses eliminated in each of 5 full-length matches, and one match won outright at frame 48,640 |
@@ -1740,9 +1773,11 @@ plus army value, and within 20% count as a draw.
 - Ships defend only against enemy ships near the base; the fleet does not attack on its own.
 - The stock AI sometimes sets an expansion MCV to Hunt, so the director keeps re-issuing the deploy.
 
-- Island convoys still stall 15–30 times a game on Isolation and ship 30–80 units: many called
-  units' paths fail at once (destination set, then cleared, moved 0), some on the transport's own
-  level, and the cause isn't pinned down.
+- Island convoys still stall 8–33 times a game on Isolation (47–114 units shipped): some called
+  units' paths still fail at once (destination set, then cleared, moved 0), and the rest of the
+  cause isn't pinned down.
+- The strategy layer is about even with no plans from built bases and slightly ahead from MCVs;
+  single 48-game rounds swing by ±8 wins on the same build.
 - The water fallback relies on stall evidence, so a cut-off army first wastes some attack time.
 - A bridge whose hut is across the water can't be repaired. An engineer that times out skips
   that hut for 9000 frames.
