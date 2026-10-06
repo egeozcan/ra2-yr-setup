@@ -1708,6 +1708,9 @@ plus army value, and within 20% count as a draw.
 | Strategy A/B from MCVs, postures off by default | 31–17, then 25–23, 25–23 |
 | 2026-10-05 build: held-out set 1 (stock AIs now bound by prerequisites) | **13/13** |
 | 2026-10-05 build: 1 director vs 2 allied stock Brutals | 6/6, and the 4-AI FFA won by the other director |
+| 2026-10-06 build: held-out set 2 | **13W 1D**: 12/12 duels and Potomac; Powder Keg at the time limit with the director far ahead (87 buildings to 17) |
+| 2026-10-06 build: strategy A/B from built bases / from MCVs | 26–22 / 26–22, 25–23 |
+| 2026-10-06 build: Isolation convoys | 58–114 units shipped a game (best so far), 12–33 stall recoveries |
 
 | 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
 | 2026-10-01, 7 directors FFA on *Don't Step on The Crocodile* (user's settings) | old build: no house ever launched an attack by frame 40k; new build: 40–54 attack launches per match, 5 of 7 houses eliminated in each of 5 full-length matches, and one match won outright at frame 48,640 |
@@ -1744,6 +1747,9 @@ plus army value, and within 20% count as a draw.
 - A bridge whose hut is across the water can't be repaired. An engineer that times out skips
   that hut for 9000 frames.
 - Director-vs-director matches are dominated by start position on the tuning maps.
+- Americans lose most MCV duels with Yuri (2 of 16 in one round): before a Battle Lab their tanks
+  are Grizzlies, which Yuri's Lashers trade about 2 to 1, and Gattling Tanks and Brutes cut down
+  GIs. Both sides run the same director; it's the early rosters.
 - Rockets duels often reach the time limit (4–9 of 12 per MCV run). A house that loses its army
   can spend everything on the stock AI's defences and power and build no units for 20,000
   frames, while the other side can't break the towers.
