@@ -116,7 +116,7 @@ struct DirState {
     BYTE *garrison_unit[24], *garrison_site[24];                               /* infantry on their way into civilian buildings */
     BYTE *garrison_bad[8];            /* our bunkers soldiers sent in never reached, and how often */
     int garrison_bad_n[8];
-    int garrison_frame[24], garrison_next, garrison_held, want_occupier;
+    int garrison_frame[24], garrison_next, garrison_held, want_occupier, want_fortress_ggi;
     CellXY stranded_at;                                     /* units cut off by a fallen bridge */
     BYTE *outpost_anchor, *outpost_type, *outpost_built;    /* ore outpost by a captured building */
     BYTE *post_unit[6];                                     /* Allied infantry dug in at the base edge */
@@ -852,6 +852,8 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
     BYTE *type = d && d->want_engineer ? dir_first_buildable(house, INFANTRYTYPE_ARRAY, engineers[side], 0) : NULL;
     if (!type && d && d->want_occupier)
         type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, occupiers[side], 500);
+    if (!type && d && d->want_fortress_ggi && side == 0)   /* Guardian GIs for the Battle Fortresses */
+        type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, "GGI", 500);
     if (!type && !dir_saving_for_refinery(house))
         type = dir_first_buildable(house, INFANTRYTYPE_ARRAY, dir_infantry[side], 4000);
     int index = type ? dir_type_index(INFANTRYTYPE_ARRAY, type) : -1;
@@ -5040,6 +5042,7 @@ static void dir_posts(BYTE *house, DirState *d)
  * the fortress as the destination). */
 static void dir_man_fortresses(BYTE *house, DirState *d)
 {
+    d->want_fortress_ggi = 0;
     if (FIELD(house, OIL_H_SIDE, int) != 0)
         return;
     dir_why = "fortress";
@@ -5056,12 +5059,16 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
         int need = 5 - FIELD(f, T_PASSENGERS, int) - pending;
         CellXY at = object_cell(f);
         while (need-- > 0 && sent < 3) {
+            /* Guardian GIs first (anti-tank, they make the fortress a tank killer); GIs only while it
+             * holds fewer than two, and the barracks trains Guardian GIs when none is free */
             BYTE *best = NULL;
-            int best_d = 25 * 25 + 1;
+            int best_d = 25 * 25 + 1, aboard = FIELD(f, T_PASSENGERS, int);
+            for (int pass = 0; pass < 2 && !best; pass++)
             for (int k = 0; k < tv->Count; k++) {
                 BYTE *o = tv->Items[k], *ot;
                 if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 15 || !(ot = dir_type(o))
-                    || !in_list(dir_deployers, (char *)ot + T_ID) || !dir_poolable(o, 15) || dir_deployed(o))
+                    || !in_list(pass ? "E1" : "GGI", (char *)ot + T_ID) || !dir_poolable(o, 15) || dir_deployed(o)
+                    || (pass && aboard >= 2))
                     continue;
                 int busy = 0;
                 for (int m = 0; m < 24; m++)
@@ -5074,6 +5081,8 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
                     best = o;
                 }
             }
+            if (!best || _stricmp((char *)dir_type(best) + T_ID, "GGI"))
+                d->want_fortress_ggi = 1;
             if (!best)
                 break;
             int g = d->garrison_next++ % 24;
