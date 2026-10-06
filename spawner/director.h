@@ -827,12 +827,15 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
                 return result;
             }
         }
-        /* Allied GIs from stock picks become Guardian GIs (the user's call: more of them in defence);
-         * the flood against an infantry raid below still trains GIs */
+        /* Allied GIs from stock picks become Guardian GIs while they are fewer than the GIs, so about half (the user's call: more of
+         * them in defence); the flood against an infantry raid below still trains GIs. All of them
+         * swapped, Americans won 5 of 32 MCV games twice and 1 of 16 next (9-10 before): Yuri's
+         * Brutes and Initiates met anti-tank troops. */
         int pk = FIELD(house, H_PRODUCING_INF, int);
         DynVec *its0 = INFANTRYTYPE_ARRAY;
         if (FIELD(house, OIL_H_SIDE, int) == 0 && pk >= 0 && pk < its0->Count
-            && !_stricmp((char *)its0->Items[pk] + T_ID, "E1")) {
+            && !_stricmp((char *)its0->Items[pk] + T_ID, "E1")
+            && dir_owned_of(house, find_type(INFANTRYTYPE_ARRAY, "GGI")) < dir_owned_of(house, its0->Items[pk])) {
             BYTE *ggi = dir_first_buildable(house, INFANTRYTYPE_ARRAY, "GGI", 0);
             int gi = ggi ? dir_type_index(INFANTRYTYPE_ARRAY, ggi) : -1;
             if (gi >= 0)
