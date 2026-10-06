@@ -995,7 +995,10 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
             d->threat_near += e->value;
         if (owner == d->enemy && dir_dist2(e->at, target_base) <= 30 * 30)
             d->target_home += e->value;
-        if (owner == d->enemy)
+        /* the target's allies count as its own army, wherever they are: they come to its aid (93
+         * units launched at one of two allied stock AIs, worth 9180, met both, worth 25000, and
+         * twelve came back; the house never recovered) */
+        if (owner == d->enemy || (d->enemy && !dir_hostile(d->enemy, owner)))
             d->target_army += e->value;
         else if (d->enemy && dir_dist2(e->at, target_base) <= 25 * 25)
             d->third_party += e->value;   /* a third player fighting there too: in a free-for-all the
