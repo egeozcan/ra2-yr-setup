@@ -815,6 +815,18 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
     DirState *dd = dir_get(house);
     if (dd && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)) {
         dir_veto_production(house, dd);   /* right after the stock pick, before a factory takes it */
+        /* an engineer the director wants (a derrick or bridge to take) outranks the stock pick: left to
+         * an empty queue, none was trained all game and a derrick beside an Allied base stayed neutral */
+        static const char *eng_types[3] = { "ENGINEER", "SENGINEER", "YENGINEER" };
+        int s1 = FIELD(house, OIL_H_SIDE, int);
+        if (dd->want_engineer && s1 >= 0 && s1 <= 2) {
+            BYTE *et = dir_first_buildable(house, INFANTRYTYPE_ARRAY, eng_types[s1], 500);
+            int ei = et ? dir_type_index(INFANTRYTYPE_ARRAY, et) : -1;
+            if (ei >= 0 && dir_owned_of(house, et) < 2) {
+                FIELD(house, H_PRODUCING_INF, int) = ei;
+                return result;
+            }
+        }
         /* Allied GIs from stock picks become Guardian GIs (the user's call: more of them in defence);
          * the flood against an infantry raid below still trains GIs */
         int pk = FIELD(house, H_PRODUCING_INF, int);
