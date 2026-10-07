@@ -1995,6 +1995,10 @@ static void dir_army(BYTE *house, DirState *d)
             d->state = DIR_ATTACK;
             d->launch_value = d->army_value;
             d->launch_frame = d->progress_frame = CURRENT_FRAME;
+            /* the last attack got there: a ground route exists, and its stalls must not add up with
+             * this one's to "no ground route" (every change of enemy clears them already) */
+            if (d->reached)
+                d->unreachable_count = 0;
             d->reached = 0;
             d->best_dist = 0x7FFFFFFF;
             d->objective = NULL;
