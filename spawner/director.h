@@ -5242,8 +5242,10 @@ static void dir_posts(BYTE *house, DirState *d)
     for (int k = wanted; k < 6; k++)
         d->post_unit[k] = NULL;
     for (int k = 0; k < wanted; k++) {
-        if (!d->post_cell[k].X)
+        if (!d->post_cell[k].X) {   /* no open ground there now: its soldier rejoins the army */
+            d->post_unit[k] = NULL;
             continue;
+        }
         BYTE *u = d->post_unit[k];
         if (u && (!dir_object_listed(tv, u) || !oil_live(u) || FIELD(u, O_OWNER, BYTE *) != house))
             u = d->post_unit[k] = NULL;
@@ -5271,8 +5273,20 @@ static void dir_posts(BYTE *house, DirState *d)
             d->post_toggled[k] = -100000;
         }
         CellXY at = object_cell(u);
-        if (dir_deployed(u))
+        if (dir_deployed(u)) {
+            /* dug in here, then the post was laid out again (toward a new front): pack up and walk
+             * there, or the posts faced the old enemy for good. Not one that came dug in from a
+             * fight (-100000: never toggled by the posts) */
+            if (d->post_toggled[k] != -100000 && dir_dist2(at, d->post_cell[k]) > 3 * 3
+                && CURRENT_FRAME - d->post_toggled[k] >= 300) {
+                dir_order(u, MISSION_UNLOAD, NULL, NULL);
+                logmsg("director: house %d frame %d: %.24s at %d,%d packs up for post %d (%d,%d)",
+                       FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(u) + T_ID, at.X, at.Y, k,
+                       d->post_cell[k].X, d->post_cell[k].Y);
+                d->post_toggled[k] = CURRENT_FRAME;
+            }
             continue;
+        }
         if (dir_dist2(at, d->post_cell[k]) <= 1) {
             if (CURRENT_FRAME - d->post_toggled[k] >= 300) {
                 dir_order(u, MISSION_UNLOAD, NULL, NULL);   /* dig in */
