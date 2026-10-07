@@ -169,15 +169,20 @@ class CombatAITests(unittest.TestCase):
     def test_tech_captures_use_correct_indices_and_unarmed_teams(self):
         captures = [f for f in self.new.values() if ' Capture ' in f[0]]
         self.assertEqual(len(captures), 15)
-        buildings = list(self.rules['BuildingTypes'].values())
+        # The engine finds-or-allocates each listed name, so a repeat (NAPSYA) takes no index.
+        # Westwood's "Yuri Miner Defense" guards YAREFN at 357; the raw list has GAROBO there.
+        buildings = list(dict.fromkeys(self.rules['BuildingTypes'].values()))
+        self.assertEqual(self.stock['08B96C8C-G']['2'], '58,131429')
+        self.assertEqual(buildings[131429 - 131072], 'YAREFN')
         for fields in captures:
             team = self.ai[fields[1]]
             self.assertEqual(fields[4], '7')
             self.assertEqual(sum(self.members(fields[1]).values()), 1)
             self.assertEqual(team['Max'], '1')
             self.assertEqual(team['AvoidThreats'], 'yes')
-            script = self.ai[team['Script']]
-            self.assertEqual(script['0'], f'46,{131072 + buildings.index(fields[5])}')
+            action, argument = self.ai[team['Script']]['0'].split(',')
+            self.assertEqual(action, '46')
+            self.assertEqual(buildings[int(argument) - 131072], fields[5])
         for side in (1, 2, 3):
             oil = self.triggers[f'0F1BC{side}20-G']
             self.assertGreaterEqual(float(oil[8]), 500)

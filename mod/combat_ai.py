@@ -218,7 +218,10 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
 
     # Other neutral tech buildings get their own unarmed engineer teams.
     # Oil capture/defense continues to use the existing oil_ai IDs and limits.
-    buildings = list(rules['BuildingTypes'].values())
+    # Script arguments index the engine's BuildingTypes array, which skips a
+    # repeated name (stock lists NAPSYA twice): without the dedup CAPOWR's
+    # index named CALA07, the LA Movie Theater.
+    buildings = list(dict.fromkeys(rules['BuildingTypes'].values()))
     for side, template, engineer in (
         (1, '0CFFF59C-G', 'ENGINEER'), (2, '0D04C46C-G', 'SENGINEER'),
         (3, '08B97B3C-G', 'YENGINEER'),
