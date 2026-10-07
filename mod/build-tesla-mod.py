@@ -48,12 +48,17 @@ UNIT_OVERRIDES = {
     "CrateGoodie": "no",                 # crates must not give it to other countries
     "Primary": "ATankBolt",
     "ElitePrimary": "ATankBoltE",
-    "Strength": "375",                   # 300; halved from 1500, then from 750 (2026-10-01)
-    "Speed": "2",                        # 6; halved twice from the earlier 9 (Speed is an integer)
+    # 2026-10-07, from equal-cost arena duels (spawner/arena.py): at 375 HP and speed 2 it lost to every tank.
+    # Now it beats Rhinos, Lashers, Apocalypses and Masterminds, and loses to Tank Destroyers, Grizzlies,
+    # infantry and aircraft. Light armour is what lets those answer it (Gattling and Flak do 10% to heavy);
+    # heavy at 900 HP it matched or beat the Grizzly against nearly everything (was 1500 HP, then 750, then 375)
+    "Strength": "700",                   # 300
+    "Armor": "light",                    # heavy
+    "Speed": "4",                        # 6
     "Sight": "10",                       # 8
     "ROT": "8",                          # 5
-    "Cost": "3000",                      # 1200
-    "Soylent": "3000",
+    "Cost": "2250",                      # 1200; was 1500, then 3000
+    "Soylent": "2250",
     "SelfHealing": "yes",                # regenerates like it has a repair drone
     "ImmuneToPsionics": "yes",           # Yuri can't mind-control it
     "ImmuneToRadiation": "yes",
@@ -65,7 +70,7 @@ NEW_SECTIONS = f"""
 ; ===== Liberator mod (Allied-only Tesla tank) =====
 [ATankBolt]
 Damage=300
-ROF=140
+ROF=100
 Range=7
 Speed=100
 Warhead=LibertyElectric
@@ -75,7 +80,7 @@ IsElectricBolt=true
 
 [ATankBoltE]
 Damage=450
-ROF=100
+ROF=70
 Range=8
 Speed=100
 Warhead=LibertyElectric
@@ -83,9 +88,10 @@ Report=TeslaTankAttack
 Projectile=Electricbounce
 IsElectricBolt=true
 
-; Like [Electric], but full damage against buildings too
+; Like [Electric], but full damage against buildings too, and a quarter against infantry: a bolt is
+; wasted on one soldier (two to kill a GI), so infantry crowds are the answer to it
 [LibertyElectric]
-Verses=100%,100%,100%,100%,100%,100%,100%,100%,100%,200%,100%
+Verses=25%,25%,25%,100%,100%,100%,100%,100%,100%,200%,100%
 InfDeath=5
 Wood=yes
 Wall=yes
