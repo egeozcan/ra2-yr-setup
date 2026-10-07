@@ -204,6 +204,11 @@ BALANCE = {
     # Grizzlies destroyed 0.49 of their own value lost, against 1.66 for Rhinos and 1.53 for Lashers.
     # Rhino parity on armour; still cheaper (700 vs 900) and faster (7 vs 6).
     ("MTNK", "Strength"): "400",
+    # 2026-10-07: with the reworked Liberator and no AI count caps, Russia trailed (107 wins of 256 against
+    # America 125 and Yuri 128, 384 seeded strategy games), and the Grizzly at 400 HP and 700 beat the Rhino
+    # at equal cost (0.31). At 450 HP: 116, 115, 129 on the same seeds (screened against Rhino at 800 and a
+    # faster Bulldozer); the user's call.
+    ("HTNK", "Strength"): "450",
     # 2026-10-01: Yuri won 13 of 16 (7-1 against America, 6-2 against Russia). Its leaders by value
     # destroyed per value lost: Gatling Cannon 7.2, Gatling Tank 1.65, Floating Disc 1.6. Dearer, not
     # weaker, at the user's request; the refund (Soylent) follows the price.

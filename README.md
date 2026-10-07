@@ -1909,6 +1909,10 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
   - **Kept, on all 384 games (seeds 0–3):** America 68–52 against Russia and 57–62 against Yuri, Russia 55–66
     against Yuri (before all this: 52–67, 49–65, 54–65). Total wins: America 125, Russia 107, Yuri 128 (101,
     121, 130 before). America and Yuri are even. Russia trails both; its deficit against Yuri is older.
+- **Rhino 450 HP** (2026-10-07, the user's call; `HTNK` Strength 400 → 450, in `BALANCE`): after the above,
+  Russia trailed. Screened on seeds 0–1 against the Rhino at 800 and the Bulldozer at speed 4 (no change).
+  On all 384 games: America 61–58 against Russia and 55–66 against Yuri, Russia 57–63 against Yuri; total
+  wins America 116, Russia 115, Yuri 129 (125, 107, 128 before).
 - **Bulldozers in Soviet sieges** (2026-10-07, user's call): see the Bulldozer section. A staged siege, with
   Bulldozers trailing 8 cells behind the army while enemy tanks were within 8 cells, made Russia worse (46 and
   51 wins of 128, Bulldozer ratio 0.12) and was dropped.
