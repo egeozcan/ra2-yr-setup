@@ -690,48 +690,41 @@ static void call_bytes(BYTE out[5], DWORD addr, DWORD target)
     memcpy(out + 1, &rel, 4);
 }
 
+/* All or nothing: a partial set misbehaves. The arrival keep-hover or the release skips without the UnitClass::AI
+ * slot leave a human player's victim hovering where it arrived, never following; without the Stop patch a carried
+ * victim can't be dropped. Every check runs, so the log names each site that differs. */
 static void patch_magnetron(void)
 {
     BYTE b[5];
-    int ok = 0;
+    int ok = 1;
     call_bytes(b, CALL_RELEASE_SETDEST, RELEASE_LOCOMOTOR);
-    if (patch_checked("release on destination", CALL_RELEASE_SETDEST, b, 5)) {
-        patch_rel(CALL_RELEASE_SETDEST, 0xE8, (DWORD)release_unless_carry);
-        ok++;
-    }
+    ok &= patch_checked("release on destination", CALL_RELEASE_SETDEST, b, 5);
     call_bytes(b, CALL_RELEASE_IDLE, RELEASE_LOCOMOTOR);
-    if (patch_checked("release on idle", CALL_RELEASE_IDLE, b, 5)) {
-        patch_rel(CALL_RELEASE_IDLE, 0xE8, (DWORD)release_unless_carry);
-        ok++;
+    ok &= patch_checked("release on idle", CALL_RELEASE_IDLE, b, 5);
+    ok &= patch_checked("jumpjet arrival", JJ_ARRIVED, (const BYTE[]){ 0xC7, 0x86, 0x80, 0, 0, 0, 0, 0, 0, 0 }, 10);
+    ok &= patch_checked("stop event", STOP_EVENT, (const BYTE[]){ 0x8B, 0x86, 0xAC, 0, 0, 0 }, 6);
+    ok &= patch_checked("magnetron beam", WAVE_KEEP,
+                        (const BYTE[]){ 0x39, 0x9F, 0xB4, 0x02, 0, 0, 0x0F, 0x85, 0x99, 0, 0, 0 }, 12);
+    DWORD ai = UNIT_AI, fire = UNIT_FIRE, fn;
+    ok &= patch_checked("unit AI vtable slot", UNIT_AI_SLOT, (const BYTE *)&ai, 4);
+    ok &= patch_checked("unit Fire vtable slot", UNIT_FIRE_SLOT, (const BYTE *)&fire, 4);
+    if (!ok) {
+        logmsg("magnetron carry: not patched (stock Magnetron; the Brutal siege update in UnitClass::AI is off too)");
+        return;
     }
-    if (patch_checked("jumpjet arrival", JJ_ARRIVED, (const BYTE[]){ 0xC7, 0x86, 0x80, 0, 0, 0, 0, 0, 0, 0 }, 10)) {
-        patch(JJ_ARRIVED + 5, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90 }, 5);
-        patch_rel(JJ_ARRIVED, 0xE9, (DWORD)arrive_stub);
-        ok++;
-    }
-    if (patch_checked("stop event", STOP_EVENT, (const BYTE[]){ 0x8B, 0x86, 0xAC, 0, 0, 0 }, 6)) {
-        patch(STOP_EVENT + 5, (const BYTE[]){ 0x90 }, 1);
-        patch_rel(STOP_EVENT, 0xE8, (DWORD)stop_stub);
-        ok++;
-    }
-    if (patch_checked("magnetron beam", WAVE_KEEP,
-                      (const BYTE[]){ 0x39, 0x9F, 0xB4, 0x02, 0, 0, 0x0F, 0x85, 0x99, 0, 0, 0 }, 12)) {
-        patch(WAVE_KEEP + 5, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, 7);
-        patch_rel(WAVE_KEEP, 0xE9, (DWORD)wave_stub);
-        ok++;
-    }
-    DWORD ai = UNIT_AI, fn = (DWORD)unit_ai;
-    if (patch_checked("unit AI vtable slot", UNIT_AI_SLOT, (const BYTE *)&ai, 4)) {
-        patch(UNIT_AI_SLOT, (const BYTE *)&fn, 4);
-        ok++;
-    }
-    DWORD fire = UNIT_FIRE;
+    patch_rel(CALL_RELEASE_SETDEST, 0xE8, (DWORD)release_unless_carry);
+    patch_rel(CALL_RELEASE_IDLE, 0xE8, (DWORD)release_unless_carry);
+    patch(JJ_ARRIVED + 5, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90 }, 5);
+    patch_rel(JJ_ARRIVED, 0xE9, (DWORD)arrive_stub);
+    patch(STOP_EVENT + 5, (const BYTE[]){ 0x90 }, 1);
+    patch_rel(STOP_EVENT, 0xE8, (DWORD)stop_stub);
+    patch(WAVE_KEEP + 5, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, 7);
+    patch_rel(WAVE_KEEP, 0xE9, (DWORD)wave_stub);
+    fn = (DWORD)unit_ai;
+    patch(UNIT_AI_SLOT, (const BYTE *)&fn, 4);
     fn = (DWORD)unit_fire;
-    if (patch_checked("unit Fire vtable slot", UNIT_FIRE_SLOT, (const BYTE *)&fire, 4)) {
-        patch(UNIT_FIRE_SLOT, (const BYTE *)&fn, 4);
-        ok++;
-    }
-    logmsg("magnetron carry: %d of 7 patches applied", ok);
+    patch(UNIT_FIRE_SLOT, (const BYTE *)&fn, 4);
+    logmsg("magnetron carry: all 7 patches applied");
 }
 
 /* ---- test units ----
