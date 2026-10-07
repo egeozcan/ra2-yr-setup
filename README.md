@@ -1913,6 +1913,22 @@ plus army value, and within 20% count as a draw.
   The 2026-10-07 rows are the first against the repaired stock AI. Every game's seed is in its
   `yspawn.ini`, so any of them can be replayed (`--seed`), exactly through its opening at least.
 - An MCV that takes over 3000 frames to build (low power) can be ordered a second time.
+- **Yuri is too strong in director-vs-director play** (2026-10-07, `strat` and `strat_mcv` on two seeds
+  each, 64 games a pairing): Yuri beat America 43–17 (4 draws) and Russia 46–17, while America and
+  Russia were even (26–33). It also decides the hard set: on Tower, with the same seeds and starts,
+  the director won 6 of 6 as Yuri, 3 of 6 as America and 1 of 6 as Russia against the other two.
+  - **Not the fighting.** Trades were even (value destroyed for value lost, 0.85 against 0.84 in
+    America–Yuri), and mind-controlled units did almost nothing (`yspawn-duels.csv`).
+  - **The economy, and the bases.** Yuri's Slave Miner (1,750: a refinery and five slaves on the
+    ore, from the war factory) put a Yuri house on five refineries by frame 6,000 against 1.5, and
+    its army was 25–40% larger from frame 12,000. It destroyed 35–50% more building value a game
+    (Lashers, Initiates, Magnetrons), while America and Russia destroyed more units.
+  - **Tried in the director, none kept** (same seeds, 192 games each): refineries from frame 3,000
+    and rich or not, America 22 wins and Russia 19 (from 17 and 17), within noise; refineries
+    ahead of extra war factories, America 7 and Russia 12 (the armies came too late); two
+    harvesters a refinery on top, 20 and 20; Yuri's Slave Miners held to the refinery schedule, 17
+    and 18. So the gap looks like the game's balance: the Slave Miner's price or slaves, or Yuri's
+    unit prices, are the levers (the user's call, as with the earlier price rises).
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
   post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
   12W 2L 2D to 16/16 for the same build.
