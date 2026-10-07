@@ -2180,6 +2180,10 @@ static void dir_army(BYTE *house, DirState *d)
             d->state = DIR_GATHER;
         } else
             goal = d->objective_at;
+        /* the attack ended here, after the bookkeeping above: the retreat's dwell and the patience
+         * before the next launch count from now, and a rush is over */
+        if (d->state != DIR_ATTACK)
+            d->state_frame = d->last_attack_end = CURRENT_FRAME;
     }
     /* Cohesion: the marching group's median distance to the objective. Units well ahead of it
      * hold their ground until the rest catch up, instead of arriving one by one. */
