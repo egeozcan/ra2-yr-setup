@@ -87,7 +87,7 @@ struct DirState {
     int reached;                              /* this attack got within 15 cells of an objective */
     BYTE *unreachable[8];                     /* objectives the army made no progress toward */
     int unreachable_count;
-    CellXY base, rally, threat_at, objective_at, centroid, front;
+    CellXY base, rally, threat_at, objective_at, centroid, front, rear;   /* rear: where idle Bulldozers wait */
     BYTE *objective, *enemy, *rally_enemy;
     BYTE *repair_hut, *repair_engineer;       /* bridge repair job */
     CellXY repair_eng_at;                     /* where the engineer was last seen alive */
@@ -109,6 +109,10 @@ struct DirState {
     int third_party, last_attack_end, next_repick;          /* other enemies' units near the target's base */
     int naval_threat, want_navy;                            /* enemy ships near our buildings */
     int air_near, air_seen, own_aa, want_aa, next_aa_defense;   /* enemy aircraft near home or the army */
+    unsigned last_dozer_id;   /* the newest Bulldozer seen (dir_dozers) */
+    int dozer_value, want_dozer;   /* our Bulldozers' value, and whether to build one (dir_dozers) */
+    int dozer_order_frame;         /* the last Bulldozer ordered */
+    struct { unsigned id; char job; CellXY at; } dozer_jobs[32];   /* benchmark: what each was doing (dir_dozers) */
     int navy_state, navy_launch, navy_best, navy_progress, navy_bad_count, last_navy_log;   /* fleet attacks */
     BYTE *navy_target, *navy_bad[8];
     CellXY navy_target_at;
@@ -541,6 +545,7 @@ static int dir_saving_for_refinery(BYTE *house)
         && FIELD(house, OIL_H_CASH, int) < 2500;
 }
 
+#define DIR_DOZER_GAP 450   /* frames between Bulldozer orders (dir_unit_production) */
 #define DIR_ARMY_CAP 150   /* past this many combat units, no more (dir_veto_production) */
 static void dir_choose_vehicle(BYTE *house, DirState *d)
 {
@@ -576,21 +581,10 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
     }
     int role = dir_pick_role(shares, have, available);
     /* Soviet hunters for enemy mind-controllers: two per controller (and two more), up to ten,
-     * Siege Choppers for every second Terror Drone once they can be built */
-    /* Bulldozers (mod) for enemy Psychic Towers: two, which dir_dozers sends at them */
-    /* both only once an army stands: built first, they replaced the early tanks and the Russians
-     * lost 11 of 12 duels with Yuri (from about half) */
-    BYTE *dozer = side == 1 && d->enemy_psytowers && !ground_full && army_value >= 12000
-        ? find_type(UNITTYPE_ARRAY, "SBDOZR") : NULL;
-    if (dozer && dir_owned_of(house, dozer) < 2 && dir_first_buildable(house, UNITTYPE_ARRAY, "SBDOZR", 1000)) {
-        if (bench_file && CURRENT_FRAME - d->last_hunt_log > 3000) {
-            d->last_hunt_log = CURRENT_FRAME;
-            logmsg("director: house %d frame %d: %d enemy Psychic Towers, building a Bulldozer", FIELD(house, 0x30, int),
-                   CURRENT_FRAME, d->enemy_psytowers);
-        }
-        pick[ROLE_SIEGE] = dozer;
-        role = ROLE_SIEGE;
-    } else if (side == 1 && d->enemy_minds && !ground_full) {
+     * Siege Choppers for every second Terror Drone once they can be built; only once an army
+     * stands: built first, they replaced the early tanks and the Russians lost 11 of 12 duels with
+     * Yuri (from about half). (Bulldozers are a one-off order ahead of stock picks: dir_dozers.) */
+    if (side == 1 && d->enemy_minds && !ground_full) {
         BYTE *dron = find_type(UNITTYPE_ARRAY, "DRON"), *schp = find_type(UNITTYPE_ARRAY, "SCHP");
         int drones = dron ? dir_owned_of(house, dron) : 0, choppers = schp ? dir_owned_of(house, schp) : 0;
         int want = 2 * d->enemy_minds + 2 < 10 ? 2 * d->enemy_minds + 2 : 10;
@@ -689,6 +683,10 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_warships[side0], 1000) : NULL;
     if (!warship && d->want_aa && side0 >= 0 && side0 <= 2)   /* the air raid outranks stock picks too */
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, dir_aa_vehicles[side0], 0);
+    /* a Bulldozer, ahead of stock picks too; one at a time: every war factory took the order, and one
+     * in the making isn't counted, so five came at once */
+    if (!warship && d->want_dozer && CURRENT_FRAME - d->dozer_order_frame >= DIR_DOZER_GAP)
+        warship = dir_first_buildable(house, UNITTYPE_ARRAY, "SBDOZR", 1000);
     if (!warship && side0 == 2 && d->fleet_air >= 1500 && !dir_owned_of(house, find_type(UNITTYPE_ARRAY, "DISK")))
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, "DISK", 0);   /* air cover for the fleet */
     if (!warship && d->want_col_ferry && side0 >= 0 && side0 <= 2)   /* a transport to colonise an island */
@@ -723,6 +721,8 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         if (index >= 0) {
             FIELD(house, H_PRODUCING_UNIT, int) = current = d->unit_request = index;
             d->unit_request_frame = CURRENT_FRAME;
+            if (!_stricmp((char *)warship + T_ID, "SBDOZR"))
+                d->dozer_order_frame = CURRENT_FRAME;
         }
     }
     /* The MCV is bought as an urgent order when cash allows; the army is never paused for it. */
@@ -3484,6 +3484,27 @@ static CellXY dir_pick_rally(DirState *d)
     return fallback;
 }
 
+/* Where idle Bulldozers wait: behind the base, away from the enemy (8-16 cells from its centre, the
+ * rally's way turned round), on ground they can reach; else the base's centre. At the rally, where
+ * the army gathers and raids land, waiting Bulldozers were most of those lost. */
+static CellXY dir_pick_rear(DirState *d)
+{
+    if (!d->enemy)
+        return d->base;
+    CellXY e = dir_house_center(d->enemy), base = d->base;
+    int dx = base.X - e.X, dy = base.Y - e.Y, len = 1;
+    while (len * len < dx * dx + dy * dy)
+        len++;
+    int zone = dir_zone(d->rally);
+    for (int step = 16; step >= 8; step -= 4) {
+        CellXY want = { (short)(base.X + dx * step / len), (short)(base.Y + dy * step / len) }, out = { 0, 0 };
+        ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, zone, 0, 0, 3, 3, 1, 0, 0, 0, &want, 0, 0);
+        if (out.X > 0 && out.Y > 0 && dir_dist2(out, want) <= 6 * 6)
+            return (CellXY){ (short)(out.X + 1), (short)(out.Y + 1) };
+    }
+    return base;
+}
+
 /* ---- expansion ----
  * When harvesters stand idle (ore gone or cut off), look for reachable ore away from our refineries
  * and enemy structures, build an MCV and deploy it there. An AI construction yard re-centres the
@@ -4771,42 +4792,207 @@ static void dir_ferry(BYTE *house, DirState *d)
     }
 }
 
-/* ---- Bulldozers on Psychic Towers ----
+/* ---- Bulldozers: Psychic Towers, then demolition ----
  * The Soviet Bulldozer (mod) can't be mind-controlled, and its blade does double damage to
- * buildings: every 150 frames each of ours goes for the nearest enemy Psychic Tower within 45 cells
- * of it, out of any attack team. Other units sent at a tower come back as Yuri's. */
+ * buildings and infantry but 5% to vehicles. Among the army it traded 0.26: tanks killed it on the
+ * way (Lashers, Grizzlies). In arena sieges it razed bases best of all once no tanks guarded them.
+ * So every 150 frames each of ours, out of any attack team:
+ * - goes for the nearest enemy Psychic Tower within 45 cells that it can drive to, with no enemy
+ *   vehicles or aircraft on the way (other units sent at a tower come back as Yuri's);
+ * - else for the nearest enemy building it can drive to with no armed enemy vehicles or aircraft
+ *   worth 1000 reaching it or the way there: outer defences, expansions, refineries, and buildings
+ *   in a main base only near the front of an attack on it;
+ * - else it waits behind the base, and joins the army only against a raid on the base.
+ * A tower or building across water was ordered again every 150 frames for 25000 frames (Lostlake). */
+#define DIR_DOZER_GUARD 1000   /* enemy vehicle and aircraft value near a building that keeps Bulldozers off */
+#define DIR_DOZER_SHARE 15     /* percent of the army's value in Bulldozers */
+#define DIR_DOZER_ARMY 8000    /* army value before the first one */
+
+/* Some cell within r of c lies in the movement zone `zone` (a building's own cells have none). */
+static int dir_zone_near(CellXY c, int r, int zone)
+{
+    for (int dy = -r; dy <= r; dy++)
+        for (int dx = -r; dx <= r; dx++) {
+            CellXY n = { (short)(c.X + dx), (short)(c.Y + dy) };
+            if (dir_cell(n) && dir_zone(n) == zone)
+                return 1;
+        }
+    return 0;
+}
+
+/* Armed enemy vehicles and aircraft that reach within r cells of c (their weapon's range added; miners
+ * aside): what a Bulldozer can't fight. */
+static int dir_guard_value(CellXY c, int r)
+{
+    int v = 0;
+    for (int i = 0; i < dir_enemy_count; i++) {
+        DirEnemy *e = &dir_enemies[i];
+        int reach = r + e->range;
+        if (e->armed && !e->building && !e->infantry && !e->naval && !dir_miner(e->obj) && dir_dist2(e->at, c) <= reach * reach)
+            v += e->value;
+    }
+    return v;
+}
+
+/* No enemy vehicles or aircraft guard the way from a to b, b included (every 4 cells on the line). */
+static int dir_dozer_way_clear(CellXY a, CellXY b)
+{
+    int steps = dir_isqrt(dir_dist2(a, b)) / 4 + 1;
+    for (int k = 1; k <= steps; k++) {
+        CellXY p = { (short)(a.X + (b.X - a.X) * k / steps), (short)(a.Y + (b.Y - a.Y) * k / steps) };
+        if (dir_guard_value(p, k == steps ? 6 : 3) >= DIR_DOZER_GUARD)
+            return 0;
+    }
+    return 1;
+}
+
+/* For the benchmark: each Bulldozer's job at the last pass (A army, W waiting, B building, P Psychic
+ * Tower, T a stock team's, F on a ferry), and where; one gone since is logged with it. */
+static void dir_dozer_note(DirState *d, BYTE *o, char job, CellXY at)
+{
+    unsigned id = dir_key(o);
+    int free = -1;
+    for (int k = 0; k < 32; k++) {
+        if (d->dozer_jobs[k].id == id) {
+            d->dozer_jobs[k].job = job;
+            d->dozer_jobs[k].at = at;
+            return;
+        }
+        if (!d->dozer_jobs[k].id && free < 0)
+            free = k;
+    }
+    if (free >= 0) {
+        d->dozer_jobs[free].id = id;
+        d->dozer_jobs[free].job = job;
+        d->dozer_jobs[free].at = at;
+    }
+}
+
+static void dir_dozer_losses(BYTE *house, DirState *d, BYTE *dozer_type)
+{
+    DynVec *tv = OIL_TECHNO_ARRAY;
+    for (int k = 0; k < 32; k++) {
+        if (!d->dozer_jobs[k].id)
+            continue;
+        int alive = 0;
+        for (int i = 0; i < tv->Count && !alive; i++) {
+            BYTE *o = tv->Items[i];
+            alive = oil_live(o) && dir_key(o) == d->dozer_jobs[k].id && FIELD(o, O_OWNER, BYTE *) == house
+                && dir_type(o) == dozer_type;
+        }
+        if (!alive) {
+            logmsg("director: house %d frame %d: Bulldozer %u lost at %d,%d, job %c", FIELD(house, 0x30, int), CURRENT_FRAME,
+                   d->dozer_jobs[k].id, d->dozer_jobs[k].at.X, d->dozer_jobs[k].at.Y, d->dozer_jobs[k].job);
+            d->dozer_jobs[k].id = 0;
+        }
+    }
+}
+
 static void dir_dozers(BYTE *house, DirState *d)
 {
-    (void)d;
     DynVec *tv = OIL_TECHNO_ARRAY, *bv = OIL_BUILDING_ARRAY;
-    for (int i = 0; i < tv->Count; i++) {
-        BYTE *o = tv->Items[i], *type;
-        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || !(type = dir_type(o))
-            || _stricmp((char *)type + T_ID, "SBDOZR"))
+    BYTE *dozer_type = find_type(UNITTYPE_ARRAY, "SBDOZR");
+    if (bench_file)
+        dir_dozer_losses(house, d, dozer_type);
+    int dozers = 0;
+    for (int i = 0; dozer_type && i < tv->Count; i++) {
+        BYTE *o = tv->Items[i];
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_type(o) != dozer_type)
             continue;
+        dozers++;
+        if (dir_key(o) > d->last_dozer_id) {   /* for the benchmark: how many are fielded */
+            d->last_dozer_id = dir_key(o);
+            logmsg("director: house %d frame %d: new Bulldozer %u", FIELD(house, 0x30, int), CURRENT_FRAME, dir_key(o));
+        }
         CellXY at = object_cell(o);
-        BYTE *best = NULL;
+        if (dir_crosses(o)) {
+            dir_dozer_note(d, o, 'F', at);
+            continue;
+        }
+        int zone = dir_zone(at);
+        BYTE *best = NULL, *current = FIELD(o, O_TARGET, BYTE *);
         int best_d = 45 * 45 + 1;
         for (int k = 0; k < bv->Count; k++) {
             BYTE *b = bv->Items[k], *bt = FIELD(b, B_TYPE, BYTE *);
             int dd;
             if (oil_live(b) && bt && !_stricmp((char *)bt + T_ID, "YAPSYT") && dir_hostile(house, FIELD(b, O_OWNER, BYTE *))
-                && (dd = dir_dist2(object_cell(b), at)) < best_d) {
+                && (dd = dir_dist2(object_cell(b), at)) < best_d && dir_zone_near(object_cell(b), 3, zone)
+                && dir_dozer_way_clear(at, object_cell(b))) {
                 best_d = dd;
                 best = b;
             }
         }
-        if (best && FIELD(o, O_TARGET, BYTE *) == best) {
-            dir_reserve(o, 300);   /* Bulldozers are army units too: the army must not call it away */
+        const char *what = "the Psychic Tower";
+        /* demolition, not while the base is being raided: then the army needs every unit */
+        if (!best && d->threat_value < 1500) {
+            what = "a building";
+            best_d = 0x7FFFFFFF;
+            for (int k = 0; k < dir_enemy_count; k++) {
+                DirEnemy *e = &dir_enemies[k];
+                BYTE *owner = FIELD(e->obj, O_OWNER, BYTE *);
+                int dd = dir_dist2(e->at, at);
+                /* the one it is on keeps it while still unguarded: no switching between two */
+                if (e->obj == current)
+                    dd /= 4;
+                if (!e->building || e->capturable || dir_passive(owner) || dd >= best_d
+                    || in_list("GAWALL,NAWALL,YAWALL,GAGATE,NAGATE,YAGATE", (char *)dir_type(e->obj) + T_ID))
+                    continue;
+                /* in a main base only beside an attack there: alone, the first ten walked into the
+                 * defending army (Magnetrons, Gattling Tanks, Discs) and razed nothing */
+                if (dir_dist2(e->at, dir_house_center(owner)) <= 25 * 25
+                    && (d->state != DIR_ATTACK || owner != d->enemy || dir_dist2(e->at, d->front) > 20 * 20))
+                    continue;
+                if (!dir_zone_near(e->at, 3, zone) || !dir_dozer_way_clear(at, e->at))
+                    continue;
+                best_d = dd;
+                best = e->obj;
+            }
+        }
+        if (!best) {
+            /* a raid on the base, or cut off by water: an army unit like any other, at once */
+            if (d->threat_value >= 1500 || d->island || d->blocked) {
+                if (dir_is_reserved(o))
+                    dir_reserve(o, 0);
+                dir_dozer_note(d, o, 'A', at);
+                continue;
+            }
+            /* else it waits behind the base, out of the army: left to it, it marched into the tank
+             * fights (eight a game traded 0.27) */
+            if (!dir_take_from_team(o)) {
+                dir_dozer_note(d, o, 'T', at);
+                continue;
+            }
+            dir_reserve(o, 300);
+            dir_dozer_note(d, o, 'W', at);
+            if (dir_dist2(at, d->rear) > 5 * 5) {
+                dir_why = "Bulldozer waits";
+                dir_command(o, d->rear, NULL, 1);
+            }
             continue;
         }
-        if (!best || !dir_take_from_team(o))
+        char job = *what == 't' ? 'P' : 'B';
+        if (!dir_take_from_team(o))
+            job = 'T';
+        dir_dozer_note(d, o, job, at);
+        if (job == 'T')
+            continue;
+        dir_reserve(o, 300);   /* out of the army's reach while on its job */
+        if (current == best)
             continue;
         dir_order(o, MISSION_ATTACK, best, NULL);
-        dir_reserve(o, 300);
-        logmsg("director: house %d frame %d: Bulldozer at %d,%d goes for the Psychic Tower at %d,%d",
-               FIELD(house, 0x30, int), CURRENT_FRAME, at.X, at.Y, object_cell(best).X, object_cell(best).Y);
+        CellXY to = object_cell(best);
+        logmsg("director: house %d frame %d: Bulldozer at %d,%d goes for %s (%.24s) at %d,%d", FIELD(house, 0x30, int),
+               CURRENT_FRAME, at.X, at.Y, what, (char *)dir_type(best) + T_ID, to.X, to.Y);
     }
+    d->dozer_value = dozer_type ? dozers * dir_cost(dozer_type) : 0;
+    /* Bulldozers up to a share of the army's value, built ahead of stock picks: in the siege role
+     * they came after whatever stock teams queued, and a Russian army held 1.1% of them. Only once
+     * an army stands (built first, they replaced the early tanks and lost the opening), and only
+     * with the enemy's buildings reachable by land; two against Psychic Towers from 12000. */
+    int army = d->army_value + d->dozer_value;
+    d->want_dozer = dozer_type && FIELD(house, OIL_H_SIDE, int) == 1 && !d->island && !d->blocked && d->threat_value < 1500
+        && ((army >= DIR_DOZER_ARMY && d->dozer_value * 100 < army * DIR_DOZER_SHARE)
+            || (d->enemy_psytowers && army >= 12000 && dozers < 2));
 }
 
 /* ---- navy ----
@@ -6861,6 +7047,7 @@ static void dir_update(BYTE *house)
         d->rally_frame = CURRENT_FRAME + 3000;
         d->rally = dir_pick_rally(d);
         d->home_zone = dir_zone(d->rally);   /* the rally is clear land, unlike a built-over base centre */
+        d->rear = dir_pick_rear(d);
     }
     if (bench_file && human_in_peace && CURRENT_FRAME % 600 < 15)
         dir_report_intruders(house);

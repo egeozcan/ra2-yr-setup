@@ -661,15 +661,33 @@ All four Soviet countries can build it with a **War Factory and Radar** (`NAWEAP
 It costs **1500**, has **2400 HP**, heavy armor, speed **2**, no turret, and is **immune to mind control**
 (`ImmuneToPsionics=yes`), so it can drive up to a Psychic Tower and level it. (2026-10-04: cheaper and tougher
 for that job, slower to balance it; it was 2000, 1800 HP, speed 3, and could be mind-controlled.) The
-director sends its Bulldozers at enemy Psychic Towers within 45 cells, out of any attack team, and a
-Soviet director house that has seen enemy Psychic Towers keeps two.
+director sends its Bulldozers at enemy Psychic Towers within 45 cells, out of any attack team.
 Since 2026-10-07 (the user's call, after the arena showed it is the best siege unit) the Bulldozer is also an army
 unit: the director's Soviet siege role builds it before the V3, and in a fight it goes for buildings (defences
-first) and infantry and leaves vehicles to the tanks. One sent at a Psychic Tower is held out of the army for 300
-frames at a time. Over the 384 seeded strategy games this changed nothing measurable: Russia won 50 of 128 against
-America and 55 against Yuri (53 and 52 without), and the Bulldozers still destroyed only a quarter of their value
-(0.26). Most die to Lashers and Grizzlies on the way, at speed 2 among the army; without the targeting it was
-0.25. Holding them back until the escort has won the field would be the next step.
+first) and infantry and leaves vehicles to the tanks. Over the 384 seeded strategy games this changed nothing
+measurable, and the director hardly built any: siege picks come only when stock team picks leave the queue free,
+so a Russian army held 1.1% Bulldozers (about one a game), which traded 0.26, killed on the way by Lashers and Grizzlies.
+
+**More Bulldozers, used apart from the army** (2026-10-07, at the user's request to make the Soviet AI use them
+more without moving faction balance; `dir_dozers`):
+- **Production:** a one-off order ahead of stock picks, like anti-air, until Bulldozers are 15% of the army's
+  value, from an army of 8000 (two against Psychic Towers from 12000), one order per 450 frames (every war
+  factory took the order and five came at once), not while the base is raided or the enemy is across water.
+- **Jobs**, every 150 frames, each out of any attack team: the nearest enemy Psychic Tower within 45 cells, else
+  the nearest enemy building with no armed enemy vehicles or aircraft worth 1000 reaching it or the way there
+  (sampled every 4 cells, their weapon ranges added); in a main base only within 20 cells of the front of an attack
+  on it. Walls, gates and civilian buildings aside. A target must be drivable to (a movement-zone check): on
+  Lostlake a Bulldozer was sent at a tower across the water 868 times in 25,000 frames.
+- **Otherwise** it waits behind its base (8-16 cells out, away from the enemy), and joins the army only against a raid
+  of 1500 or more. Left to the army it marched into the tank fights.
+- **Result** over the same 384 seeded games: Russia fields 4.8 Bulldozers a game (about one before), and wins
+  America 117, Russia 114, Yuri 134 (116, 115, 129 before; within noise). They razed 168,650 in buildings (34,300
+  before), but still trade about 0.25: speed 2 and 5% against vehicles. Bench logs note each one's job when lost
+  (`Bulldozer N lost at X,Y, job W|B|P|A|T|F`): most die walking between jobs, caught by tanks.
+- **Tried and dropped** (2 seeds each): first, alone into main bases (10 lost for 2200 in a smoke game); waiting at the
+  rally, where the army gathers (the same ratio, more lost while waiting); a Bulldozer within 6 cells of a building
+  staying on it whatever comes (0.23); jobs only within 30 cells of home or 20 of the front (0.29, Russia 52 of 192
+  against 63, more money idle). Better trades would need its stats (speed, damage to light vehicles): the user's call.
 It cannot appear in starting armies or crates. Soviet AI can build mixed assault teams of two bulldozers and four Rhinos
 once it has Radar and a War Factory, on easy, medium and hard difficulties.
 
@@ -1424,8 +1442,8 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
   the army is headed. A Soviet house facing mind-controllers keeps two hunters per controller,
   plus two, up to ten, with a Siege Chopper for every second Terror Drone once it can build them
   ("hunters" in the log).
-- **Bulldozers** (mod, now immune to mind control) go for enemy Psychic Towers within 45 cells;
-  a Soviet house that has seen enemy towers keeps two.
+- **Bulldozers** (mod, now immune to mind control) go for enemy Psychic Towers within 45 cells they can reach
+  with no enemy tanks on the way; since 2026-10-07 also for unguarded enemy buildings (see the Bulldozer section).
 - **Blackouts.** Psychic Towers, Prism Towers, Tesla Coils and Grand Cannons stop without power. An
   attack estimates how many of the target's plants must fall for its power to drop below its
   drain (output over plants); at three or fewer, plants count as twice as near when it picks its
