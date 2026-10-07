@@ -105,9 +105,9 @@ def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
         ini["Settings"].update(extra)
         if units:
             ini["Units"] = {str(i): u for i, u in enumerate(units, 1)}
-    if extra and extra.get("StartBase"):   # 1-3: every player starts with that tier's buildings
+    tier = int(ini["Settings"].pop("StartBase", 0) or 0)
+    if tier:   # 1-3: every player starts with that tier's buildings (0: the usual MCV)
         import startbase
-        tier = int(ini["Settings"].pop("StartBase"))
         countries = dict.fromkeys(startbase.country_name(c) for c in [4] + [a[0] for a in ais])
         ini["StartBase"] = startbase.section(countries, tier)
     for i, ai in enumerate(ais, 1):

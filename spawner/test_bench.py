@@ -57,6 +57,18 @@ class ResultTests(unittest.TestCase):
             bench.suite_list(str(self.dir), matches)
         self.assertEqual([c.args[0] for c in run.call_args_list], [str(self.dir / "00-A")])
 
+    def test_start_base_zero_keeps_the_mcv(self):
+        ini = bench.write_ini("A.mmx", [(0, 0, 1, 0)], -1, 1000, 0, 1, {"StartBase": "0"})
+        self.assertNotIn("StartBase", ini)
+        self.assertNotIn("StartBase", ini["Settings"])
+        with patch.object(startbase, "country_name", str), \
+                patch.object(startbase, "section", return_value={"Americans": "GACNST"}) as section:
+            ini = bench.write_ini("A.mmx", [(0, 0, 1, 0)], -1, 1000, 0, 1, {"StartBase": "2"})
+        self.assertEqual(section.call_args.args[1], 2)
+        self.assertEqual(dict(ini["StartBase"]), {"Americans": "GACNST"})
+        self.assertNotIn("StartBase", ini["Settings"])
+
+
 class BackupTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
