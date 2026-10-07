@@ -158,6 +158,7 @@ struct DirState {
     int miner_sent_frame[4], miner_sent_next;
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
     int cover_frame;
+    int naval_pick_quota;               /* naval_pick is the naval plan's fleet ship, which our own orders displace */
 };
 static DirState dir_state[32];
 
@@ -717,6 +718,17 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
     DynVec *ut = UNITTYPE_ARRAY;
     if (d->naval_pick && CURRENT_FRAME - d->naval_pick_frame > 3000)
         d->naval_pick = 0;   /* no yard took it: no yard, or it could not be built */
+    /* Our own one-off orders (ferries, the colonising transport, warships against ships) go ahead of
+     * the naval plan's fleet below and take the yard's order from a fleet ship still waiting in it:
+     * refilled first, the fleet held that order every tick and they were dropped. */
+    current = FIELD(house, H_PRODUCING_UNIT, int);
+    int naval_now = current >= 0 && current < ut->Count && ((BYTE *)ut->Items[current])[TT_NAVAL];
+    int naval_ours = naval_now && current == d->unit_request;
+    if (naval_ours && (!d->naval_pick || d->naval_pick_quota)) {
+        d->naval_pick = current + 1;
+        d->naval_pick_frame = CURRENT_FRAME;
+        d->naval_pick_quota = 0;
+    }
     /* A naval plan keeps a war fleet beside the army, in the yard's own order. Capital ships alone
      * sat helpless under aircraft and submarines, so escorts fill their share first: anti-air
      * (Aegis, Sea Scorpion; Yuri has none) and anti-submarine (Destroyer, Typhoon, Boomer), each 20%
@@ -754,16 +766,19 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         if (ship) {
             d->naval_pick = dir_type_index(UNITTYPE_ARRAY, ship) + 1;
             d->naval_pick_frame = CURRENT_FRAME;
+            d->naval_pick_quota = 1;
         }
     }
-    current = FIELD(house, H_PRODUCING_UNIT, int);
-    if (current >= 0 && current < ut->Count && ((BYTE *)ut->Items[current])[TT_NAVAL]) {
-        if (!d->naval_pick) {
+    /* A stock team's ship gets the yard only when the fleet above didn't claim it (taken first, it
+     * shielded itself from the fleet's escorts and capital ships). */
+    if (naval_now) {
+        if (!naval_ours && !d->naval_pick) {
             d->naval_pick = current + 1;
             d->naval_pick_frame = CURRENT_FRAME;
+            d->naval_pick_quota = 0;
         }
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
-        if (d->unit_request == current)
+        if (naval_ours)
             d->unit_request = -1;
         dir_choose_vehicle(house, d);
     }
