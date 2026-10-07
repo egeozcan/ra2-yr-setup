@@ -1128,7 +1128,8 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   - Units still on their way in are released when it sails. They held it at the dock.
   - The landing spot from the engine's zone lookup is rejected when it lies on our own land. The
     fallback is the shore cell off our land nearest the enemy base. Before, a failed lookup kept
-    the ferry at the dock for the whole game.
+    the ferry at the dock for the whole game. (Since 2026-10-07 the landing across the water keeps
+    out of the defences' reach: see "Smoke-test fixes".)
   - Each sailing logs how many units were left behind: still coming, more than 40 cells away, or
     busy.
   - **Tested** on Isolation, a 2–8 player island map, director against director. Every house
@@ -1544,6 +1545,20 @@ From a 20,000-frame Isolation smoke game (seven AIs) after the review fixes:
   number dropped earlier give-ups, so the same targets were given up again every few hundred frames
   (287 give-ups). It holds 512 now, and a full table reuses a gone target's slot first, then one not
   given up. In the rerun each house gave up each target once (95).
+- **Landings out of the defences' reach.** Across the water, a convoy lands on the shore cell off our
+  land nearest the enemy base that no hostile defence reaches (its weapon's range plus 3 cells, for
+  the transport coming in). With none, it takes the one the fewest defences reach. A cell in the
+  base's movement zone comes first: one below a cliff or on another island leads nowhere. Before,
+  the landing was the cell nearest the base, among the defences: the transports are amphibious,
+  drove ashore there and were destroyed, loads and all. In the first game, both Allied convoys that
+  sailed were gone by their next report.
+  - Each sailing logs the distance from the landing to the enemy base, whether the landing is in the
+    base's movement zone, and the value of the defences reaching it.
+  - In the rerun (one game, not a benchmark), all 13 sailings landed out of reach, 12–25 cells from
+    the base, and the transports came home empty. That game's log doesn't show whether the troops
+    then walked to the base.
+  - With the ground route blocked but the enemy's base on our land, the landing is still the engine's
+    zone lookup beside the base.
 
 ### Economy, defence and watching (2026-10-02, from the user's playtest notes)
 

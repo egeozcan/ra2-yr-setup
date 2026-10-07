@@ -3948,20 +3948,38 @@ static int dir_zone(CellXY c)
 static int dir_near_water(CellXY c, int r);
 static int dir_is_land(CellXY c);
 
-/* Where the ferry puts troops ashore: the zone lookup's cell beside the enemy base, unless that
- * is on our own land (zone labels mislead); else the shore cell off our land nearest to it. That
- * holds only with the enemy across the water: with the ground route blocked (a fallen bridge) but
- * the enemy's base on our land, every cell by it is our land, so no landing could be found and
- * loaded convoys would sit at the dock for good. */
-static CellXY dir_landing_spot(DirState *d, CellXY e)
+/* Where the ferry puts troops ashore. Across the water: a cell by the water off our land, the
+ * nearest to the enemy's base (e) that no hostile defence reaches (its weapon's range and 3 cells,
+ * for the transport coming in), else the one fewest defences reach; in the base's movement zone if
+ * any is (one below a cliff, or on another island, leads nowhere). The cell nearest the base, taken
+ * before, lay among the defences: transports drove ashore there and were destroyed, loads and all.
+ * *cover: the value of the defences reaching it.
+ * With the ground route blocked (a fallen bridge) but the enemy's base on our land: the zone
+ * lookup's cell beside the base, else the nearest by the water (every cell by it is our land, so
+ * the search off our land found none, and loaded convoys sat at the dock for good). */
+static CellXY dir_landing_spot(DirState *d, CellXY e, int *cover)
 {
     CellXY out = { 0, 0 };
-    ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &e, 1, dir_zone(e), 0, 0, 2, 2, 1, 0, 0, 0, &d->base, 0, 0);
+    *cover = 0;
     /* the enemy off our land, judged afresh (fills from the base): the island flag lags a fallen
      * bridge by up to 600 frames, and a convoy could then land on our own shore */
     int cut = !dir_land_house(d, d->enemy);
-    if (out.X > 0 && (!cut || !dir_land_reachable(out)))
-        return out;
+    if (!cut) {
+        ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &e, 1, dir_zone(e), 0, 0, 2, 2, 1, 0, 0, 0, &d->base, 0, 0);
+        if (out.X > 0)
+            return out;
+    }
+    struct { CellXY at; int reach, value; } guns[256];
+    int guns_n = 0;
+    for (int i = 0; i < dir_enemy_count && guns_n < 256 && cut; i++) {
+        DirEnemy *g = &dir_enemies[i];
+        if (g->building && g->armed && dir_dist2(g->at, e) <= 60 * 60) {
+            guns[guns_n].at = g->at;
+            guns[guns_n].reach = (g->range + 3) * (g->range + 3);
+            guns[guns_n++].value = g->value;
+        }
+    }
+    int zone = dir_zone(e), best = 0x7FFFFFFF;
     for (int r = 0; r < 40; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
@@ -3972,11 +3990,25 @@ static CellXY dir_landing_spot(DirState *d, CellXY e)
                 if (!cell || (cut && dir_is_land(c)))
                     continue;
                 int land = FIELD(cell, C_LANDTYPE, int);
-                if (land != 2 && land != 3 && land != 4 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
-                    && dir_near_water(c, 2))
+                if (land == 2 || land == 3 || land == 4 || (FIELD(cell, C_OCCUPATION, DWORD) & 0x80) || !dir_near_water(c, 2))
+                    continue;
+                if (!cut)
                     return c;
+                int value = 0;
+                for (int g = 0; g < guns_n; g++)
+                    if (dir_dist2(c, guns[g].at) <= guns[g].reach)
+                        value += guns[g].value;
+                /* rings run outward: a farther cell wins only by fewer defences, or by the zone */
+                int score = (dir_zone(c) != zone ? 1 << 24 : 0) + (value < (1 << 24) - 1 ? value : (1 << 24) - 1);
+                if (score < best) {
+                    best = score;
+                    out = c;
+                    *cover = value;
+                    if (!score)
+                        return out;
+                }
             }
-    return (CellXY){ 0, 0 };
+    return out;
 }
 
 /* Ground units of ours that could board: armed, not hover/air, not across already, on this side. */
@@ -4641,16 +4673,6 @@ static void dir_ferry(BYTE *house, DirState *d)
         return;
     if (!d->enemy)
         return;   /* no enemy left (island and blocked lag behind it): nowhere to land */
-    CellXY out = dir_landing_spot(d, dir_house_center(d->enemy));
-    if (out.X <= 0)
-        out = d->landing;   /* crowded now: the last landing spot */
-    if (out.X <= 0) {
-        static int last_log;
-        if (waited > 1200 && CURRENT_FRAME - last_log > 1500 && (last_log = CURRENT_FRAME))
-            logmsg("director: house %d frame %d: the ferry finds no landing near the enemy", FIELD(house, 0x30, int),
-                   CURRENT_FRAME);
-        return;
-    }
     /* none would go (empty, or held by a unit getting in): keep waiting; this "sailed" an empty
      * convoy every tick for 17000 frames */
     int sailable = 0;
@@ -4662,6 +4684,19 @@ static void dir_ferry(BYTE *house, DirState *d)
             && FIELD(d->ferry[k], COMBAT_MISSION, int) != MISSION_UNLOAD;
     if (!sailable)
         return;
+    int cover;
+    CellXY theirs = dir_house_center(d->enemy), out = dir_landing_spot(d, theirs, &cover);
+    if (out.X <= 0) {
+        out = d->landing;   /* crowded now: the last landing spot */
+        cover = -1;
+    }
+    if (out.X <= 0) {
+        static int last_log;
+        if (waited > 1200 && CURRENT_FRAME - last_log > 1500 && (last_log = CURRENT_FRAME))
+            logmsg("director: house %d frame %d: the ferry finds no landing near the enemy", FIELD(house, 0x30, int),
+                   CURRENT_FRAME);
+        return;
+    }
     d->landing = out;
     d->convoy_since = 0;
     int ships = 0, aboard = 0;
@@ -4678,9 +4713,11 @@ static void dir_ferry(BYTE *house, DirState *d)
         d->ferry_frame[k] = CURRENT_FRAME;
         dir_order(t, MISSION_MOVE, NULL, dir_cell(out));
     }
-    logmsg("director: house %d frame %d: convoy of %d sails with %d aboard to %d,%d (left behind: %d still coming, "
-           "%d over 40 cells away, %d busy; %d on this side, %d transports wanted)", FIELD(house, 0x30, int),
-           CURRENT_FRAME, ships, aboard, out.X, out.Y, called, distant, busy, d->home_ground, d->ferry_want);
+    logmsg("director: house %d frame %d: convoy of %d sails with %d aboard to %d,%d, %d cells from their base (%s its "
+           "zone), under defences worth %d (left behind: %d still coming, %d over 40 cells away, %d busy; %d on this "
+           "side, %d transports wanted)", FIELD(house, 0x30, int), CURRENT_FRAME, ships, aboard, out.X, out.Y,
+           dir_isqrt(dir_dist2(out, theirs)), dir_zone(out) == dir_zone(theirs) ? "in" : "outside", cover, called,
+           distant, busy, d->home_ground, d->ferry_want);
     /* units still on their way in hold a transport where it is: release them */
     char late[200];
     int nlate = 0, len = 0;
