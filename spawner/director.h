@@ -4107,6 +4107,13 @@ static void dir_check_passengers(BYTE *house, BYTE *t)
            stop && dir_object_listed(OIL_TECHNO_ARRAY, stop) ? (char *)dir_type(stop) + T_ID : "-", n, moved);
 }
 
+/* A convoy slot's transport is still one of ours, not the colonising one, and still a transport:
+ * slots hold addresses, which a unit built after a transport died can take over. */
+static int dir_ferry_ok(BYTE *house, DirState *d, BYTE *t, int side)
+{
+    return dir_own_unit(house, t) && t != d->col_ferry && !_stricmp((char *)dir_type(t) + T_ID, dir_transports[side]);
+}
+
 static void dir_ferry(BYTE *house, DirState *d)
 {
     dir_why = "ferry";
@@ -4124,8 +4131,7 @@ static void dir_ferry(BYTE *house, DirState *d)
     }
     for (int k = 0; k < DIR_CONVOY; k++) {
         BYTE *t = d->ferry[k];
-        if (t && (!dir_object_listed(OIL_TECHNO_ARRAY, t) || !oil_live(t) || FIELD(t, O_OWNER, BYTE *) != house
-                  || t == d->col_ferry))
+        if (t && !dir_ferry_ok(house, d, t, side))
             d->ferry[k] = NULL;
         if (d->ferry[k])
             continue;
