@@ -1742,8 +1742,13 @@ and Isolation, mostly logic, 390 instead of 330.
     `RA2MD.INI` is saved and put back with the other launcher files. A run killed outright leaves
     the benchmark's behind; `bench.py restore`, or your next game from `spawn.py` or the Skirmish
     Setup window, puts yours back.
-  - `--seed N` replays a game exactly: the same seed gives the same `yspawn-bench.csv`, sample for
-    sample (since 2026-10-07; a 7-AI Isolation game of 20,000 frames came out identical three times).
+  - `--seed N` replays a game: the same seed gives the same `yspawn-bench.csv`, sample for sample,
+    through the opening at least (since 2026-10-07; a 7-AI Isolation game of 20,000 frames came out
+    identical three times). Over 60,000 frames small differences can still creep in: the 42-game
+    hard set played twice on the same seeds and build came out identical in 12 games, and the rest
+    first differed between frames 2,000 and 30,000, mostly 7,000–13,000 (a few credits of a stock
+    house's cash, or a unit a cell off). Object addresses still differ from run to run, and the DLL
+    keeps raw pointers to units in places, so a new unit at a dead one's address can be taken for it.
     Two things had kept it from that. `Init_Random` (0x52FC20) makes a skirmish's seed from the clock
     unless 0xA8ED98 holds one, so `Seed=` was overwritten. And the director's per-unit tables were
     slotted by object address, which differs from run to run; they use the unique ID now
@@ -1903,7 +1908,7 @@ plus army value, and within 20% count as a draw.
 - **Results before the 2026-10-07 rows predate the review fixes**, and every run from 2026-09-29 to
   then used the swapped AI trigger conditions: the stock Brutals they beat were weaker than meant.
   The 2026-10-07 rows are the first against the repaired stock AI. Every game's seed is in its
-  `yspawn.ini`, so any of them can be replayed exactly (`--seed`).
+  `yspawn.ini`, so any of them can be replayed (`--seed`), exactly through its opening at least.
 - An MCV that takes over 3000 frames to build (low power) can be ordered a second time.
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
   post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
