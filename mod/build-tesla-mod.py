@@ -48,8 +48,9 @@ UNIT_OVERRIDES = {
     "CrateGoodie": "no",                 # crates must not give it to other countries
     "Primary": "ATankBolt",
     "ElitePrimary": "ATankBoltE",
-    # 2026-10-07, from equal-cost arena duels (spawner/arena.py): at 375 HP and speed 2 it lost to every tank.
-    # Now it beats Rhinos, Lashers, Apocalypses and Masterminds, and loses to Tank Destroyers, Grizzlies,
+    # 2026-10-07, from equal-cost arena duels (spawner/arena.py) and director-vs-director games: at 375 HP and
+    # speed 2 it lost to every tank. Now it breaks Yuri's armour (Lashers, Masterminds, Gattling Tanks) and
+    # Tesla Tanks, is about even with Rhinos and Apocalypses, and loses to Tank Destroyers, Grizzlies,
     # infantry and aircraft. Light armour is what lets those answer it (Gattling and Flak do 10% to heavy);
     # heavy at 900 HP it matched or beat the Grizzly against nearly everything (was 1500 HP, then 750, then 375)
     "Strength": "700",                   # 300
@@ -57,8 +58,9 @@ UNIT_OVERRIDES = {
     "Speed": "4",                        # 6
     "Sight": "10",                       # 8
     "ROT": "8",                          # 5
-    "Cost": "2250",                      # 1200; was 1500, then 3000
-    "Soylent": "2250",
+    # at 2250 and range 7 it destroyed four times its value in AI games, with no AI cap holding it back
+    "Cost": "2500",                      # 1200; was 1500, then 3000
+    "Soylent": "2500",
     "SelfHealing": "yes",                # regenerates like it has a repair drone
     "ImmuneToPsionics": "yes",           # Yuri can't mind-control it
     "ImmuneToRadiation": "yes",
@@ -71,7 +73,7 @@ NEW_SECTIONS = f"""
 [ATankBolt]
 Damage=300
 ROF=100
-Range=7
+Range=6
 Speed=100
 Warhead=LibertyElectric
 Report=TeslaTankAttack
@@ -81,7 +83,7 @@ IsElectricBolt=true
 [ATankBoltE]
 Damage=450
 ROF=70
-Range=8
+Range=7
 Speed=100
 Warhead=LibertyElectric
 Report=TeslaTankAttack

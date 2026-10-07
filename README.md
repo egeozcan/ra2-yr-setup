@@ -244,12 +244,13 @@ It shares no geometry with the Tesla tank.
 Stats compared with the stock Tesla tank (reworked 2026-10-07 from equal-cost arena duels, see
 "Unit roles from the arena" under the Benchmark):
 - 700 HP, **light armour** (stock 300, heavy), speed 4 (stock 6), self-healing, immune to mind control and
-  radiation. Cost 2250.
-- Weapon: 300 damage, range 7, ROF 100; elite: 450 damage, range 8, ROF 70 (ROF is the delay between shots).
+  radiation. Cost 2500.
+- Weapon: 300 damage, range 6, ROF 100; elite: 450 damage, range 7, ROF 70 (ROF is the delay between shots).
   The bolt chains between targets, weakly: three Liberators killed 19 sleeping Conscripts with at most 15 shots.
 - Warhead `LibertyElectric`: full damage to vehicles and buildings, a quarter to infantry.
-- **Role:** it beats heavy armour and mind control (Rhino, Apocalypse, Lasher, Mastermind, Tesla Tank) and
-  is beaten by infantry, Tank Destroyers, Grizzlies and aircraft. Light armour is what lets those answer
+- **Role:** the Allied answer to Yuri's armour and mind control: it beats Lashers, Masterminds, Gattling
+  Tanks and Tesla Tanks, is about even with Rhinos and Apocalypses, and is beaten by infantry, Tank
+  Destroyers, Grizzlies and aircraft. Light armour is what lets those answer
   it: against heavy armour, Gattling and Flak guns do 10%, and the Tank Destroyer's edge was thin.
 - History: 1500 HP, speed 9, ROF 35, cost 1500 at first (2026-09-25); speed 4, then 2 (2026-09-30); HP
   halved twice to 375 and fire rate halved twice to ROF 140, cost 3000 (2026-10-01). At that point it lost
@@ -988,8 +989,9 @@ What it does, per Brutal house:
   anti-infantry) furthest below a mix taken from the enemy's current forces: more anti-air
   against aircraft, more siege against heavy defences. It adds war factories as cash piles up
   (up to 4), and queues the first war factory as soon as a refinery stands. It adds refineries
-  when money runs short, but not while harvesters stand idle (ore gone or cut off). Liberators are
-  capped at 4 and Masterminds at 3.
+  when money runs short, but not while harvesters stand idle (ore gone or cut off). There are no count
+  caps: Liberators (4, later 2), Masterminds (3), Kirovs (4) and Destroyers (2) were capped until
+  2026-10-07, when the user ruled that balance is the units' stats, not the AI holding back.
 - **Army.** Team-less combat units form one army. Units are taken from attack teams once their
   script has started. Guard, oil and base-defence teams keep theirs.
   - The army gathers at a rally point on open land (never a bridge or inside the base).
@@ -1184,8 +1186,8 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
 - **Stock picks vetoed:**
   - **MCVs:** at two construction yards (stock AI with MCV repacking parked extra yards side by
     side).
-  - **Liberators:** beyond two (the mod's Allied AI teams order them in threes).
-- **Allied tank order:** Mirage first, then Tank Destroyer, Grizzly, Liberator.
+  - **Liberators:** beyond two, until 2026-10-07 (removed: the AI must not be held back for balance).
+- **Allied tank order:** Liberator first (since 2026-10-07), then Mirage, Tank Destroyer, Grizzly.
 - **Ore outposts.** A captured tech building (an oil derrick, say) is our own building, so we may
   build beside it. Where rich ore lies within 10 cells of one, 15+ cells from our refineries and with
   no armed enemy within 12, the director builds a refinery beside it, on the side nearest the ore.
@@ -1253,7 +1255,7 @@ Added 2026-10-01, after watching a 7-AI free-for-all on *Don't Step on The Croco
   stays stuck gets the walled-in check below. Stranded harvesters also count as idle for the
   refinery and expansion decisions.
 - **Production vetoes.** The stock teams' own picks are cancelled in two cases. A Kirov is cancelled
-  once four are out, or while the base is being hit; Kirovs are aircraft, which the director's
+  while the base is being hit (until 2026-10-07 also once four were out); Kirovs are aircraft, which the director's
   vehicle picker never buys. Infantry is cancelled when the enemy is cut off by water and the
   house already has 24, because they can only wait at home. In that mode the director itself stops
   at 16, its hover/air pick puts Siege Choppers before Kirovs, and while the base is under attack it
@@ -1882,24 +1884,34 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
     all 104 the same; with one, 21 results changed, 11 for five slaves and 10 for four (seeds 0–3
     alone leaned 8–2 to five, seeds 4–7 8–3 to four).
 
-- **Liberator reworked** (2026-10-07, the user's pick from three options): 2250, 700 HP, light armour, speed 4,
-  ROF 100/70, 25% against infantry (was 3000, 375 HP heavy, speed 2, ROF 140/100, 100%). See "Unit roles from
-  the arena". On the same 384 seeded strategy games (strat and strat_mcv, seeds 0–3), wins–losses–draws:
+- **Liberator reworked, AI caps lifted** (2026-10-07): the Liberator is now 2500, 700 HP, light armour, speed 4,
+  range 6 (elite 7), ROF 100/70, 25% against infantry (was 3000, 375 HP heavy, speed 2, range 7/8, ROF 140/100).
+  See "Unit roles from the arena".
+  - **No AI caps.** The director had capped Liberators (at two), Masterminds (3), Kirovs (4) and Destroyers (2).
+    The user's rule: balance is the units' stats, never the AI holding back. All four caps are gone, and the
+    Liberator now heads the director's Allied tank list. Lifting the other three caps changed little.
+  - **First pick, 2250 and range 7, capped at two:** America went from last to first (66–53 against Russia,
+    61–55 against Yuri). Uncapped it went to 77–46 and 65–55, and the Liberator destroyed 3.6–4.1 times its
+    value against both sides alike. Its elite weapon upgrade and self-healing were each a small part of that.
+  - **Screened on 192 games each** (seeds 0–1, America against Russia, America against Yuri, Liberator ratio):
 
-  | Pairing | Before | Liberator reworked | Same at 3000 | Reworked, no self-healing |
-  |---|---|---|---|---|
-  | America vs Russia | 52–67–9 | 66–53–9 | 68–50–10 | 72–49–7 |
-  | America vs Yuri | 49–65–14 | 61–55–12 | 55–62–10 | 65–53–10 |
-  | Russia vs Yuri (no Liberators: a control) | 54–65–8 | 52–66–9 | 51–66–10 | 55–64–8 |
+    | Liberator | A vs R | A vs Y | ratio |
+    |---|---|---|---|
+    | 2250, range 7 | 37–23 | 34–27 | 3.9 |
+    | range 6 | 35–23 | 32–29 | 3.4 |
+    | 550 HP | 38–21 | 36–25 | 3.7 |
+    | 2750 | 35–25 | 29–27 | 2.7 |
+    | 3250 | 35–24 | 25–35 | 2.5 |
+    | 2500, no elite weapon | 35–28 | 30–31 | 2.6 |
+    | **2500, range 6** | **31–27** | **29–32** | **2.5** |
+    | 3000, range 6 | 33–23 | 28–32 | 1.9 (but it lost every arena fight at equal cost) |
 
-  - Total wins went from 101/121/130 (America/Russia/Yuri) to 127/105/121: the spread is narrower, but Russia
-    now trails, America included.
-  - In these games the Liberator destroys about four times its value (4.0; 1.1 before), against 0.4–1.7 for
-    every other unit. The director keeps at most two, inside escorted armies, where infantry and fast units
-    rarely reach them, and they turn elite (450 damage, range 8). The arena's open-field duels don't show
-    that.
-  - Price barely matters to the AI: with two at most and 50,000 to start, 3000 gave about the same balance.
-
+  - **Kept, on all 384 games (seeds 0–3):** America 68–52 against Russia and 57–62 against Yuri, Russia 55–66
+    against Yuri (before all this: 52–67, 49–65, 54–65). Total wins: America 125, Russia 107, Yuri 128 (101,
+    121, 130 before). America and Yuri are even. Russia trails both; its deficit against Yuri is older.
+- **Bulldozers in Soviet sieges** (2026-10-07, user's call): see the Bulldozer section. A staged siege, with
+  Bulldozers trailing 8 cells behind the army while enemy tanks were within 8 cells, made Russia worse (46 and
+  51 wins of 128, Bulldozer ratio 0.12) and was dropped.
 Balance tools:
 - `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every
   pairing on four 2-player maps with the starts swapped (24 matches).
@@ -1946,10 +1958,15 @@ Findings (scores at equal cost):
 - **17 variants were tried.** More HP alone made it beat everything, infantry included. Cutting its damage
   against infantry or light armour didn't make it lose to light units, because their guns do 10–35% to
   heavy armour. At 900 HP it was heavy and matched or beat the Grizzly almost everywhere.
-- **The kept version** (2250, 700 HP, light armour, speed 4, ROF 100/70, 25% against infantry):
-  - beats Apocalypse 0.71, Rhino 0.38, Lasher 0.88, Mastermind 1, Tesla Tank 1;
-  - loses to Tank Destroyer −0.53, Grizzly −0.23, GI −0.63, Conscript −0.72, Initiate −0.67,
-    Brute −0.69, Kirov and Disc −1.
+- **The kept version** (2500, 700 HP, light armour, speed 4, range 6, ROF 100/70, 25% against infantry; scored
+  with a budget of 10,000, four Liberators exactly):
+  - beats Lasher 0.67, Mastermind 1, Gattling Tank 0.62, Tesla Tank 0.96, Mirage 0.54, Terror Drone 1;
+  - about even with Rhino −0.23 and Apocalypse −0.44 (+0.33 and +0.50 at a budget of 9,000: group sizes
+    round differently);
+  - loses to Tank Destroyer −0.65, Grizzly −0.49, GI −0.68, Conscript −0.67, Initiate −0.74, Brute −0.79,
+    Kirov and Disc −1.
+  - At 2250 and range 7 it also beat Rhinos and Apocalypses, but in AI games that version destroyed four times
+    its value (see the balance log).
   - **Pareto check:** no unit of any faction does as well as another of its faction against every
     opponent, except the V3 (artillery: the arena can't show its range). The Grizzly keeps light
     vehicles and infantry, and the Liberator head to head.

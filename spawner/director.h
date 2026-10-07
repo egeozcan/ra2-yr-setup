@@ -410,11 +410,11 @@ static int dir_poolable(BYTE *obj, int what)
 /* ---- production ---- */
 
 static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
-    /* Mirage first: the Liberator at 375 HP lost more than it killed (0.89); reworked (2026-10-07), a
-     * pair of them destroys four times its value, and the pair cap below holds */
+    /* the Liberator first (reworked 2026-10-07: it trades 2.5 in AI games), then the Mirage; at 375 HP
+     * the Liberator had lost more than it killed (0.89) and came last */
     /* against infantry Mirage, then Grizzly: an IFV with nobody aboard (the AI never loads one) is
      * a light gun on thin armour, and Americans won 9 of 32 MCV games with it in this slot */
-    { "MGTK,TNKD,MTNK,ATTNK", "FV", "SREF", "MGTK,MTNK" },
+    { "ATTNK,MGTK,TNKD,MTNK", "FV", "SREF", "MGTK,MTNK" },
     /* against infantry the Tesla Tank, then the Flak Track (fragile: lost to anything with a gun) */
     /* siege: the Bulldozer (mod) razed bases best of all in equal-cost arena sieges (spawner/arena.py),
      * the V3 worst; V3s until there is a Radar */
@@ -485,9 +485,8 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
             if (type && ai_can_build(house, type)
                 && dir_has_prereqs(house, type)
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
-                && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
-                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 2)    /* a pair at most (the user's call) */
-                && (_stricmp(id, "ZEP") || dir_owned_of(house, type) < 4)      /* Kirovs: slow and costly */
+                /* no count caps (Masterminds, Kirovs, Liberators were capped): balance is the units'
+                 * stats, not the AI holding back (the user, 2026-10-07) */
                 /* Robot Tanks stand dead without a Robot Control Center: 44 of them jammed an Isolation
                  * base after it fell, and more kept coming */
                 && (_stricmp(id, "ROBO") || combat_building_count(house, "GAROBO"))
@@ -5167,13 +5166,13 @@ static void dir_veto_production(BYTE *house, DirState *d)
         FIELD(house, H_PRODUCING_AIR, int) = -1;
     int air = FIELD(house, H_PRODUCING_AIR, int);
     DynVec *at = AIRCRAFTTYPE_ARRAY;
-    if (air >= 0 && air < at->Count && !_stricmp((char *)at->Items[air] + T_ID, "ZEP")
-        && (d->threat_value >= 1500 || dir_owned_of(house, at->Items[air]) >= 4)) {
+    /* Kirovs are too slow to defend with: none while the base is being hit */
+    if (air >= 0 && air < at->Count && !_stricmp((char *)at->Items[air] + T_ID, "ZEP") && d->threat_value >= 1500) {
         FIELD(house, H_PRODUCING_AIR, int) = -1;
         if (CURRENT_FRAME - d->last_veto_log > 1500) {
             d->last_veto_log = CURRENT_FRAME;
-            logmsg("director: house %d frame %d: no more Kirovs (%s)", FIELD(house, 0x30, int), CURRENT_FRAME,
-                   d->threat_value >= 1500 ? "base under attack" : "four out already");
+            logmsg("director: house %d frame %d: no Kirovs while the base is under attack", FIELD(house, 0x30, int),
+                   CURRENT_FRAME);
         }
     }
     /* stock AI with MCV repacking buys MCVs of its own and parks extra yards side by side: two
@@ -5207,21 +5206,12 @@ static void dir_veto_production(BYTE *house, DirState *d)
         && (((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, uts->Items[pick], 0, 1) <= 0
             || !dir_has_prereqs(house, uts->Items[pick])))   /* tech units without their tech building */
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
-    /* the mod's Allied AI teams order Liberators in threes; a pair at most: two already destroy four
-     * times their value, and America led the other sides with them (the cap kept on the user's call) */
-    int unit = FIELD(house, H_PRODUCING_UNIT, int);
+    /* (no caps on Liberators or Destroyers: balance is the units' stats, not the AI holding back; the user,
+     * 2026-10-07) */
     DynVec *ut = UNITTYPE_ARRAY;
-    if (unit >= 0 && unit < ut->Count && !_stricmp((char *)ut->Items[unit] + T_ID, "ATTNK")
-        && dir_owned_of(house, ut->Items[unit]) >= 2)
-        FIELD(house, H_PRODUCING_UNIT, int) = -1;
-    /* Destroyers traded 0.12 on Isolation (240k lost for 29k destroyed): a pair for subs at most */
-    unit = FIELD(house, H_PRODUCING_UNIT, int);
-    if (unit >= 0 && unit < ut->Count && unit != d->unit_request && !_stricmp((char *)ut->Items[unit] + T_ID, "DEST")
-        && dir_owned_of(house, ut->Items[unit]) >= 2)
-        FIELD(house, H_PRODUCING_UNIT, int) = -1;
     /* cut off by water, stock teams' ground vehicles past the home garrison (dir_ground_full);
      * transports, harvesters, MCVs, ships, hover/air units and anti-air during a raid still go */
-    unit = FIELD(house, H_PRODUCING_UNIT, int);
+    int unit = FIELD(house, H_PRODUCING_UNIT, int);
     if (unit >= 0 && unit < ut->Count && unit != d->unit_request) {
         BYTE *type = ut->Items[unit];
         const char *id = (char *)type + T_ID;
