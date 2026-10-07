@@ -12,7 +12,7 @@ def change(name, mode):
     subprocess.run(['kscreen-doctor', f'output.{name}.mode.{mode}'], check=True)
 
 if sys.argv[1:] == ['start']:
-    if subprocess.run(['pgrep', '-x', 'gamemd.exe'], stdout=subprocess.DEVNULL).returncode == 0:
+    if subprocess.run(['pgrep', '-x', 'gamemd.exe|gamemd-spawn.ex'], stdout=subprocess.DEVNULL).returncode == 0:
         raise SystemExit('Close Yuri before starting the streaming profile.')
     outputs = json.loads(subprocess.check_output(['kscreen-doctor', '-j']))['outputs']
     output = next(o for o in outputs if o['name'] == 'DP-2' and o['enabled'])

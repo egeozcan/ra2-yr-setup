@@ -4,9 +4,14 @@ set -euo pipefail
 G="/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
 D="$(cd "$(dirname "$0")" && pwd)"
 PFX=/mnt/data/SteamLibrary/steamapps/compatdata/2229850/pfx
-pgrep -x gamemd.exe | while read -r p; do kill -TERM "$p"; done || true
-pgrep -x game.exe   | while read -r p; do kill -TERM "$p"; done || true
-sleep 3
+# Wine names the Skirmish Setup launcher's process gamemd-spawn.ex (15 characters)
+GAMES='gamemd.exe|gamemd-spawn.ex|game.exe'
+pkill -TERM -x "$GAMES" || true
+for _ in $(seq 20); do pgrep -x "$GAMES" >/dev/null || break; sleep 1; done
+if pgrep -x "$GAMES" >/dev/null; then
+  echo "the game is still running; close it first" >&2   # cp would overwrite its loaded ddraw.dll
+  exit 1
+fi
 cp -v "$D/backups/working/ddraw.dll" "$G/ddraw.dll"
 cp -v "$D/backups/working/ddraw.ini" "$G/ddraw.ini"
 cp -v "$D/backups/working/RA2.INI"   "$G/RA2.INI"
