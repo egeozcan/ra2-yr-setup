@@ -1840,6 +1840,29 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
   its deployed `YAREFN` 1,750 → 2,250, refund alike. On the same 192 seeded strategy games, America
   went from 17 to 20 wins of 64 against Yuri and Russia from 17 to 21; Yuri still stood on 4.7
   refineries at frame 6,000 (the AIs start with 50,000, so the price slows it little).
+- **Four slaves** (2026-10-07, user's call, from four levers): `SMIN` and `YAREFN` `SlavesNumber` 5 → 4.
+  Each lever alone on the same 192 seeded strategy games (seeds 0 and 1), wins–losses–draws:
+
+  | Lever | America vs Yuri | Russia vs Yuri | America vs Russia (no Yuri: a control) |
+  |---|---|---|---|
+  | none (2,250, five slaves) | 20–42–2 | 21–41–2 | 21–35–8 |
+  | **four slaves** | **26–33–5** | **27–36–1** | 23–35–6 |
+  | 2,750 | 17–38–9 | 26–36–2 | 22–35–6 |
+  | Allied and Soviet miners hold half as much again (`CMIN` 30, `HARV` 60) | 20–38–6 | 19–44–1 | 26–37–1 |
+
+  - The control pairing moved by up to 5 wins of 64 between these runs, from replays drifting apart
+    alone, and four slaves was the best of the levers on these seeds. So it was checked on 192
+    fresh games (seeds 2 and 3) against five: America 23–32–9 (five: 23–37–4), Russia 27–30–7
+    (21–38–5), the control 29–32–3 (27–33–4). Over all 128 games a pairing, Yuri won 131 against
+    158 with five.
+  - Yuri keeps its refineries (4.8 at frame 12,000) but each earns less: at frame 12,000 its army
+    stood at 33.7k to America's 33.3k and 32.2k to Russia's 31.2k, from 35.3k to 28.5k and 40.4k to 33.7k.
+  - The price did less: 50,000 to start buys the miners anyway (4.4 refineries at frame 6,000 at
+    2,750). Bigger Allied and Soviet miners changed nothing measurable.
+  - Director against stock Brutals (hard, held-out 1 and 2, 8 seeds a match, 272 games, against
+    five slaves on the same seeds): 248W 7D 17L against 250W 3D 19L. Without a Yuri in the game,
+    all 104 the same; with one, 21 results changed, 11 for five slaves and 10 for four (seeds 0–3
+    alone leaned 8–2 to five, seeds 4–7 8–3 to four).
 
 Balance tools:
 - `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every
@@ -1892,6 +1915,7 @@ plus army value, and within 20% count as a draw.
 | 2026-10-07 build: 1 director vs 2 allied stock Brutals | **4W 3L**: Arena, Hills, and both FFAs (won by the second director); Lostlake at the time limit, the director ahead of each opponent (60 buildings to 45 and 45) but behind the pair; Tower at the time limit, 12 buildings to 49 and 41; EB4 destroyed at frame 55k after 368 kills. Not the repaired stock AI: the same set with 6 seeds a map went 33W 9L with today's `aimd.ini` and 30W 1D 11L with the old one, same DLL and seeds. Tower (1W 5L, old 0W 6L) and EB4 (3W 3L, old 1W 5L) are hard for the director either way; the earlier "no losses" was one game a map |
 | 2026-10-07 build: strategy A/B from built bases / from MCVs | 25–23 / 22–26; Yuri won 25 and 23 of its 32 |
 | 2026-10-07 build: Isolation FFA, strategy A/B (4 games) | 4–0 for the strategy layer; the naval plan was picked 7 times (never in MCV starts before the fix) |
+| 2026-10-07, Slave Miner at 2,250 with four slaves (8 seeds a match; five slaves on the same seeds in brackets) | 1 director vs 2 allied stock: **42W 3D 11L** (42W 14L); held-out 1: **102W 1D 1L** (104/104); held-out 2: **104W 3D 5L** (104W 3D 5L) |
 
 | 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
 | 2026-10-01, 7 directors FFA on *Don't Step on The Crocodile* (user's settings) | old build: no house ever launched an attack by frame 40k; new build: 40–54 attack launches per match, 5 of 7 houses eliminated in each of 5 full-length matches, and one match won outright at frame 48,640 |
@@ -1919,7 +1943,7 @@ plus army value, and within 20% count as a draw.
   The 2026-10-07 rows are the first against the repaired stock AI. Every game's seed is in its
   `yspawn.ini`, so any of them can be replayed (`--seed`), exactly through its opening at least.
 - An MCV that takes over 3000 frames to build (low power) can be ordered a second time.
-- **Yuri is too strong in director-vs-director play** (2026-10-07, `strat` and `strat_mcv` on two seeds
+- **Yuri was too strong in director-vs-director play** (2026-10-07, `strat` and `strat_mcv` on two seeds
   each, 64 games a pairing): Yuri beat America 43–17 (4 draws) and Russia 46–17, while America and
   Russia were even (26–33). It also decides the hard set: on Tower, with the same seeds and starts,
   the director won 6 of 6 as Yuri, 3 of 6 as America and 1 of 6 as Russia against the other two.
@@ -1936,6 +1960,9 @@ plus army value, and within 20% count as a draw.
     and 18. So the gap looks like the game's balance: the Slave Miner's price or slaves, or Yuri's
     unit prices, are the levers (the user's call, as with the earlier price rises).
   - **Then the Slave Miner went to 2,250** (see Benchmark): America 20 and Russia 21 wins of 64.
+  - **And to four slaves** (see Benchmark): over 128 games a pairing Yuri now beats America 65–49
+    (14 draws) and Russia 66–54, from 79–43 and 79–42 with five; the armies are even at frame
+    12,000. Yuri still leads, on refineries (4.8 against 2.4 and 2.5 at frame 12,000).
   - **How the attacks go** (the same games): the American and Russian attacks don't fail at razing.
     Per attack on Yuri, America destroyed 13.5 buildings and Russia 7.7, Yuri 7.0 on them. But
     against Yuri they attacked 0.4 and 0.6 times a game (America 1.2 against Russia), Yuri 1.4–1.6.
@@ -1948,6 +1975,15 @@ plus army value, and within 20% count as a draw.
     refineries, which Slave Miners give it at once); letting the others build theirs on cash alone
     left them at 18 and 20 wins (America–Russia 32–31). So it comes down to army size, from Yuri's
     economy.
+- **Two crashes in 3,413 benchmark games on 2026-10-07**, both late and both under rules on trial (the
+  first 1,950 or so had none): Hills around frame 12,000 with four slaves, at 0x6F36FE, and DeepFrze
+  around frame 24,700 with bigger Allied and Soviet miners, a jump to 0x448B0000. At 0x6F36FE a target
+  scan (`TechnoClass::Evaluate_Object`, 0x6F7CA0, through `UnitClass::SelectWeapon` into
+  `TechnoClass::SelectWeapon`, 0x6F3330) was looking at a freed object: the stack had run 8 bytes off
+  after a virtual call on it (most likely another class's method, popping two arguments), so the weapon
+  read there was a return address. A stale object in a list the scan walks, like the passenger-chain
+  crash, but on a land map with no convoys; the Yuri director had packed up a Slave Miner 450 frames
+  before and sent it on 150 before. A seed doesn't bring them back: games drift apart long before then.
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
   post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
   12W 2L 2D to 16/16 for the same build.

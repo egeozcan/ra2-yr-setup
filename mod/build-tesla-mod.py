@@ -213,6 +213,13 @@ BALANCE = {
     ("SMIN", "Soylent"): "2250",
     ("YAREFN", "Cost"): "2250",       # 1750
     ("YAREFN", "Soylent"): "2250",
+    # 2026-10-07: at 2,250 Yuri still beat America 42-20 and Russia 41-21 on the same seeds. Of four
+    # levers, each alone on those 192 games, one slave fewer did most: 33-26 and 36-27 (2,750 instead:
+    # 38-17 and 36-26; Allied and Soviet miners holding half as much again: 38-20 and 44-19). On 192
+    # fresh games it held: 32-23 and 30-27, from 37-23 and 38-21 with five. Armies even at frame 12,000
+    # (Yuri 33.7k to America's 33.3k, from 35.3k to 28.5k). The deployed refinery keeps the same number.
+    ("SMIN", "SlavesNumber"): "4",    # 5
+    ("YAREFN", "SlavesNumber"): "4",  # 5
 }
 
 
