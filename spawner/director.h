@@ -6777,8 +6777,11 @@ static void dir_update(BYTE *house)
     if (d->state == DIR_GATHER && CURRENT_FRAME >= d->next_repick) {
         d->next_repick = CURRENT_FRAME + 3000;
         BYTE *best = dir_pick_enemy(house, d->base);
-        if (best && best != d->enemy && (!d->enemy || (long long)dir_enemy_rating(best, d->base) * 4
-                                                      < (long long)dir_enemy_rating(d->enemy, d->base) * 3)) {
+        /* not to a house across the water while the target is on our land: the island check would
+         * turn away from it again, and the army walk between two rallies every 3000 frames */
+        if (best && best != d->enemy && (!d->enemy || ((long long)dir_enemy_rating(best, d->base) * 4
+                                                       < (long long)dir_enemy_rating(d->enemy, d->base) * 3
+                                                       && (d->island || bench_force_island || dir_land_house(d, best))))) {
             logmsg("director: house %d frame %d: new target house %d (was %d)", FIELD(house, 0x30, int), CURRENT_FRAME,
                    FIELD(best, 0x30, int), d->enemy ? FIELD(d->enemy, 0x30, int) : -1);
             d->enemy = best;
