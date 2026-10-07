@@ -7190,18 +7190,22 @@ static void patch_director(void)
     /* The base planner (0x5054B0) lists building types to place, with negative codes for other
      * entries, and tests "a type" as >= 0 (cmp edi,0 / jge at 0x505DA8): a null entry (a role the
      * house had no type for after its yard fled and set up again) was read at +0xDF8 and crashed
-     * the game. Null entries are skipped: test edi,edi / jz next / jg type / jmp code. */
+     * the game, and so did an entry of 0x20 (a Yuri house, frame 16176, 0x505E41; source unknown).
+     * No pointer lies below 64K: such entries are skipped like null ones.
+     * test edi,edi / jz next / jl codes / cmp edi,0x10000 / jb next / jmp type. */
     {
         const BYTE stock[] = { 0x3B, 0xF8, 0x0F, 0x8D, 0x83, 0x00, 0x00, 0x00 };   /* cmp edi,eax / jge 0x505E33 */
-        BYTE *cave = VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        BYTE *cave = VirtualAlloc(NULL, 48, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
         if (cave && patch_checked("director base planner null types", 0x505DA8, stock, sizeof stock)) {
             BYTE *c = cave;
             DWORD rel;
             *c++ = 0x85; *c++ = 0xFF;                                   /* test edi,edi */
             *c++ = 0x0F; *c++ = 0x84; rel = 0x505EAD - (DWORD)(c + 4); memcpy(c, &rel, 4); c += 4;   /* jz next entry */
-            *c++ = 0x0F; *c++ = 0x8F; rel = 0x505E33 - (DWORD)(c + 4); memcpy(c, &rel, 4); c += 4;   /* jg a type */
-            *c++ = 0xE9; rel = 0x505DB0 - (DWORD)(c + 4); memcpy(c, &rel, 4); c += 4;               /* the codes */
-            FlushInstructionCache(GetCurrentProcess(), cave, 32);
+            *c++ = 0x0F; *c++ = 0x8C; rel = 0x505DB0 - (DWORD)(c + 4); memcpy(c, &rel, 4); c += 4;   /* jl the codes */
+            *c++ = 0x81; *c++ = 0xFF; *c++ = 0x00; *c++ = 0x00; *c++ = 0x01; *c++ = 0x00;          /* cmp edi,0x10000 */
+            *c++ = 0x0F; *c++ = 0x82; rel = 0x505EAD - (DWORD)(c + 4); memcpy(c, &rel, 4); c += 4;   /* jb next entry */
+            *c++ = 0xE9; rel = 0x505E33 - (DWORD)(c + 4); memcpy(c, &rel, 4); c += 4;               /* a type */
+            FlushInstructionCache(GetCurrentProcess(), cave, 48);
             const BYTE nops[3] = { 0x90, 0x90, 0x90 };
             patch_rel(0x505DA8, 0xE9, (DWORD)cave);
             patch(0x505DAD, nops, 3);
