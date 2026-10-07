@@ -241,13 +241,21 @@ It shares no geometry with the Tesla tank.
   Its generator code was removed, so that folder is the only copy. Running `make_graphics.py`
   afterwards overwrites it with the custom model again.
 
-Stats compared with the stock Tesla tank:
-- 375 HP (stock 300; halved twice on 2026-10-01, from 1500 to 750 to 375), speed 2 (stock 6; was 9, then 4, halved again on 2026-09-30 because it was too strong), self-healing, immune to mind control and radiation.
-- Weapon: 300 damage, range 7, ROF 140; elite: 450 damage, range 8, ROF 100. The bolt chains between targets.
-  Fire rate halved twice on 2026-10-01 (ROF 35/25, then 70/50; ROF is the delay between shots).
-- Warhead `LibertyElectric` does full damage to buildings.
+Stats compared with the stock Tesla tank (reworked 2026-10-07 from equal-cost arena duels, see
+"Unit roles from the arena" under the Benchmark):
+- 700 HP, **light armour** (stock 300, heavy), speed 4 (stock 6), self-healing, immune to mind control and
+  radiation. Cost 2250.
+- Weapon: 300 damage, range 7, ROF 100; elite: 450 damage, range 8, ROF 70 (ROF is the delay between shots).
+  The bolt chains between targets, weakly: three Liberators killed 19 sleeping Conscripts with at most 15 shots.
+- Warhead `LibertyElectric`: full damage to vehicles and buildings, a quarter to infantry.
+- **Role:** it beats heavy armour and mind control (Rhino, Apocalypse, Lasher, Mastermind, Tesla Tank) and
+  is beaten by infantry, Tank Destroyers, Grizzlies and aircraft. Light armour is what lets those answer
+  it: against heavy armour, Gattling and Flak guns do 10%, and the Tank Destroyer's edge was thin.
+- History: 1500 HP, speed 9, ROF 35, cost 1500 at first (2026-09-25); speed 4, then 2 (2026-09-30); HP
+  halved twice to 375 and fire rate halved twice to ROF 140, cost 3000 (2026-10-01). At that point it lost
+  to every tank at equal cost.
 - Requires an Allied War Factory and an Allied Battle Lab (`GAWEAP,GATECH`). The Battle Lab
-  itself needs an Air Force Command. Cost 3000 (was 1500). Crates can't grant it.
+  itself needs an Air Force Command. Crates can't grant it.
 - **AI:** an AI playing any Allied country builds teams of 3 Liberators and attacks with them once it
   owns a Battle Lab. The setup copies the German Tank Destroyer team: weight 500, the stock
   "General Vehicle Attack" script, one team at a time, on every difficulty. Soviet and Yuri
@@ -358,9 +366,10 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   or -1 for none) in `[Settings]` and in each `[AIn]` section. Players on the same team are allied from the start.
   Players with no team are allied with nobody, including other AIs (the stock game allies all team-less AIs).
   Before this, your start was always position 0.
-- **Test units** (added 2026-09-26): an optional `[Units]` section in the ini puts vehicles and buildings on the
-  map once the match has loaded. Each line is `n=TYPE,COUNTRY,X,Y,FACING,MISSION`:
-  - `TYPE`: a vehicle or building ID such as `ATTNK` or `GAWEAP`;
+- **Test units** (added 2026-09-26): an optional `[Units]` section in the ini puts vehicles, infantry (since
+  2026-10-07), aircraft and buildings on the map once the match has loaded. Each line is
+  `n=TYPE,COUNTRY,X,Y,FACING,MISSION`:
+  - `TYPE`: a vehicle, infantry, aircraft or building ID such as `ATTNK`, `E1` or `GAWEAP`;
   - `COUNTRY`: the country of the house that gets it, such as `Americans` or `Russians`;
   - `X,Y`: the map cell;
   - `FACING`: 0–255 (0 north, 64 east);
@@ -369,7 +378,9 @@ of the Grand Cannon (`GTGCAN`) with these changes:
   For a building, `X,Y` is the top-left cell. It goes on the nearest spot where the game's own placement
   check (`CanPlaceHere`) allows it, clear of trees, other buildings and the MCV.
 
-  `yspawn.log` lists each vehicle and whether it could be placed. A map's own `[Units]` didn't work for this.
+  A unit whose cell is taken (a tree, a rock, another unit) goes on the nearest free cell up to 3 cells away
+  (since 2026-10-07). `yspawn.log` lists each unit, where it went, and whether it could be placed. A map's own
+  `[Units]` didn't work for this.
   Vehicles pre-placed for `<Player @ A>` or for a country name never showed up for the player in a match started
   this way; the cause wasn't investigated.
 - **`python3 spawner/showcase.py [SPEED]`** (added 2026-09-26) starts Tsunami with a test line-up next to your
@@ -651,6 +662,13 @@ It costs **1500**, has **2400 HP**, heavy armor, speed **2**, no turret, and is 
 for that job, slower to balance it; it was 2000, 1800 HP, speed 3, and could be mind-controlled.) The
 director sends its Bulldozers at enemy Psychic Towers within 45 cells, out of any attack team, and a
 Soviet director house that has seen enemy Psychic Towers keeps two.
+Since 2026-10-07 (the user's call, after the arena showed it is the best siege unit) the Bulldozer is also an army
+unit: the director's Soviet siege role builds it before the V3, and in a fight it goes for buildings (defences
+first) and infantry and leaves vehicles to the tanks. One sent at a Psychic Tower is held out of the army for 300
+frames at a time. Over the 384 seeded strategy games this changed nothing measurable: Russia won 50 of 128 against
+America and 55 against Yuri (53 and 52 without), and the Bulldozers still destroyed only a quarter of their value
+(0.26). Most die to Lashers and Grizzlies on the way, at speed 2 among the army; without the targeting it was
+0.25. Holding them back until the escort has won the field would be the next step.
 It cannot appear in starting armies or crates. Soviet AI can build mixed assault teams of two bulldozers and four Rhinos
 once it has Radar and a War Factory, on easy, medium and hard difficulties.
 
@@ -1864,18 +1882,84 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
     all 104 the same; with one, 21 results changed, 11 for five slaves and 10 for four (seeds 0–3
     alone leaned 8–2 to five, seeds 4–7 8–3 to four).
 
+- **Liberator reworked** (2026-10-07, the user's pick from three options): 2250, 700 HP, light armour, speed 4,
+  ROF 100/70, 25% against infantry (was 3000, 375 HP heavy, speed 2, ROF 140/100, 100%). See "Unit roles from
+  the arena". On the same 384 seeded strategy games (strat and strat_mcv, seeds 0–3), wins–losses–draws:
+
+  | Pairing | Before | Liberator reworked | Same at 3000 | Reworked, no self-healing |
+  |---|---|---|---|---|
+  | America vs Russia | 52–67–9 | 66–53–9 | 68–50–10 | 72–49–7 |
+  | America vs Yuri | 49–65–14 | 61–55–12 | 55–62–10 | 65–53–10 |
+  | Russia vs Yuri (no Liberators: a control) | 54–65–8 | 52–66–9 | 51–66–10 | 55–64–8 |
+
+  - Total wins went from 101/121/130 (America/Russia/Yuri) to 127/105/121: the spread is narrower, but Russia
+    now trails, America included.
+  - In these games the Liberator destroys about four times its value (4.0; 1.1 before), against 0.4–1.7 for
+    every other unit. The director keeps at most two, inside escorted armies, where infantry and fast units
+    rarely reach them, and they turn elite (450 damage, range 8). The arena's open-field duels don't show
+    that.
+  - Price barely matters to the AI: with two at most and 50,000 to start, 3000 gave about the same balance.
+
 Balance tools:
 - `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every
   pairing on four 2-player maps with the starts swapped (24 matches).
 - `bench.py factions DIR...`: wins per country and per pairing.
 - `bench.py units DIR...`: kill statistics summed over matches, with value destroyed against
   value lost per unit type.
+- `arena.py`: equal-cost unit duels and sieges, below.
 
 Each match writes `yspawn-bench.csv`: per-house snapshots every 300 frames and a result row.
 - The snapshot columns `killed_units`/`killed_buildings` are the house's **losses**.
 - Also recorded: cash, factories, current build orders and director state, and since 2026-10-02 the
   house's director flags, plan and posture.
 - `yspawn.log` has the director's decisions.
+
+#### Unit roles from the arena (`spawner/arena.py`, 2026-10-07)
+
+`arena.py run OUTDIR ATTACKERS OPPONENTS` fights out equal-cost groups (a budget of 9,000 by default) of
+each attacker against each opponent. Every pairing runs with the sides swapped. `arena.py matrix DIR...`
+prints the exchange: the share of the opponent's value destroyed minus the share of one's own lost,
+from −1 (wiped out, killed nothing) to +1. Above 0, the row unit wins the trade at equal cost.
+- The games are benchmark matches on Arena.mmx with `[Settings] Arena=1` (a bench-only setting). The DLL
+  takes the computer players' starting vehicles off the map, so each one owns only its `[Units]` and
+  never builds, and `ShortGame=0` makes a game last until one side has nothing left. Both groups hunt.
+- A spec can be a type (`HTNK`), a group (`allied`, `soviet`, `yuri`, `infantry`), a mix sharing the
+  budget (`HTNK+SBDOZR`), or a base: `base_allied`, `base_soviet` and `base_yuri` (defences in front,
+  the War Factory, Refinery and three Power Plants behind), or `base_bare`. A base can carry an army
+  (`base_soviet+HTNK`) worth `--base-army` percent of the budget (default 50). It guards the base
+  unless `--defenders Hunt`.
+- `--start 0|1|2` sets where on the map the fight is; use several starts to even out the ground.
+  `--gap`, `--shift` and `--sides A` set up long approaches.
+- A unit's loss is the larger of what was destroyed (`yspawn-duels.csv`) and its army's fall in
+  value (bench rows), which counts units mind-controlled away. A free miner from a base's Refinery
+  is not counted as a gain.
+- Checks: Tank Destroyers beat every tank, Flak Tracks and Prisms shred infantry, the Mastermind takes
+  any ground vehicle, V3s lose every close fight, and Kirovs and Discs beat anything without
+  anti-air.
+- Results: `/mnt/data/SteamLibrary/ra2-bench-results/2026-10-07/arena` (`base-units`: 15 vehicles against
+  23 types; `base-siege`, `long-siege*`: sieges; `sweep/lib*`: Liberator variants).
+
+Findings (scores at equal cost):
+- **The Liberator** at 3000, 375 HP and speed 2 lost to almost everything: Rhino −1, Grizzly −0.92,
+  Lasher −0.71, every infantry type about −0.6. It beat only the Mastermind, Gattling Tanks, Flak Tracks,
+  Guardian GIs and V3s.
+- **17 variants were tried.** More HP alone made it beat everything, infantry included. Cutting its damage
+  against infantry or light armour didn't make it lose to light units, because their guns do 10–35% to
+  heavy armour. At 900 HP it was heavy and matched or beat the Grizzly almost everywhere.
+- **The kept version** (2250, 700 HP, light armour, speed 4, ROF 100/70, 25% against infantry):
+  - beats Apocalypse 0.71, Rhino 0.38, Lasher 0.88, Mastermind 1, Tesla Tank 1;
+  - loses to Tank Destroyer −0.53, Grizzly −0.23, GI −0.63, Conscript −0.72, Initiate −0.67,
+    Brute −0.69, Kirov and Disc −1.
+  - **Pareto check:** no unit of any faction does as well as another of its faction against every
+    opponent, except the V3 (artillery: the arena can't show its range). The Grizzly keeps light
+    vehicles and infantry, and the Liberator head to head.
+- **The Bulldozer is the best siege unit** and its stats stay:
+  - **in the field** it beats every infantry type, the Mastermind and the light vehicles (1), and loses to
+    Tank Destroyers (−1), Apocalypses (−0.8), Grizzlies (−0.52), Rhinos (−0.45) and aircraft (−1);
+  - **against small bases** guarded by half the budget in Grizzlies, Rhinos or Lashers it scored 0.95,
+    0.72 and 0.99 (Apocalypses 0.85, 0.84, −0.43; Rhinos 0.24, −0.09, −0.50);
+  - **from 46 cells out**, against defences alone, 0.93, 0.97 and 1.00, so speed 2 doesn't hold it back;
+  - **against defenders worth the whole budget** that hunt, every attacker lost.
 
 ### Results
 
@@ -1943,6 +2027,11 @@ plus army value, and within 20% count as a draw.
   The 2026-10-07 rows are the first against the repaired stock AI. Every game's seed is in its
   `yspawn.ini`, so any of them can be replayed (`--seed`), exactly through its opening at least.
 - An MCV that takes over 3000 frames to build (low power) can be ordered a second time.
+- **A crash that replays** (2026-10-07): `strat` match 21 (Hills, Russia against Yuri), seed 9101, crashed at
+  about frame 12,000 in all three runs with the reworked Liberator and the director as it was (not with the old
+  Liberator, nor after the Bulldozer change, which moved the game). It writes to
+  0x7F from EIP 0x0831C0A4, which is in the heap: a call through a freed object, like the late crashes before.
+  It is the first of them that a seed reproduces.
 - **Yuri was too strong in director-vs-director play** (2026-10-07, `strat` and `strat_mcv` on two seeds
   each, 64 games a pairing): Yuri beat America 43–17 (4 draws) and Russia 46–17, while America and
   Russia were even (26–33). It also decides the hard set: on Tower, with the same seeds and starts,
