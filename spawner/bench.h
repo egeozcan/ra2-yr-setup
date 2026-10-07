@@ -49,6 +49,11 @@ static void bench_init(void)
         patch(0x4A8BB0, (const BYTE[]){ 12 }, 1);
     if (!ini_int("Settings", "Benchmark", 0))
         return;
+    /* benchmark games run side by side (bench.py --jobs): WinMain skips its two named mutexes, the
+     * app's ("TibSun is already running...Bail!": every copy but the first quit) and the autoplay
+     * one (each later copy waited 30 s on it). Both handles stay 0, which the exit code allows. */
+    if (patch_checked("single copy check", 0x6BBE56, (const BYTE[]){ 0x68, 0x14, 0x0F, 0x84, 0x00 }, 5))
+        patch_rel(0x6BBE56, 0xE9, 0x6BBFAD);
     bench_limit = ini_int("Settings", "FrameLimit", 0);
     bench_camera = ini_int("Settings", "Camera", -1);        /* follow this house's army front */
     bench_fleet = ini_int("Settings", "FleetTest", 0);       /* N warships for AI house 1 at frame 300 */
