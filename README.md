@@ -1291,7 +1291,8 @@ of the game (`DIR_F_STRATEGY`, flag 16384, on by default). Code: `dir_choose_pla
   - siege is weighted 40 against a target whose defences are over 4,000 and over half its army;
   - boom is weighted 30 while the strongest enemy has more refineries, but never in a duel within
     reach: switching to boom at frame 9,000 lost all 7 such duels;
-  - naval as at the start;
+  - naval as at the start, the sea check made again (made once on the first think, before any
+    enemy building stood, it kept MCV starts from ever going naval);
   - balanced 30;
   - never rush.
 

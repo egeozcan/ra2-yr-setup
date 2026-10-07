@@ -6455,7 +6455,9 @@ static int dir_land_steps(BYTE *house, CellXY from)
 }
 
 /* Water within 15 cells of home whose sea (a flood fill over water) comes within 6 cells of some
- * hostile house's building: a fleet from here could shell someone. */
+ * hostile house's building: a fleet from here could shell someone. A hostile house with no building
+ * yet counts by its start cell, within 12 cells of that sea (in MCV starts the plan is drawn before
+ * any MCV deploys, and a naval plan was never possible). */
 static int dir_sea_reaches_enemy(BYTE *house, CellXY base)
 {
     CellXY water = { 0, 0 };
@@ -6475,6 +6477,13 @@ static int dir_sea_reaches_enemy(BYTE *house, CellXY base)
     for (int i = 0; i < bv->Count; i++) {
         BYTE *b = bv->Items[i];
         if (oil_live(b) && dir_hostile(house, FIELD(b, O_OWNER, BYTE *)) && dir_near_sea(object_cell(b), 6))
+            return 1;
+    }
+    DynVec *hv = HOUSE_ARRAY;
+    for (int i = 0; i < hv->Count; i++) {
+        BYTE *h = hv->Items[i];
+        if (dir_hostile(house, h) && dir_house_alive(h) && !FIELD(h, H_OWNED_BUILDINGS, int)
+            && dir_near_sea(dir_house_center(h), 12))
             return 1;
     }
     return 0;
@@ -6595,6 +6604,7 @@ static void dir_replan(BYTE *house, DirState *d)
                                                                              : CURRENT_FRAME < d->next_replan))
         return;
     d->next_replan = CURRENT_FRAME + 9000;
+    d->sea = dir_sea_reaches_enemy(house, d->base);   /* again: bases are up by now, and some have fallen */
     int refineries = FIELD(house, OIL_H_REFINERIES, int), theirs = 0;
     DynVec *hv = HOUSE_ARRAY;
     for (int i = 0; i < hv->Count; i++) {
@@ -6607,9 +6617,9 @@ static void dir_replan(BYTE *house, DirState *d)
     if (FIELD(house, OIL_H_SIDE, int) == 0)
         w[PLAN_NAVAL] /= 2;
     int plan = dir_plan_pick(w, dir_next_roll(d));
-    logmsg("director: house %d frame %d re-plan: %s -> %s (target defences %d, army %d, refineries %d vs %d; "
+    logmsg("director: house %d frame %d re-plan: %s -> %s (target defences %d, army %d, refineries %d vs %d, sea %d; "
            "weights %d/%d/%d/%d/%d)", FIELD(house, 0x30, int), CURRENT_FRAME, dir_plan_names[d->plan],
-           dir_plan_names[plan], d->enemy_def, d->target_army, refineries, theirs, w[0], w[1], w[2], w[3], w[4]);
+           dir_plan_names[plan], d->enemy_def, d->target_army, refineries, theirs, d->sea, w[0], w[1], w[2], w[3], w[4]);
     if (plan != d->plan)
         dir_announce(house, "new plan %s", dir_plan_names[plan]);
     d->plan = plan;
