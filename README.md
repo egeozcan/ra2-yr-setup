@@ -1981,9 +1981,10 @@ plus army value, and within 20% count as a draw.
   scan (`TechnoClass::Evaluate_Object`, 0x6F7CA0, through `UnitClass::SelectWeapon` into
   `TechnoClass::SelectWeapon`, 0x6F3330) was looking at a freed object: the stack had run 8 bytes off
   after a virtual call on it (most likely another class's method, popping two arguments), so the weapon
-  read there was a return address. A stale object in a list the scan walks, like the passenger-chain
-  crash, but on a land map with no convoys; the Yuri director had packed up a Slave Miner 450 frames
-  before and sent it on 150 before. A seed doesn't bring them back: games drift apart long before then.
+  read there was a return address. Most likely a stale object in a list the scan walks, like the
+  passenger-chain crash, but on a land map with no convoys; where the pointer came from isn't known. The
+  Yuri director had packed up a Slave Miner at least 450 frames before and sent it on at least 150
+  before. A seed doesn't bring them back: games drift apart long before then.
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
   post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
   12W 2L 2D to 16/16 for the same build.
