@@ -411,6 +411,9 @@ BALANCE = [(m, 3, [(a, s, 1, 0), (b, 1 - s, 1, 0)], {"StartBase": "3", "Superwea
            for m in ("Arena.mmx", "Hills.mmx", "Tower.mmx", "Lostlake.mmx")
            for a, b in ((0, 8), (0, 9), (8, 9))
            for s in (0, 1)]
+# Director=1 plays director-policy.h DIR_F_DEFAULT: every feature but defenses-first (64), with
+# postures off (DIR_F_NO_POSTURE, 65536). Masks for ablations start from it.
+DIR_DEFAULT = 98239
 # Strategy layer A/B: director with plans (1) against the director without them (16319: every
 # default feature but DIR_F_STRATEGY), each pairing and start both ways round, on the user's settings.
 NOSTRAT = 16319
@@ -435,15 +438,15 @@ STRAT_ISO = [(ISO, 0, [(c, k + 1, 1 if (k + flip) % 2 == 0 else NOSTRAT, 0) for 
              for flip in (0, 1)]
 # Against mind control: Russia with its hunters, Bulldozers and blackouts (1) or without them
 # (DIR_F_DEFAULT | DIR_F_NO_ANTIMIND), against Yuri, on the MCV maps, starts both ways round, twice.
-NOMIND = 32703 | 32768
+NOMIND = DIR_DEFAULT | 32768
 MIND = [(m, 3, [(8, s, 1 if on else NOMIND, 0), (9, 1 - s, 1, 0)], {"Superweapons": "0", "Crates": "1"})
         for m in ("DeepFrze.yro", "Rockets.mmx", "Carville.mmx", "Round.mmx")
         for s in (0, 1)
         for on in (1, 0)
         for rep in (0, 1)]
 # Ablation of the strategy layer's postures: plans without postures (DIR_F_DEFAULT | DIR_F_NO_POSTURE)
-# against no plans, as STRAT_MCV.
-NOPOSTURE = 32703 | 65536
+# against no plans, as STRAT_MCV. Postures are off by default now, so this is DIR_DEFAULT itself.
+NOPOSTURE = DIR_DEFAULT | 65536
 POSTURE = [(m, 3, [(a, s, NOPOSTURE if on == 0 else NOSTRAT, 0), (b, 1 - s, NOSTRAT if on == 0 else NOPOSTURE, 0)],
             {"Superweapons": "0", "Crates": "1"})
            for m in ("DeepFrze.yro", "Rockets.mmx", "Carville.mmx", "Round.mmx")

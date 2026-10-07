@@ -118,5 +118,20 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(self.files(), user)
 
 
+class FlagTests(unittest.TestCase):
+    def test_director_default_mirrors_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "flags.c").write_text('#include <stdio.h>\n#include "director-policy.h"\n'
+                                         'int main(void) { printf("%d", DIR_F_DEFAULT); return 0; }\n')
+            subprocess.run(["cc", "-Wno-unused-function", "-I", str(HERE), str(tmp / "flags.c"),
+                            "-o", str(tmp / "flags")], check=True)
+            default = int(subprocess.run([str(tmp / "flags")], capture_output=True, text=True,
+                                         check=True).stdout)
+        self.assertEqual(bench.DIR_DEFAULT, default)
+        self.assertEqual(bench.NOMIND, default | 32768)       # DIR_F_NO_ANTIMIND
+        self.assertEqual(bench.NOPOSTURE, default | 65536)    # DIR_F_NO_POSTURE
+
+
 if __name__ == "__main__":
     unittest.main()
