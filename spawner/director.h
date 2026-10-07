@@ -4806,7 +4806,7 @@ static DirEnemy *dir_navy_pick(DirState *d, CellXY from, CellXY ship)
         for (int i = 0; i < dir_enemy_count; i++) {
             DirEnemy *e = &dir_enemies[i];
             int bad = 0;
-            for (int k = 0; k < d->navy_bad_count; k++)
+            for (int k = 0; k < 8; k++)
                 bad |= d->navy_bad[k] == e->obj;
             if (bad || e->air || e->capturable)
                 continue;
@@ -4949,6 +4949,10 @@ static void dir_navy(BYTE *house, DirState *d)
             if (best && FIELD(o, O_TARGET, BYTE *) != best->obj && !dir_recent_order(o, best->obj, 150))
                 dir_order(o, MISSION_ATTACK, best->obj, NULL);
         }
+        /* a sortie's progress clock stops while the fleet is home (a fleet 5 cells from its target,
+         * called home for 6000 frames, marked it out of reach the moment the threat was gone) */
+        d->navy_progress = CURRENT_FRAME;
+        d->navy_best = 0x7FFFFFFF;
         return;
     }
 
@@ -5010,9 +5014,7 @@ static void dir_navy(BYTE *house, DirState *d)
     } else if (CURRENT_FRAME - d->navy_progress > 1500) {
         logmsg("director: house %d frame %d: fleet can't reach %.24s at %d,%d", FIELD(house, 0x30, int), CURRENT_FRAME,
                (char *)dir_type(d->navy_target) + T_ID, d->navy_target_at.X, d->navy_target_at.Y);
-        d->navy_bad[d->navy_bad_count++ % 8] = d->navy_target;
-        if (d->navy_bad_count > 8)
-            d->navy_bad_count = 8;
+        d->navy_bad[d->navy_bad_count++ % 8] = d->navy_target;   /* a ring: clamped at 8, every later one overwrote slot 0 */
         d->navy_target = NULL;
         d->navy_progress = CURRENT_FRAME;
         d->navy_best = 0x7FFFFFFF;
