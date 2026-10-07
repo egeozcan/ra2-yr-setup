@@ -57,6 +57,54 @@ class ResultTests(unittest.TestCase):
             bench.suite_list(str(self.dir), matches)
         self.assertEqual([c.args[0] for c in run.call_args_list], [str(self.dir / "00-A")])
 
+class BackupTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.game = Path(temp.name) / "game"
+        self.game.mkdir()
+        for target, value in ((bench.spawn, "GAME"), (bench, "BACKUP")):
+            p = patch.object(target, value, str(Path(temp.name) / ("game" if value == "GAME" else "backup")))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def files(self):
+        return {p.name: p.read_text() for p in self.game.iterdir()}
+
+    def bench_writes(self):
+        for name in bench.SAVED:
+            (self.game / name).write_text("Benchmark=1\n" if name == "yspawn.ini" else "bench")
+
+    def test_files_the_user_lacked_are_removed(self):
+        bench.snapshot()
+        self.bench_writes()
+        bench.put_back()
+        self.assertEqual(self.files(), {})
+        self.bench_writes()          # a killed run: its files stay until the next run or restore
+        bench.snapshot()             # must not save the benchmark's files as the user's
+        bench.restore()
+        self.assertEqual(self.files(), {})
+        self.assertFalse(Path(bench.BACKUP).exists())
+
+    def test_user_files_played_between_runs_are_not_overwritten(self):
+        user = {"yspawn.ini": "[Settings]\nName=Me\n", "yspawn.log": "old", "yspawn.map": "map"}
+        for name, text in user.items():
+            (self.game / name).write_text(text)
+        bench.snapshot()
+        self.bench_writes()
+        bench.put_back()
+        self.assertEqual(self.files(), user)
+        user["yspawn.log"] = "the user's last game"   # played with skirmish.py, no restore
+        (self.game / "yspawn.log").write_text(user["yspawn.log"])
+        bench.snapshot()
+        self.bench_writes()
+        bench.put_back()
+        self.assertEqual(self.files(), user)
+        self.bench_writes()          # killed run, then the next one
+        bench.snapshot()
+        bench.put_back()
+        self.assertEqual(self.files(), user)
+
 
 if __name__ == "__main__":
     unittest.main()

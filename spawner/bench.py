@@ -20,14 +20,58 @@ import spawn
 
 SAVED = ["yspawn.ini", "yspawn.log", "yspawn.map"]
 BACKUP = os.path.expanduser("~/.cache/ra2-bench-saved")
+ABSENT = "absent.txt"   # in BACKUP: the SAVED files the game dir did not have
+
+
+def bench_leftover():
+    """True when the game-dir yspawn.ini is a benchmark's (a killed run's), not the user's."""
+    try:
+        with open(os.path.join(spawn.GAME, "yspawn.ini"), encoding="latin-1") as f:
+            return any(line.strip() == "Benchmark=1" for line in f)
+    except FileNotFoundError:
+        return False
+
+
+def snapshot():
+    """Save the user's launcher files, kept until `bench.py restore`. A killed run leaves its own
+    yspawn.ini (Benchmark=1) behind: keep the older backup, never save a benchmark's files as the
+    user's. Otherwise the game dir holds the user's files, newer than any backup (they played in
+    between, and the restore would overwrite their last yspawn.log): save them afresh."""
+    if bench_leftover():
+        return
+    shutil.rmtree(BACKUP, ignore_errors=True)
+    os.makedirs(BACKUP)
+    absent = []
+    for f in SAVED:
+        p = os.path.join(spawn.GAME, f)
+        if os.path.exists(p):
+            shutil.copy2(p, BACKUP)
+        else:
+            absent.append(f)
+    with open(os.path.join(BACKUP, ABSENT), "w") as out:
+        out.write("".join(f + "\n" for f in absent))
+
+
+def put_back():
+    """Copy the saved files over the game dir's, and delete the ones the user did not have."""
+    try:
+        with open(os.path.join(BACKUP, ABSENT)) as f:
+            absent = f.read().split()
+    except FileNotFoundError:   # a backup from before the list: nothing known to be absent
+        absent = []
+    for f in SAVED:
+        p = os.path.join(BACKUP, f)
+        if os.path.exists(p):
+            shutil.copy2(p, spawn.GAME)
+        elif f in absent and os.path.exists(os.path.join(spawn.GAME, f)):
+            os.remove(os.path.join(spawn.GAME, f))
 
 
 def restore():
     """Put the user's launcher files back and forget the backup."""
     if not os.path.isdir(BACKUP):
         return
-    for f in os.listdir(BACKUP):
-        shutil.copy2(os.path.join(BACKUP, f), spawn.GAME)
+    put_back()
     shutil.rmtree(BACKUP)
 
 
@@ -88,15 +132,7 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
     if spawn.running():
         raise SystemExit("game already running")
     os.makedirs(outdir, exist_ok=True)
-    # One backup of the user's files for all runs, kept until `bench.py restore`: a killed run
-    # cannot then overwrite it with benchmark settings.
-    backup = BACKUP
-    os.makedirs(backup, exist_ok=True)
-    if not os.listdir(backup):
-        for f in SAVED:
-            p = os.path.join(spawn.GAME, f)
-            if os.path.exists(p):
-                shutil.copy2(p, backup)
+    snapshot()
     result = os.path.join(spawn.GAME, "yspawn-bench.csv")
     for stale in (result, os.path.join(spawn.GAME, "yspawn-kills.csv")):
         if os.path.exists(stale):
@@ -138,10 +174,7 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         with open(os.path.join(outdir, "wall.txt"), "w") as f:
             f.write(f"{time.time() - began:.0f}\n")
     finally:
-        for f in SAVED:
-            p = os.path.join(backup, f)
-            if os.path.exists(p):
-                shutil.copy2(p, spawn.GAME)
+        put_back()
     return summary(outdir)
 
 
