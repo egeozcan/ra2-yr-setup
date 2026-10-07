@@ -1443,7 +1443,8 @@ static int dir_landed(DirState *d, CellXY c)
  * wall, or a power plant while others remain) opens the way, as a player would. */
 #define DIR_STUCK 2048
 static int dir_bridge_down_near(CellXY at, int r);
-static struct { BYTE *unit; CellXY at; int frame, stranded; } dir_moves[DIR_STUCK];
+/* frame: last moved; seen: last tracked (a unit stuck for good is still in use) */
+static struct { BYTE *unit; CellXY at; int frame, stranded, seen; } dir_moves[DIR_STUCK];
 
 /* Stranded: stuck on a section cut off by a fallen bridge. It guards where it stands instead of
  * pathing at an impossible goal, and engineers go for that bridge first. Re-checked every 600
@@ -1769,13 +1770,16 @@ static void dir_track_stuck(BYTE *house, DirState *d, BYTE *unit, CellXY at, Cel
     unsigned h = ((DWORD)unit >> 3) % DIR_STUCK, k = h;
     for (int i = 0; i < 8; i++) {
         unsigned j = (h + i) % DIR_STUCK;
-        if (dir_moves[j].unit == unit || !dir_moves[j].unit || CURRENT_FRAME - dir_moves[j].frame > 6000) {
+        if (dir_moves[j].unit == unit || !dir_moves[j].unit || CURRENT_FRAME - dir_moves[j].seen > 6000) {
             k = j;
             break;
         }
     }
+    dir_moves[k].seen = CURRENT_FRAME;
     if (dir_moves[k].unit != unit || dir_dist2(dir_moves[k].at, at) > 2 * 2 || FIELD(unit, O_TARGET, BYTE *)
         || dir_dist2(at, goal) <= 15 * 15) {
+        if (dir_moves[k].unit != unit)
+            dir_moves[k].stranded = 0;   /* that was the slot's last unit, not this one */
         dir_moves[k].unit = unit;   /* moving, fighting or where it should be */
         dir_moves[k].at = at;
         dir_moves[k].frame = CURRENT_FRAME;
