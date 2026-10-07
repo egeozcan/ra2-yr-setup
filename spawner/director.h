@@ -3828,6 +3828,15 @@ static void dir_expansion(BYTE *house, DirState *d)
         d->site = (CellXY){ 0, 0 };
         escaping = 0;
     }
+    /* the last yard lost while a spare MCV was bound for ore: nothing drives it there now (that
+     * needs a yard), and dir_try_deploy kept it, and any other MCV, from deploying anywhere but the
+     * site for the rest of the 6000 frames. Set up where it stands, as the stock AI does. */
+    if (!yards && !escaping && d->crate_frame && CURRENT_FRAME - d->crate_frame < 6000) {
+        logmsg("director: house %d frame %d: no construction yard left, expansion to %d,%d dropped", FIELD(house, 0x30, int),
+               CURRENT_FRAME, d->site.X, d->site.Y);
+        d->crate_frame = 0;
+        d->site = (CellXY){ 0, 0 };
+    }
     /* An MCV nobody sent anywhere (from a crate, while the base stands): to a rich field away from
      * the enemy as an expansion (dir_find_site: 2500 ore within 6 cells, no enemy building within
      * 28 cells nor armed enemy within 14), else the stock AI sets it up at home. Free yards parked
