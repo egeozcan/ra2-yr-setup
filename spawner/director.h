@@ -4309,7 +4309,8 @@ static void dir_ferry(BYTE *house, DirState *d)
             d->ferry_state[k] = 0;
             d->ferry_frame[k] = CURRENT_FRAME;
             d->ferry_docked[k] = 0;
-        }
+        } else if (!dir_recent_order(t, dir_cell(d->dock), 450))   /* the dock may have moved since it set off */
+            dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
     }
     if (!docked) {
         d->convoy_since = 0;
