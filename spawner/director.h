@@ -6316,6 +6316,11 @@ static void dir_slave_miners(BYTE *house, DirState *d)
         return;
     d->next_miner = CURRENT_FRAME + 300;
     DynVec *v = OIL_TECHNO_ARRAY, *bv = OIL_BUILDING_ARRAY;
+    /* forget miners that are gone (packed up, destroyed), also while one is on its way: a miner
+     * deployed again at the same address would take the old one's time and miss its deploy log */
+    for (int k = 0; k < 64; k++)
+        if (dir_miner_seen[k].b && !dir_object_listed(bv, dir_miner_seen[k].b))
+            dir_miner_seen[k].b = NULL;
     if (d->miner_site.X > 0) {   /* packed up: send the mobile miner to the field */
         if (CURRENT_FRAME - d->miner_frame > 3000) {
             d->miner_site = (CellXY){ 0, 0 };
