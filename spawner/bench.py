@@ -161,9 +161,7 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
                 time.sleep(3)
                 print(f"{outdir}: crashed, see except.txt", flush=True)
                 break
-        if spawn.running():
-            subprocess.run(["pkill", "-x", "gamemd-spawn.ex"])
-            time.sleep(3)
+        stop()
         for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv"):
             p = os.path.join(spawn.GAME, f)
             if os.path.exists(p) and os.path.getmtime(p) >= began - 1:
@@ -176,6 +174,19 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
     finally:
         put_back()
     return summary(outdir)
+
+
+def stop(wait=20):
+    """End the game, and wait for it to go: the next run() refuses to start beside it."""
+    for sig in ("-TERM", "-KILL"):
+        if not spawn.running():
+            return
+        subprocess.run(["pkill", sig, "-x", "gamemd-spawn.ex"])
+        for _ in range(wait):
+            time.sleep(1)
+            if not spawn.running():
+                return
+    raise SystemExit("gamemd-spawn.ex survived SIGKILL: stopping")
 
 
 def outcome(outdir):
