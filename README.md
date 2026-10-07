@@ -921,11 +921,12 @@ Follow-up verbose telemetry showed many stock and new teams competing for one wa
 factory. Controlled 900-, 1500- and 2000-frame Brutal team intervals each filled
 different teams; the longer intervals improved Soviet armor formation in those
 matches but delayed Allied teams, so the installed 900-frame interval is retained.
-The engine's AI trigger condition `1` means **enemy owns**, not **AI owns**. The
-new naval bombardment and air-strike triggers now use condition `0`; Brutal
-naval hunters and bombardment wait for the AI's shipyard. This avoids reserving
-ships before a yard exists and selecting aircraft teams based on an opponent's
-docks.
+The engine's AI trigger condition `0` means **enemy owns** and `1` means **AI owns**
+(`AITriggerTypeClass::ConditionMet`, switch at 0x41E8F0; YRpp's enum has them the
+other way round). The new naval bombardment and air-strike triggers use condition
+`1`; Brutal naval hunters and bombardment wait for the AI's own shipyard (at least
+one). This avoids reserving ships before a yard exists and selecting aircraft teams
+based on an opponent's docks.
 
 Reinstall both parts with the game closed:
 

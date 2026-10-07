@@ -38,7 +38,7 @@ def ids(side, role):
 
 
 def trigger(side, slot, name, team, condition, weights):
-    """Trigger when neutral (7), enemy (1), or owner (0) owns at least one oil.
+    """Trigger when neutral (7), enemy (0), or owner (1) owns at least one oil.
 
     The final fields are easy/normal/hard; only hard (Brutal in the game UI)
     is enabled. Oil guards are ordinary teams so they don't consume the stock

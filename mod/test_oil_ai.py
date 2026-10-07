@@ -43,7 +43,7 @@ class OilAITests(unittest.TestCase):
             self.assertEqual(neutral[1], enemy[1])
             self.assertEqual(neutral[1], capture_id)
             self.assertEqual(neutral[4:6], ['7', 'CAOILD'])
-            self.assertEqual(enemy[4:6], ['1', 'CAOILD'])
+            self.assertEqual(enemy[4:6], [str(combat_ai.COND_ENEMY_OWNS), 'CAOILD'])
             # Retain stock >= 1 encoding rather than assuming struct field order.
             stock_trigger = next(v.split(',') for v in self.stock['AITriggerTypes'].values()
                                  if v.split(',')[1] == template)
@@ -64,7 +64,7 @@ class OilAITests(unittest.TestCase):
         for side, *_ in oil_ai.FACTIONS:
             for slot, role in ((2, 1), (3, 2)):
                 trigger = self.triggers[f'0F1BC{side}2{slot}-G']
-                self.assertEqual(trigger[4:6], ['0', 'CAOILD'])  # owner owns
+                self.assertEqual(trigger[4:6], [str(combat_ai.COND_AI_OWNS), 'CAOILD'])
                 self.assertEqual(struct.unpack('<ii', bytes.fromhex(trigger[6])[:8]), (1, 3))
                 self.assertEqual(trigger[12], str(side))
                 self.assertEqual(trigger[1], oil_ai.ids(side, role)[1])

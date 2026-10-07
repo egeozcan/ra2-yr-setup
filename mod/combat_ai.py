@@ -87,13 +87,20 @@ NAVAL_YARDS = {
 }
 
 
+# AITriggerTypes condition field (AITriggerTypeClass::ConditionMet 0x41E720, switch at 0x41E8F0):
+# 0 calls 0x41EAF0 on the house's current enemy, 1 calls 0x41EE90 on the AI house itself.
+# YRpp's enum (AIOwns = 0, EnemyOwns = 1) has these backwards; Westwood's own triggers agree
+# with the engine ("Soviet Miners" 1,HARV; "Allied Spy vs Soviet Power" 0,NAPOWR).
+COND_ENEMY_OWNS, COND_AI_OWNS = 0, 1
+
+
 def comparator(count, operator=3):
     """Stock condition payload: signed count, comparator (3 => >=)."""
     return (struct.pack('<ii', count, operator) + bytes(24)).hex()
 
 
 def trigger(identifier, name, team, side, building, count=1, weight=120,
-            owner='<all>', condition=0, operator=3):
+            owner='<all>', condition=COND_AI_OWNS, operator=3):
     return (f'{identifier}={name},{team},{owner},1,{condition},{building},'
             f'{comparator(count, operator)},{weight:.6f},10.000000,{weight:.6f},'
             f'1,0,{side},0,<none>,0,0,1')
@@ -165,7 +172,8 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
             hard[1] = replacements.get(hard[1], hard[1])
             hard[14] = replacements.get(hard[14], hard[14])
             if fields[1] in NAVAL_YARDS:
-                hard[4:6] = ['0', NAVAL_YARDS[fields[1]]]
+                # the stock hunters' comparator is ">= 0", which no yard count can fail
+                hard[4:7] = [str(COND_AI_OWNS), NAVAL_YARDS[fields[1]], comparator(1)]
             if hard[14] in air_templates:
                 hard[14] = '<none>'
             hard[15:] = ['0', '0', '1']
@@ -184,16 +192,16 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
         identifier = f'{PREFIX}{0x300 + len(new_triggers):03X}-G'
         new_triggers.append(trigger(identifier, name, team, side, building, **kwargs))
 
-    # Request bombardment only after the owner has a yard. Condition 1 is
-    # EnemyOwns, so using it with a tech building can reserve ships before
-    # the AI has any way to produce them.
+    # Request bombardment only after the owner has a yard: gated on a tech
+    # building, the team reserved ships before the AI had any way to build them.
     for side, template, members, yard in (
         (1, '0CAC330C-G', ('2,CARRIER', '2,DEST', '2,AEGIS'), 'GAYARD'),
         (2, '0EC2038C-G', ('2,DRED', '3,HYD', '2,SUB'), 'NAYARD'),
         (3, '06C5992C-G', ('3,BSUB',), 'YAYARD'),
     ):
         team = add_team(template, f'Brutal Navy Bombard {side}', members, NAVAL_SCRIPT)
-        add_trigger(f'Brutal Navy Bombard {side}', team, side, yard, weight=220)
+        add_trigger(f'Brutal Navy Bombard {side}', team, side, yard,
+                    condition=COND_AI_OWNS, weight=220)
 
     # Two airbases mean eight docks. Four-plane teams remain available while
     # expanding, but cannot keep starting and reserving pads after the second.
@@ -205,7 +213,8 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
             team = add_team(template, f'Brutal {country} {planes}-plane Strike',
                             (f'{planes},{aircraft}',), AIR_SCRIPT)
             add_trigger(f'Brutal {country} {planes}-plane Strike', team, 1, airport,
-                        owner=country, count=count, operator=operator, weight=140)
+                        owner=country, condition=COND_AI_OWNS, count=count,
+                        operator=operator, weight=140)
 
     # Other neutral tech buildings get their own unarmed engineer teams.
     # Oil capture/defense continues to use the existing oil_ai IDs and limits.
@@ -234,8 +243,8 @@ def patch(lines, section_lines, clone_section, append_to_list, rules):
             team = add_team(template, f'Brutal {side} Counter {role}', members,
                             script, counter=True, defense=role == 'air')
             for enemy, minimum in COUNTER_THREATS[role]:
-                add_trigger(f'Brutal {side} Counter {role} vs {enemy}', team,
-                            side, enemy, condition=1, count=minimum, weight=180)
+                add_trigger(f'Brutal {side} Counter {role} vs {enemy}', team, side, enemy,
+                            condition=COND_ENEMY_OWNS, count=minimum, weight=180)
 
     s, e = section_lines(lines, 'AITriggerTypes')
     last = max(i for i in range(s + 1, e) if '=' in lines[i].split(';')[0])

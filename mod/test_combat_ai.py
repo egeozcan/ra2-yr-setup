@@ -83,12 +83,26 @@ class CombatAITests(unittest.TestCase):
                         if self.ai[t]['Name'] == 'Brutal ' + old)
             self.assertEqual(self.ai[team]['Script'], script_id)
 
+    def test_condition_constants_match_westwood_triggers(self):
+        # Stock triggers whose meaning is unambiguous pin which value is which.
+        stock = {k: v.split(',') for k, v in self.stock['AITriggerTypes'].items()}
+        for identifier, name, condition, building in (
+            ('0C8C2C3C-G', 'Soviet Miners', combat_ai.COND_AI_OWNS, 'HARV'),        # own HARV <= 3
+            ('043F874C-G', 'Allied MCV - H', combat_ai.COND_AI_OWNS, 'GACNST'),     # own yards == 0
+            ('0C9561BC-G', 'Allied Spy vs Soviet Power', combat_ai.COND_ENEMY_OWNS, 'NAPOWR'),
+            ('0D53430C-G', 'Soviet Engineer vs Ally med', combat_ai.COND_ENEMY_OWNS, 'GACNST'),
+        ):
+            self.assertEqual(stock[identifier][0], name)
+            self.assertEqual(stock[identifier][4:6], [str(condition), building], name)
+
     def test_navy_bombards_require_own_shipyard(self):
         fleets = [f for f in self.new.values() if f[0].startswith('Brutal Navy Bombard')]
         self.assertEqual(len(fleets), 3)
         for fields in fleets:
-            self.assertEqual(fields[4], '0')  # AIOwns, not EnemyOwns
+            self.assertEqual(fields[4], str(combat_ai.COND_AI_OWNS))
             self.assertIn(fields[5], ('GAYARD', 'NAYARD', 'YAYARD'))
+            count, operator = struct.unpack('<ii', bytes.fromhex(fields[6])[:8])
+            self.assertEqual((count, operator), (1, 3))  # at least one yard
             units = self.members(fields[1])
             self.assertGreaterEqual(sum(units.values()), 3)
             for unit in units:
@@ -101,13 +115,15 @@ class CombatAITests(unittest.TestCase):
             cloned = [f for f in self.new.values() if f[1] == new_team]
             self.assertTrue(cloned, old)
             for fields in cloned:
-                self.assertEqual(fields[4:6], ['0', yard])
+                self.assertEqual(fields[4:6], [str(combat_ai.COND_AI_OWNS), yard])
+                count, operator = struct.unpack('<ii', bytes.fromhex(fields[6])[:8])
+                self.assertEqual((count, operator), (1, 3))  # stock ">= 0" never gates
 
     def test_air_strikes_fit_docks_and_korea_uses_black_eagles(self):
         strikes = [f for f in self.new.values() if '-plane Strike' in f[0]]
         self.assertEqual(len(strikes), 10)
         for fields in strikes:
-            self.assertEqual(fields[4], '0')  # own docks, not the enemy's
+            self.assertEqual(fields[4], str(combat_ai.COND_AI_OWNS))  # own docks, not the enemy's
             country = fields[2]
             self.assertEqual(fields[5], 'AMRADR' if country == 'Americans' else 'GAAIRC')
             units = self.members(fields[1])
@@ -144,7 +160,7 @@ class CombatAITests(unittest.TestCase):
                     self.assertIn(unit, all_units)
                     self.assertGreaterEqual(int(self.rules[unit]['TechLevel']), 0)
                 for fields in matching:
-                    self.assertEqual(fields[4], '1')  # EnemyOwns
+                    self.assertEqual(fields[4], str(combat_ai.COND_ENEMY_OWNS))
                     self.assertEqual(fields[12], str(side))
                     count, operator = struct.unpack('<ii', bytes.fromhex(fields[6])[:8])
                     self.assertEqual((count, operator), (dict(threats[role])[fields[5]], 3))

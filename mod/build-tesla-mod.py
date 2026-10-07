@@ -401,9 +401,12 @@ def add_oil_ai(lines):
         capture, guard, patrol = (oil_ai.ids(side, role)[1] for role in range(3))
         triggers = [
             oil_ai.trigger(side, 0, f'Brutal {faction} Neutral Oil', capture, 7, (900, 500, 1000)),
-            oil_ai.trigger(side, 1, f'Brutal {faction} Reclaim Oil', capture, 1, (180, 80, 300)),
-            oil_ai.trigger(side, 2, f'Brutal {faction} Hold Oil', guard, 0, (240, 100, 350)),
-            oil_ai.trigger(side, 3, f'Brutal {faction} Patrol Oil', patrol, 0, (200, 100, 300)),
+            oil_ai.trigger(side, 1, f'Brutal {faction} Reclaim Oil', capture,
+                           combat_ai.COND_ENEMY_OWNS, (180, 80, 300)),
+            oil_ai.trigger(side, 2, f'Brutal {faction} Hold Oil', guard,
+                           combat_ai.COND_AI_OWNS, (240, 100, 350)),
+            oil_ai.trigger(side, 3, f'Brutal {faction} Patrol Oil', patrol,
+                           combat_ai.COND_AI_OWNS, (200, 100, 300)),
         ]
         s, e = section_lines(lines, 'AITriggerTypes')
         last = max(i for i in range(s + 1, e) if '=' in lines[i].split(';')[0])
