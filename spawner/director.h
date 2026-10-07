@@ -4064,12 +4064,27 @@ static void __attribute__((naked)) dir_add_passenger_limbo(void)
 static void dir_check_passengers(BYTE *house, BYTE *t)
 {
     int count = FIELD(t, T_PASSENGERS, int);
-    BYTE *p = FIELD(t, T_PASSENGERS + 4, BYTE *);
+    BYTE *p = FIELD(t, T_PASSENGERS + 4, BYTE *), *last = NULL;
     int i = 0;
-    for (; i < count && p && dir_object_listed(OIL_TECHNO_ARRAY, p) && FIELD(p, O_OWNER, BYTE *) && p[0x81]; i++)
+    for (; i < count && p && dir_object_listed(OIL_TECHNO_ARRAY, p) && FIELD(p, O_OWNER, BYTE *) && p[0x81]; i++) {
+        last = p;
         p = FIELD(p, O_NEXT_OBJECT, BYTE *);
-    if (i == count && (!p || !p[0x81] || !dir_object_listed(OIL_TECHNO_ARRAY, p)))
-        return;   /* sound (whatever follows the last isn't a passenger) */
+    }
+    if (i == count && (!p || !dir_object_listed(OIL_TECHNO_ARRAY, p) || !p[0x81])) {
+        /* sound (whatever follows the last isn't a passenger), but a link on past the last one is
+         * cut: the engine follows it beyond the count (AddPassenger counts on along it, and the last
+         * unload makes it the first passenger) */
+        if (p) {
+            logmsg("director: house %d frame %d: %.24s at %d,%d passenger list runs on past its %d into %s; cut",
+                   FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(t) + T_ID, object_cell(t).X, object_cell(t).Y,
+                   count, !dir_object_listed(OIL_TECHNO_ARRAY, p) ? "a dead object" : "an object on the map");
+            if (last)
+                FIELD(last, O_NEXT_OBJECT, BYTE *) = NULL;
+            else
+                FIELD(t, T_PASSENGERS + 4, BYTE *) = NULL;
+        }
+        return;
+    }
     BYTE *keep[32];
     int n = 0, moved = 0, steps = 0;
     const char *why = !p ? "ends early" : !dir_object_listed(OIL_TECHNO_ARRAY, p) ? "runs into a dead object"
