@@ -5302,16 +5302,25 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
         if (!oil_live(f) || FIELD(f, O_OWNER, BYTE *) != house || dir_whatami(f) != 1 || !(ft = dir_type(f))
             || _stricmp((char *)ft + T_ID, "BFRT"))
             continue;
+        /* sent lately (the order takes over later), or still walking in: a Guardian GI 25 cells out
+         * takes longer than 600 frames, and counted only that long, more would follow it */
         int pending = 0;
-        for (int k = 0; k < DIR_GARRISON_SLOTS; k++)
-            pending += d->garrison_site[k] == f && CURRENT_FRAME - d->garrison_frame[k] < 600;
-        int need = 5 - FIELD(f, T_PASSENGERS, int) - pending;
+        for (int k = 0; k < DIR_GARRISON_SLOTS; k++) {
+            BYTE *u = d->garrison_unit[k];
+            pending += d->garrison_site[k] == f
+                       && (CURRENT_FRAME - d->garrison_frame[k] < 600
+                           || (dir_own_unit(house, u) && FIELD(u, COMBAT_MISSION, int) == MISSION_ENTER
+                               && FIELD(u, COMBAT_DESTINATION, BYTE *) == f));
+        }
+        /* boarders on the way count as aboard (counting only those inside, an empty fortress with
+         * no Guardian GI free took three GIs at once, and more while they walked) */
+        int aboard = FIELD(f, T_PASSENGERS, int) + pending, need = 5 - aboard;
         CellXY at = object_cell(f);
         while (need-- > 0 && sent < 3) {
             /* Guardian GIs first (anti-tank, they make the fortress a tank killer); GIs only while it
              * holds fewer than two, and the barracks trains Guardian GIs when none is free */
             BYTE *best = NULL;
-            int best_d = 25 * 25 + 1, aboard = FIELD(f, T_PASSENGERS, int);
+            int best_d = 25 * 25 + 1;
             for (int pass = 0; pass < 2 && !best; pass++)
             for (int k = 0; k < tv->Count; k++) {
                 BYTE *o = tv->Items[k], *ot;
@@ -5342,6 +5351,7 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
             ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(best, COMBAT_SET_DESTINATION))(best, f, 1);
             dir_reserve(best, 600);   /* the Enter takes over later: meanwhile no convoy calls it away */
             sent++;
+            aboard++;
             static int last_log;
             if (CURRENT_FRAME - last_log > 600) {
                 last_log = CURRENT_FRAME;
