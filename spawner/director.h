@@ -371,6 +371,13 @@ static int dir_army_type(BYTE *obj, int what)
     return !(what == 1 && type[UT_HARVESTER]);   /* any other harvester the list doesn't name */
 }
 
+/* An ore miner (a vehicle): the War Miner and the Slave Miner are armed, but no army */
+static int dir_miner(BYTE *unit)
+{
+    BYTE *type = dir_type(unit);
+    return type && (type[UT_HARVESTER] || in_list("HARV,CMIN,SMIN", (char *)type + T_ID));
+}
+
 static int dir_poolable(BYTE *obj, int what)
 {
     if (what != 1 && what != 15)
@@ -504,7 +511,7 @@ static int dir_ground_full(BYTE *house, DirState *d)
     for (int i = 0; i < v->Count; i++) {
         BYTE *o = v->Items[i];
         n += oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 1 && dir_armed(o)
-            && !dir_naval(o) && !dir_crosses(o) && !dir_landed(d, object_cell(o));
+            && !dir_naval(o) && !dir_miner(o) && !dir_crosses(o) && !dir_landed(d, object_cell(o));
     }
     return n >= DIR_HOME_VEHICLES;
 }
@@ -531,8 +538,10 @@ static void dir_choose_vehicle(BYTE *house, DirState *d)
         BYTE *o = v->Items[i];
         if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 1)
             continue;
+        /* armed miners and warships are no part of the ground mix: counted as main units, they
+         * filled the main share in place of tanks */
         BYTE *type = dir_type(o);
-        if (type && dir_armed(o)) {
+        if (type && dir_armed(o) && !dir_naval(o) && !dir_miner(o)) {
             dir_count_roles(side, (char *)type + T_ID, dir_cost(type), have);
             army_value += dir_cost(type);
         }
