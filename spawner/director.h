@@ -3517,13 +3517,17 @@ static CellXY dir_yard_spot(BYTE *yard_type, CellXY at, int r)
 static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
 {
     int best = 0, max_ore = 0, with_ore = 0, rejected = 0;
+    CellXY found = { 0, 0 };   /* *site is written only on success: the expansion caller kept a failed ore cell */
     DynVec *bv = OIL_BUILDING_ARRAY;
     /* within 45 cells of home; if no field there will do, out to 70 (a long standoff mines out
      * the near fields, and all the rest lay beyond 45) */
     for (int reach = 45; reach <= 70 && !best; reach += 25) {
     max_ore = with_ore = rejected = 0;
-    for (int y = 4; y < 400; y += 4)
-        for (int x = 4; x < 400; x += 4) {
+    /* every 4th cell within reach of home (the whole map up to 400 was 9801 samples of 49 cells) */
+    int y0 = d->base.Y - reach < 4 ? 4 : (d->base.Y - reach) & ~3;
+    int x0 = d->base.X - reach < 4 ? 4 : (d->base.X - reach) & ~3;
+    for (int y = y0; y <= d->base.Y + reach && y < 512; y += 4)
+        for (int x = x0; x <= d->base.X + reach && x < 512; x += 4) {
             CellXY c = { (short)x, (short)y };
             if (!dir_cell(c))
                 continue;
@@ -3555,7 +3559,7 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
             int score = ore - dd * 60;   /* rich ore, not too far from home */
             if (score > best) {
                 best = score;
-                *site = c;
+                found = c;
             }
         }
     if (bench_file)
@@ -3568,7 +3572,7 @@ static int dir_find_site(BYTE *house, DirState *d, CellXY *site)
      * stand on ore, so no overlay under the yard) */
     static const char *yards[3] = { "GACNST", "NACNST", "YACNST" };
     int side = FIELD(house, OIL_H_SIDE, int);
-    CellXY want = *site, out = side >= 0 && side <= 2 ? dir_yard_spot(find_type(BUILDINGTYPE_ARRAY, yards[side]), want, 12)
+    CellXY want = found, out = side >= 0 && side <= 2 ? dir_yard_spot(find_type(BUILDINGTYPE_ARRAY, yards[side]), want, 12)
                                                       : (CellXY){ 0, 0 };
     if (!out.X) {
         ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &want, 1, -1, 0, 0, 4, 4, 1, 0, 0, 0, &want, 0, 0);
