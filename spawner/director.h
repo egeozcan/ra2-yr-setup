@@ -2947,7 +2947,12 @@ struct dir_dead_hut { BYTE *hut; int tries; };
 /* Engineer targets a house gave up on: two timed-out jobs, or none reachable on foot from any of
  * its engineers nor from its base. Retried every 9000 frames, engineers walked to an outpost or a
  * bridge hut and back home all game (3 and 4 tries on Carville). */
-static struct { BYTE *house, *obj; int fails; } dir_job_fails[64];
+/* Room for eight houses of 64. At 64 in all, seven houses on an island map (103 targets given up
+ * across the water) overflowed it, and slots reused by the frame number dropped give-ups: the same
+ * targets were given up again every few hundred frames. Full, it reuses a gone target's slot first,
+ * then one not given up. */
+#define DIR_JOB_FAILS 512
+static struct { BYTE *house, *obj; int fails; } dir_job_fails[DIR_JOB_FAILS];
 static int dir_job_fail_count;
 
 static int *dir_job_fail_slot(BYTE *house, BYTE *obj, int add)
@@ -2957,7 +2962,15 @@ static int *dir_job_fail_slot(BYTE *house, BYTE *obj, int add)
             return &dir_job_fails[k].fails;
     if (!add)
         return NULL;
-    int k = dir_job_fail_count < 64 ? dir_job_fail_count++ : (int)(CURRENT_FRAME % 64);
+    int k = dir_job_fail_count < DIR_JOB_FAILS ? dir_job_fail_count++ : -1;
+    for (int j = 0; j < DIR_JOB_FAILS && k < 0; j++)
+        if (!dir_object_listed(OIL_BUILDING_ARRAY, dir_job_fails[j].obj))
+            k = j;
+    for (int j = 0; j < DIR_JOB_FAILS && k < 0; j++)
+        if (dir_job_fails[j].fails < 2)
+            k = j;
+    if (k < 0)
+        k = CURRENT_FRAME % DIR_JOB_FAILS;
     dir_job_fails[k].house = house;
     dir_job_fails[k].obj = obj;
     dir_job_fails[k].fails = 0;

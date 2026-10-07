@@ -1535,6 +1535,16 @@ fixed). None of these has been benchmarked yet.
   follow the current default; `spawn.py` writes the game's files atomically; the shell helpers also
   wait for `gamemd-spawn.exe`.
 
+### Smoke-test fixes (2026-10-07)
+
+From a 20,000-frame Isolation smoke game (seven AIs) after the review fixes:
+
+- **Engineer give-ups are kept.** The table of engineer jobs given up held 64 entries for all houses.
+  Seven houses gave up 103 targets across the water, and once it was full, slots reused by frame
+  number dropped earlier give-ups, so the same targets were given up again every few hundred frames
+  (287 give-ups). It holds 512 now, and a full table reuses a gone target's slot first, then one not
+  given up. In the rerun each house gave up each target once (95).
+
 ### Economy, defence and watching (2026-10-02, from the user's playtest notes)
 
 - **Power ahead of need.** The combat AI adds war factories only with 50 power to spare, and stock
