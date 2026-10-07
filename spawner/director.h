@@ -5666,22 +5666,39 @@ static void dir_garrison(BYTE *house, DirState *d)
         /* on the way: still outside and still entering, however long the walk (a timed window let
          * slow walkers lapse, and the extra soldiers sent after them found the bunker full); one
          * stuck outside for 1800 frames no longer holds the place */
-        int pending = 0, bad = -1;
+        int pending = 0, bad = -1, full = FIELD(b, B_OCCUPANT_COUNT, int) >= FIELD(type, BT_MAX_OCCUPANTS, int);
         for (int j = 0; j < 8; j++)
             if (d->garrison_bad[j] == b)
                 bad = j;
-        for (int k = 0; k < 24; k++) {
+        if (bad >= 0 && full)
+            d->garrison_bad_n[bad] = 0;   /* soldiers do get in: only failures in a row count */
+        for (int k = 0; k < DIR_GARRISON_SLOTS; k++) {
             BYTE *u = d->garrison_unit[k];
             if (d->garrison_site[k] != b || !u)
                 continue;
             int live = dir_object_listed(tv, u) && oil_live(u);
             pending += CURRENT_FRAME - d->garrison_frame[k] < 1800 && live && FIELD(u, COMBAT_MISSION, int) == MISSION_CAPTURE;
             /* still outside 1800 frames on: it couldn't get in (a doorway boxed in by buildings);
-             * after two, the bunker is left alone, or soldiers walked to it and back all game */
+             * after two, the bunker is left alone, or soldiers walked to it and back all game.
+             * Not when the bunker is full: then it was beaten to the last place */
             if (CURRENT_FRAME - d->garrison_frame[k] >= 1800 && live) {
                 d->garrison_unit[k] = NULL;
+                if (full)
+                    continue;
                 if (bad < 0) {
-                    bad = d->garrison_next % 8;
+                    /* a free slot or a dead bunker's, else one not left alone: picked by the send
+                     * counter, two bunkers marked in one pass could share a slot, and a new mark
+                     * open a bunker left alone again */
+                    int open = -1;
+                    for (int j = 0; j < 8 && bad < 0; j++) {
+                        BYTE *gb = d->garrison_bad[j];
+                        if (!gb || !dir_object_listed(bv, gb) || !oil_live(gb))
+                            bad = j;
+                        else if (open < 0 && d->garrison_bad_n[j] < 2)
+                            open = j;
+                    }
+                    if (bad < 0)
+                        bad = open >= 0 ? open : d->garrison_next % 8;
                     d->garrison_bad[bad] = b;
                     d->garrison_bad_n[bad] = 0;
                 }
