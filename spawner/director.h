@@ -2576,6 +2576,27 @@ static int dir_refinery_place(BYTE *house, DirState *d, BYTE *type, CellXY *out)
     return 1;
 }
 
+/* The placeable spot 2-6 cells out from an outpost's anchor nearest the ore; 0 if there is none.
+ * A step with none goes up in the main base (the stock placer's fallback), and the step queued it
+ * again (an island derrick was "fortified" three times with no defence placed by it). */
+static int dir_outpost_spot(BYTE *house, BYTE *type, CellXY at, CellXY ore, CellXY *out)
+{
+    int best = 0x7FFFFFFF;
+    for (int r = 2; r <= 6; r++)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                if (abs(dx) != r && abs(dy) != r)
+                    continue;
+                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
+                int dd = dir_dist2(c, ore);
+                if (dd < best && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
+                    best = dd;
+                    *out = c;
+                }
+            }
+    return best != 0x7FFFFFFF;
+}
+
 static int dir_outpost_place(BYTE *house, BYTE *type, CellXY *out)
 {
     if (!house || !dir_active(house))
@@ -2590,21 +2611,7 @@ static int dir_outpost_place(BYTE *house, BYTE *type, CellXY *out)
         || FIELD(anchor, O_OWNER, BYTE *) != house)
         return 0;
     /* the placeable spot beside the anchor closest to the ore */
-    CellXY at = object_cell(anchor);
-    int best = 0x7FFFFFFF;
-    for (int r = 2; r <= 6; r++)
-        for (int dy = -r; dy <= r; dy++)
-            for (int dx = -r; dx <= r; dx++) {
-                if (abs(dx) != r && abs(dy) != r)
-                    continue;
-                CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
-                int dd = dir_dist2(c, d->outpost_ore);
-                if (dd < best && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)) {
-                    best = dd;
-                    *out = c;
-                }
-            }
-    if (best == 0x7FFFFFFF)
+    if (!dir_outpost_spot(house, type, object_cell(anchor), d->outpost_ore, out))
         return 0;
     logmsg("director: house %d frame %d: outpost %.24s placed at %d,%d", FIELD(house, 0x30, int), CURRENT_FRAME,
            (char *)type + T_ID, out->X, out->Y);
@@ -2638,7 +2645,11 @@ static void dir_outpost(BYTE *house, DirState *d)
         }
         BYTE *done = dir_built_near(house, d->outpost_type, object_cell(anchor), 8);
         if (!done) {   /* keep the order in the queue: stock picks may have taken the slot */
-            if (FIELD(house, OIL_H_PRODUCING, int) == -1)
+            /* while it fits beside the anchor: with no room there it goes up in the main base, and
+             * the step's 3000 frames run out instead */
+            CellXY spot;
+            if (FIELD(house, OIL_H_PRODUCING, int) == -1
+                && dir_outpost_spot(house, d->outpost_type, object_cell(anchor), d->outpost_ore, &spot))
                 dir_queue_building(house, (char *)d->outpost_type + T_ID, &d->outpost_type);
             return;
         }
@@ -2666,8 +2677,8 @@ static void dir_outpost(BYTE *house, DirState *d)
     if (!refinery)
         return;
     DynVec *v = OIL_BUILDING_ARRAY;
-    BYTE *best = NULL, *island = NULL;
-    CellXY best_ore = { 0, 0 };
+    BYTE *best = NULL, *island = NULL, *light = find_type(BUILDINGTYPE_ARRAY, dir_light_defenses[side]);
+    CellXY best_ore = { 0, 0 }, spot;
     int best_score = 2000;
     dir_fill_land(d->rally);   /* holdings across the water get defences even without ore */
     for (int i = 0; i < v->Count; i++) {
@@ -2687,9 +2698,13 @@ static void dir_outpost(BYTE *house, DirState *d)
             armed = dir_enemies[k].armed && dir_dist2(dir_enemies[k].at, at) <= 12 * 12;
         if (!distant || armed)
             continue;
-        if (!island && !dir_land_reachable(at) && !dir_built_near(house, find_type(BUILDINGTYPE_ARRAY,
-                                                                                   dir_light_defenses[side]), at, 8))
+        /* only with room beside it for what goes there first (a derrick on a tiny islet, or ringed
+         * by ore, may have none) */
+        if (!island && light && !dir_land_reachable(at) && !dir_built_near(house, light, at, 8)
+            && dir_outpost_spot(house, light, at, at, &spot))
             island = b;
+        if (!dir_outpost_spot(house, refinery, at, at, &spot))
+            continue;
         for (int dy = -10; dy <= 10; dy += 2)
             for (int dx = -10; dx <= 10; dx += 2) {
                 CellXY c = { (short)(at.X + dx), (short)(at.Y + dy) };
