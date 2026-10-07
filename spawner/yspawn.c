@@ -28,6 +28,7 @@
 #define GAME_ISACTIVE     ((char *)0xA8E9A0)
 #define PCX_INITIALIZED   ((char *)0xAC48D4)
 #define GAME_SEED         ((int *)0xA8ED94)
+#define GAME_SEED_KEPT    ((int *)0xA8ED98)    /* a seed Init_Random keeps (read at 0x52FDD4 only) */
 #define GAME_TECHLEVEL    ((int *)0x822CF4)
 #define GAME_PLAYERCOUNT  ((int *)0xA8B54C)
 #define GAME_PLAYERCOLOR  ((int *)0xA8B394)
@@ -273,6 +274,10 @@ static char GFASTCALL spawn_start(char unused)
 
     int seed = ini_int("Settings", "Seed", 0);
     *GAME_SEED = seed ? seed : (int)GetTickCount();
+    /* Init_Random makes a skirmish's seed from the clock unless GAME_SEED_KEPT is set: Seed= was
+     * overwritten, and two benchmark games on one seed went apart from the opening plan on */
+    if (seed)
+        *GAME_SEED_KEPT = seed;
     *GAME_TECHLEVEL = ini_int("Settings", "TechLevel", 10);
     *GAME_PLAYERCOLOR = color;
     *OPTIONS_GAMESPEED = o->GameSpeed;
