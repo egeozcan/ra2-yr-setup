@@ -1349,7 +1349,7 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
             /* in our reach, or already able to shoot us: never walk through fire without answering */
             int answer = (dir_flags & DIR_F_ANSWER) && e->range + 1 > reach ? e->range + 1 : reach;
             /* a hunter goes for a mind-controller within 30 cells, wherever the army is headed */
-            int mind = in_list(DIR_MIND_CONTROLLERS, (char *)dir_type(e->obj) + T_ID);
+            int mind = hunter && in_list(DIR_MIND_CONTROLLERS, (char *)dir_type(e->obj) + T_ID);
             if (hunter && mind && dd <= 30 * 30) {
             } else if (dd > answer * answer || (dd > reach * reach && !e->armed))
                 continue;
