@@ -72,6 +72,9 @@ static const char *dir_transports[3] = { "LCRF", "SAPC", "YHVR" };   /* amphibio
 static dir_prod_fn dir_unit_original, dir_inf_original;
 
 #define DIR_CONVOY 4
+/* garrison sends in flight (fortresses, own bunkers, civilian buildings): 24 slots could wrap in
+ * about 1440 frames, inside the 1800-frame bunker window and the 9000-frame civilian lock */
+#define DIR_GARRISON_SLOTS 64
 struct DirState {
     BYTE *house;
     int state, next_think, launch_value, launch_frame, last_log;
@@ -115,10 +118,10 @@ struct DirState {
     int bunker_frame[8], next_bunker;
     BYTE *bunker_failed[8];                                 /* tanks that could not get in: skip a while */
     int bunker_failed_frame[8], bunker_failed_next, last_veto_log, last_pick_log, next_garrison;
-    BYTE *garrison_unit[24], *garrison_site[24];                               /* infantry on their way into civilian buildings */
+    BYTE *garrison_unit[DIR_GARRISON_SLOTS], *garrison_site[DIR_GARRISON_SLOTS];   /* infantry on their way into civilian buildings */
     BYTE *garrison_bad[8];            /* our bunkers soldiers sent in never reached, and how often */
     int garrison_bad_n[8];
-    int garrison_frame[24], garrison_next, garrison_held, want_occupier, want_fortress_ggi;
+    int garrison_frame[DIR_GARRISON_SLOTS], garrison_next, garrison_held, want_occupier, want_fortress_ggi;
     CellXY stranded_at;                                     /* units cut off by a fallen bridge */
     BYTE *outpost_anchor, *outpost_type, *outpost_built;    /* ore outpost by a captured building */
     BYTE *post_unit[6];                                     /* Allied infantry dug in at the base edge */
@@ -1904,7 +1907,7 @@ static void dir_army(BYTE *house, DirState *d)
         int bound = 0;   /* on its way into a tank bunker or a civilian building */
         for (int k = 0; k < 8; k++)
             bound |= d->bunker_unit[k] == o;
-        for (int k = 0; k < 24; k++)
+        for (int k = 0; k < DIR_GARRISON_SLOTS; k++)
             bound |= d->garrison_unit[k] == o && CURRENT_FRAME - d->garrison_frame[k] < 900;
         for (int k = 0; k < 6; k++)
             bound |= d->post_unit[k] == o;
@@ -5300,7 +5303,7 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
             || _stricmp((char *)ft + T_ID, "BFRT"))
             continue;
         int pending = 0;
-        for (int k = 0; k < 24; k++)
+        for (int k = 0; k < DIR_GARRISON_SLOTS; k++)
             pending += d->garrison_site[k] == f && CURRENT_FRAME - d->garrison_frame[k] < 600;
         int need = 5 - FIELD(f, T_PASSENGERS, int) - pending;
         CellXY at = object_cell(f);
@@ -5317,7 +5320,7 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
                     || (pass && aboard >= 2))
                     continue;
                 int busy = 0;
-                for (int m = 0; m < 24; m++)
+                for (int m = 0; m < DIR_GARRISON_SLOTS; m++)
                     busy |= d->garrison_unit[m] == o && CURRENT_FRAME - d->garrison_frame[m] < 900;
                 for (int m = 0; m < 6; m++)
                     busy |= d->post_unit[m] == o;
@@ -5331,7 +5334,7 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
                 d->want_fortress_ggi = 1;
             if (!best)
                 break;
-            int g = d->garrison_next++ % 24;
+            int g = d->garrison_next++ % DIR_GARRISON_SLOTS;
             d->garrison_unit[g] = best;
             d->garrison_site[g] = f;
             d->garrison_frame[g] = CURRENT_FRAME;
@@ -5589,7 +5592,7 @@ static void dir_note_placement(BYTE *house, BYTE *type, CellXY *out)
 static void dir_drop_own_targets(BYTE *house, DirState *d, int all)
 {
     DynVec *tv = OIL_TECHNO_ARRAY, *bv = OIL_BUILDING_ARRAY;
-    for (int i = 0; i < (all ? tv->Count : 24); i++) {
+    for (int i = 0; i < (all ? tv->Count : DIR_GARRISON_SLOTS); i++) {
         BYTE *o = all ? tv->Items[i] : d->garrison_unit[i], *t;
         /* a fresh order: the Enter mission takes over only on the unit's next mission update */
         if (!o || (!all && (CURRENT_FRAME - d->garrison_frame[i] < 90 || !dir_object_listed(tv, o)))
@@ -5676,7 +5679,7 @@ static void dir_garrison(BYTE *house, DirState *d)
                     || !ot[IT_OCCUPIER] || !dir_poolable(o, 15) || FIELD(o, O_TARGET, BYTE *))
                     continue;
                 int busy = 0;
-                for (int m = 0; m < 24; m++)
+                for (int m = 0; m < DIR_GARRISON_SLOTS; m++)
                     busy |= d->garrison_unit[m] == o && CURRENT_FRAME - d->garrison_frame[m] < 900;
                 int dd = dir_dist2(object_cell(o), at);
                 if (!busy && dd < best_d) {
@@ -5688,7 +5691,7 @@ static void dir_garrison(BYTE *house, DirState *d)
                 d->want_occupier = 1;
                 break;
             }
-            int g = d->garrison_next++ % 24;
+            int g = d->garrison_next++ % DIR_GARRISON_SLOTS;
             d->garrison_unit[g] = best;
             d->garrison_site[g] = b;
             d->garrison_frame[g] = CURRENT_FRAME;
@@ -5720,7 +5723,7 @@ static void dir_garrison(BYTE *house, DirState *d)
         /* one soldier per building: someone is on the way, or one went and never got in (out of
          * reach); a building that was taken is no longer civilian */
         int pending = 0;
-        for (int k = 0; k < 24; k++)
+        for (int k = 0; k < DIR_GARRISON_SLOTS; k++)
             pending |= d->garrison_site[k] == b && CURRENT_FRAME - d->garrison_frame[k] < 9000;
         if (pending)
             continue;
@@ -5745,7 +5748,7 @@ static void dir_garrison(BYTE *house, DirState *d)
         if (!best || dir_recent_order(best, b, 900))
             continue;
         sent++;
-        int g = d->garrison_next++ % 24;
+        int g = d->garrison_next++ % DIR_GARRISON_SLOTS;
         d->garrison_unit[g] = best;   /* out of the army until it is inside */
         d->garrison_site[g] = b;
         d->garrison_frame[g] = CURRENT_FRAME;
