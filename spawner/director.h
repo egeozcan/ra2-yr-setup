@@ -616,6 +616,14 @@ static int dir_is_ferry(DirState *d, BYTE *o)
     return 0;
 }
 
+/* One MCV at a time: once a war factory starts one, no other gets one for this long (dir_factory_pick),
+ * nor does the director order one (being built, it isn't on the map, and the expansion wants one again) */
+#define DIR_MCV_WINDOW 3000
+static int dir_mcv_started(DirState *d)
+{
+    return d->mcv_handed_frame && CURRENT_FRAME - d->mcv_handed_frame < DIR_MCV_WINDOW;
+}
+
 static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
 {
     (void)unused;
@@ -637,6 +645,13 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
         current = -1;
     }
+    /* an MCV pick while one is being built (a stock one, or ours already started) would hold the
+     * queue: every war factory is refused it */
+    DynVec *uv = UNITTYPE_ARRAY;
+    if (current >= 0 && current < uv->Count && dir_mcv_started(d) && in_list(dir_mcvs, (char *)uv->Items[current] + T_ID)) {
+        FIELD(house, H_PRODUCING_UNIT, int) = -1;
+        current = -1;
+    }
     /* One-off orders outrank the stock team picks, which otherwise never leave the queue free. */
     int side0 = FIELD(house, OIL_H_SIDE, int);
     BYTE *warship = d->want_navy && side0 >= 0 && side0 <= 2
@@ -647,24 +662,26 @@ static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, "DISK", 0);   /* air cover for the fleet */
     if (!warship && d->want_col_ferry && side0 >= 0 && side0 <= 2)   /* a transport to colonise an island */
         warship = dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side0], 1000);
-    BYTE *urgent = d->want_mcv ? (side0 >= 0 && side0 <= 2 ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_side_mcv[side0], 0) : NULL)
-        : (d->island || d->blocked) && dir_ferry_count(d) < d->ferry_want && side0 >= 0 && side0 <= 2
-        ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side0], 1000) : warship;
+    /* The MCV stays wanted until a war factory takes it (dir_factory_pick): a factory finishing
+     * another unit clears the pick, and the order was lost with it. */
+    BYTE *mcv = d->want_mcv && !dir_mcv_started(d) && side0 >= 0 && side0 <= 2
+        ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_side_mcv[side0], 0) : NULL;
+    BYTE *ferry = (d->island || d->blocked) && dir_ferry_count(d) < d->ferry_want && side0 >= 0 && side0 <= 2
+        ? dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side0], 1000) : NULL;
+    /* the first that can be built: an MCV the house can't pay for yet holds back no other order */
+    BYTE *urgent = mcv ? mcv : ferry ? ferry : warship;
     if (urgent && current != -1 && current != d->unit_request)
         current = -1;   /* only when the one-off unit can actually be built now */
-    if (current == -1 && d->want_mcv && side0 >= 0 && side0 <= 2) {
-        BYTE *type = dir_first_buildable(house, UNITTYPE_ARRAY, dir_side_mcv[side0], 0);
-        int index = type ? dir_type_index(UNITTYPE_ARRAY, type) : -1;
+    if (current == -1 && mcv) {
+        int index = dir_type_index(UNITTYPE_ARRAY, mcv);
         if (index >= 0) {
             FIELD(house, H_PRODUCING_UNIT, int) = current = d->unit_request = index;
             d->unit_request_frame = CURRENT_FRAME;
-            d->want_mcv = 0;
         }
     }
     int side = FIELD(house, OIL_H_SIDE, int);
-    if (current == -1 && (d->island || d->blocked) && dir_ferry_count(d) < d->ferry_want && side >= 0 && side <= 2) {
-        BYTE *type = dir_first_buildable(house, UNITTYPE_ARRAY, dir_transports[side], 1000);
-        int index = type ? dir_type_index(UNITTYPE_ARRAY, type) : -1;
+    if (current == -1 && ferry) {
+        int index = dir_type_index(UNITTYPE_ARRAY, ferry);
         if (index >= 0) {
             FIELD(house, H_PRODUCING_UNIT, int) = current = d->unit_request = index;
             d->unit_request_frame = CURRENT_FRAME;
@@ -790,13 +807,21 @@ static BYTE *GFASTCALL dir_factory_pick(BYTE *house, BYTE *btype, int rtti, int 
     if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION)
         && in_list("GACNST,NACNST,YACNST", (char *)type + T_ID))
         return NULL;
-    /* one MCV at a time: every war factory took the house's MCV pick at once */
-    if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION) && in_list(dir_mcvs, (char *)type + T_ID)) {
+    /* one MCV at a time: every war factory took the house's MCV pick at once. Not for a naval yard:
+     * it is handed the pick too and refuses it (Naval differs), but it stamped the frame and no war
+     * factory got the MCV. A war factory refused it gets the pick cleared, so the house picks it
+     * something else instead of leaving it idle until the MCV is out. */
+    if (type && dir_active(house) && (director_enabled(house) & DIR_F_PRODUCTION) && !(btype && btype[TT_NAVAL])
+        && in_list(dir_mcvs, (char *)type + T_ID)) {
         DirState *dm = dir_get(house);
-        if (dm && dm->mcv_handed_frame && CURRENT_FRAME - dm->mcv_handed_frame < 3000)
+        if (dm && dir_mcv_started(dm)) {
+            FIELD(house, H_PRODUCING_UNIT, int) = -1;
             return NULL;
-        if (dm)
+        }
+        if (dm) {
             dm->mcv_handed_frame = CURRENT_FRAME;
+            dm->want_mcv = 0;   /* the order is done: this factory starts it now */
+        }
     }
     /* a factory's Factory= is a type RTTI: UnitType is 0x28 (0x4FBD80 maps it and Unit, 1, alike) */
     if ((rtti != 1 && rtti != 0x28) || !btype || !btype[TT_NAVAL] || !dir_active(house)
