@@ -379,7 +379,7 @@ static int dir_is_reserved(BYTE *unit)
 static int dir_army_type(BYTE *obj, int what)
 {
     BYTE *type = dir_type(obj);
-    if (!type || in_list("HARV,CMIN,SMIN,SLAV,AMCV,SMCV,PCV,SBDOZR,ENGINEER,SENGINEER,YENGINEER,SPY,"
+    if (!type || in_list("HARV,CMIN,SMIN,SLAV,AMCV,SMCV,PCV,ENGINEER,SENGINEER,YENGINEER,SPY,"
                          "IVAN,CIVAN,TERROR,SHAD,JUMPJET,CCOMAND,TANY,BORIS,GHOST,YURIPR,"
                          "CARRIER,DEST,SUB,AEGIS,LCRF,DRED,SQD,DLPH,HYD,BSUB,SAPC,YHVR,VIRUS,DTRUCK",
                          (char *)type + T_ID))
@@ -410,12 +410,15 @@ static int dir_poolable(BYTE *obj, int what)
 /* ---- production ---- */
 
 static const char *dir_vehicle_roles[3][ROLE_COUNT] = {
-    /* Mirage first: the Liberator, at 375 HP and half its fire rate, lost more than it killed (0.89) */
+    /* Mirage first: the Liberator at 375 HP lost more than it killed (0.89); reworked (2026-10-07), a
+     * pair of them destroys four times its value, and the pair cap below holds */
     /* against infantry Mirage, then Grizzly: an IFV with nobody aboard (the AI never loads one) is
      * a light gun on thin armour, and Americans won 9 of 32 MCV games with it in this slot */
     { "MGTK,TNKD,MTNK,ATTNK", "FV", "SREF", "MGTK,MTNK" },
     /* against infantry the Tesla Tank, then the Flak Track (fragile: lost to anything with a gun) */
-    { "APOC,TTNK,HTNK", "HTK", "V3", "TTNK,HTK" },
+    /* siege: the Bulldozer (mod) razed bases best of all in equal-cost arena sieges (spawner/arena.py),
+     * the V3 worst; V3s until there is a Radar */
+    { "APOC,TTNK,HTNK", "HTK", "SBDOZR,V3", "TTNK,HTK" },
     { "MIND,LTNK", "YTNK", "TELE", "YTNK" },
 };
 /* Enemy out of reach by land: Robot Tanks hover over water, Kirovs, Siege Choppers and Discs fly. */
@@ -483,7 +486,7 @@ static BYTE *dir_first_buildable(BYTE *house, DynVec *types, const char *list, i
                 && dir_has_prereqs(house, type)
                 && dir_can_spend(FIELD(house, OIL_H_CASH, int), dir_cost(type), reserve)
                 && (_stricmp(id, "MIND") || dir_owned_of(house, type) < 3)
-                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 2)    /* slow and costly: a pair at most */
+                && (_stricmp(id, "ATTNK") || dir_owned_of(house, type) < 2)    /* a pair at most (the user's call) */
                 && (_stricmp(id, "ZEP") || dir_owned_of(house, type) < 4)      /* Kirovs: slow and costly */
                 /* Robot Tanks stand dead without a Robot Control Center: 44 of them jammed an Isolation
                  * base after it fell, and more kept coming */
@@ -1356,6 +1359,9 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
     int reach = dir_weapon_cells(unit) + 3, best_score = -1000000, keep_score = -1000000;
     DirEnemy *best = NULL, *keep = NULL;
     int hunter = in_list(DIR_MIND_HUNTERS, (char *)dir_type(unit) + T_ID);
+    /* the Bulldozer's blade does 5% to vehicles: it goes for buildings (defences first) and infantry,
+     * and leaves the tanks to its escort (sent at tanks with the rest of the army, it lost 3000 for 200) */
+    int dozer = !_stricmp((char *)dir_type(unit) + T_ID, "SBDOZR");
     if (engage) {
         for (int i = 0; i < dir_enemy_count; i++) {
             DirEnemy *e = &dir_enemies[i];
@@ -1370,6 +1376,11 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
             if (e->obj == current && !e->capturable)
                 keep = e;
             int priority = e->armed ? (e->building ? 70 : 100) : (e->building ? 25 : 45);
+            if (dozer) {
+                if (!e->building && dir_whatami(e->obj) != 15)
+                    continue;
+                priority = e->building ? (e->armed ? 140 : 110) : 100;
+            }
             /* mind control: kill the controller (Yuri, Yuri Prime, Mastermind, Psychic Tower) and its
              * captives switch back; while it is close by, its captives are the wrong target */
             if (FIELD(e->obj, T_CAPTURE_MANAGER, BYTE *))
@@ -4786,9 +4797,14 @@ static void dir_dozers(BYTE *house, DirState *d)
                 best = b;
             }
         }
-        if (!best || FIELD(o, O_TARGET, BYTE *) == best || !dir_take_from_team(o))
+        if (best && FIELD(o, O_TARGET, BYTE *) == best) {
+            dir_reserve(o, 300);   /* Bulldozers are army units too: the army must not call it away */
+            continue;
+        }
+        if (!best || !dir_take_from_team(o))
             continue;
         dir_order(o, MISSION_ATTACK, best, NULL);
+        dir_reserve(o, 300);
         logmsg("director: house %d frame %d: Bulldozer at %d,%d goes for the Psychic Tower at %d,%d",
                FIELD(house, 0x30, int), CURRENT_FRAME, at.X, at.Y, object_cell(best).X, object_cell(best).Y);
     }
@@ -5191,7 +5207,8 @@ static void dir_veto_production(BYTE *house, DirState *d)
         && (((int (GTHISCALL *)(BYTE *, BYTE *, char, char))OIL_H_CAN_BUILD)(house, uts->Items[pick], 0, 1) <= 0
             || !dir_has_prereqs(house, uts->Items[pick])))   /* tech units without their tech building */
         FIELD(house, H_PRODUCING_UNIT, int) = -1;
-    /* the mod's Allied AI teams order Liberators in threes; a pair is all that still pays */
+    /* the mod's Allied AI teams order Liberators in threes; a pair at most: two already destroy four
+     * times their value, and America led the other sides with them (the cap kept on the user's call) */
     int unit = FIELD(house, H_PRODUCING_UNIT, int);
     DynVec *ut = UNITTYPE_ARRAY;
     if (unit >= 0 && unit < ut->Count && !_stricmp((char *)ut->Items[unit] + T_ID, "ATTNK")
