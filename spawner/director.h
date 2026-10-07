@@ -5682,6 +5682,8 @@ static void dir_garrison(BYTE *house, DirState *d)
                 int busy = 0;
                 for (int m = 0; m < DIR_GARRISON_SLOTS; m++)
                     busy |= d->garrison_unit[m] == o && CURRENT_FRAME - d->garrison_frame[m] < 900;
+                for (int m = 0; m < 6; m++)
+                    busy |= d->post_unit[m] == o;
                 int dd = dir_dist2(object_cell(o), at);
                 if (!busy && dd < best_d) {
                     best_d = dd;
@@ -5740,8 +5742,13 @@ static void dir_garrison(BYTE *house, DirState *d)
             if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 15 || !(ot = dir_type(o))
                 || !ot[IT_OCCUPIER] || !dir_poolable(o, 15) || FIELD(o, O_TARGET, BYTE *))
                 continue;
+            /* not a post's soldier: the post order later in the same think wins, and the building
+             * stays locked with nobody going */
+            int busy = 0;
+            for (int m = 0; m < 6; m++)
+                busy |= d->post_unit[m] == o;
             int dd = dir_dist2(object_cell(o), at);
-            if (dd < best_d) {
+            if (!busy && dd < best_d) {
                 best_d = dd;
                 best = o;
             }
