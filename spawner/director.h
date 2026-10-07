@@ -1719,7 +1719,8 @@ static int dir_enclosed(CellXY at, BYTE **rim, int *rim_count)
                         rim[(*rim_count)++] = b;
                     continue;
                 }
-                if (land == 2 || land == 3 || dir_wall_cell(cell))   /* walls and fences: overlays with Wall=yes */
+                /* walls and fences: overlays with Wall=yes; a bridge deck keeps the water's land type */
+                if (((land == 2 || land == 3) && !(FIELD(cell, C_FLAGS, DWORD) & 0x100)) || dir_wall_cell(cell))
                     continue;
                 if (bx == 0 || by == 0 || bx == W - 1 || by == W - 1)
                     return 0;   /* open ground leads out of the box */
