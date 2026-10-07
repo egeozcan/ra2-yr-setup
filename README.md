@@ -1780,6 +1780,8 @@ and Isolation, mostly logic, 390 instead of 330.
   - One seed gives the same `yspawn-bench.csv` in a slot as in the game dir (eight copies at once
     were checked against a game played alone).
   - Ctrl-C stops every copy. Games cut short lose their CSV, so a resumed suite plays them again.
+  - A game gone within a minute with no benchmark row and no crash report is launched once more:
+    4 of about 900 side by side died like that, 3 before the DLL loaded and 1 just after.
   - Where a game's time goes (a slot game of 10,000 frames, 19 s in all): Proton and Wine start in
     3.7 s, the game's own setup takes 3 s and `StartScenario` 8.4 s, the game itself 2.5 s, and
     stopping and collecting the files under 0.5 s. Loading is the engine's, so more slots are the

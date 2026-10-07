@@ -250,12 +250,14 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
                     print(f"{outdir}: crashed, see except.txt", flush=True)
                     break
             stop(game)
-            # A launch that died before the DLL loaded (gone within a minute, no log of its own):
-            # 3 of about 600 games side by side, each then counted as never started. Once more.
-            log = os.path.join(game, "yspawn.log")
-            if attempt or time.time() - began >= 60 or (os.path.exists(log) and os.path.getmtime(log) >= began):
+            # A launch that died before the game got going (gone within a minute, no benchmark row,
+            # no crash report): 4 of about 900 games side by side, 3 before the DLL loaded and 1 six
+            # seconds after (its log said only "yspawn loaded"), each then counted as never started.
+            # Once more.
+            if (attempt or time.time() - began >= 60 or bench_rows(result) is not None
+                    or (os.path.exists(crash) and os.path.getmtime(crash) >= began)):
                 break
-            print(f"{outdir}: the game ended before it loaded, launching it again", flush=True)
+            print(f"{outdir}: the game ended before it got going, launching it again", flush=True)
             end_launcher(launcher)
         for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv", "yspawn-duels.csv"):
             p = os.path.join(game, f)

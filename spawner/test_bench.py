@@ -222,15 +222,40 @@ class SlotTests(unittest.TestCase):
         self.assertEqual((game / "yspawn.dll").read_text(), "dll 2")
         self.assertTrue((game / "new.mix").is_symlink())
 
-    def test_a_game_that_dies_before_loading_is_launched_again(self):
+    def test_a_game_that_dies_before_it_gets_going_is_launched_again(self):
+        # gone before the DLL loaded, or just after (a log that says only that, no benchmark row)
+        for dll_loaded in (False, True):
+            with self.subTest(dll_loaded=dll_loaded):
+                launches, alive = [], [0]
+
+                def fake_launch(game, prefix, headless=None):
+                    launches.append(game)
+                    alive[0] = 2                      # seen for one poll, then gone
+                    if dll_loaded or len(launches) == 2:
+                        Path(game, "yspawn.log").write_text("yspawn loaded\n")
+                    if len(launches) == 2:            # the second gets going: a sampled CSV
+                        Path(game, "yspawn-bench.csv").write_text(HEADER + "\n" + row(300, 1, "Americans") + "\n")
+
+                def fake_running(game=None):
+                    alive[0] -= 1
+                    return alive[0] > 0
+
+                out = self.root / f"out{int(dll_loaded)}"
+                with patch.object(bench.spawn, "launch", fake_launch), patch.object(bench.spawn, "running", fake_running), \
+                        patch.object(bench.spawn, "game_pids", lambda game=None: []), patch.object(bench.spawn, "prepare"), \
+                        patch.object(bench.time, "sleep"), patch("builtins.print"):
+                    bench.run(str(out), "A.mmx", [(0, 0, 1, 0)], 3, 1000, seed=1, slot=1)
+                self.assertEqual(len(launches), 2)
+                self.assertTrue(bench.bench_rows(str(out / "yspawn-bench.csv")))
+
+    def test_a_crash_while_loading_is_not_launched_again(self):
         launches, alive = [], [0]
 
         def fake_launch(game, prefix, headless=None):
             launches.append(game)
-            alive[0] = 2                      # seen for one poll, then gone
-            if len(launches) == 2:            # the second loads: the DLL's log and a sampled CSV
-                Path(game, "yspawn.log").write_text("yspawn loaded\n")
-                Path(game, "yspawn-bench.csv").write_text(HEADER + "\n" + row(300, 1, "Americans") + "\n")
+            alive[0] = 2
+            Path(game, "yspawn.log").write_text("yspawn loaded\n")
+            Path(game, "except.txt").write_text("Exception occurred at 006847B4\n")
 
         def fake_running(game=None):
             alive[0] -= 1
@@ -241,8 +266,8 @@ class SlotTests(unittest.TestCase):
                 patch.object(bench.spawn, "game_pids", lambda game=None: []), patch.object(bench.spawn, "prepare"), \
                 patch.object(bench.time, "sleep"), patch("builtins.print"):
             bench.run(str(out), "A.mmx", [(0, 0, 1, 0)], 3, 1000, seed=1, slot=1)
-        self.assertEqual(len(launches), 2)
-        self.assertTrue(bench.bench_rows(str(out / "yspawn-bench.csv")))
+        self.assertEqual(len(launches), 1)
+        self.assertTrue((out / "except.txt").exists())
 
     def test_slots_are_never_shared(self):
         import threading
