@@ -229,26 +229,34 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         spawn.prepare(ini, game)
         if RES:
             set_resolution(game, *RES)
-        began = time.time()
-        launcher = spawn.launch(game, prefix, headless=None if slot is None else RES or (800, 600))
-        while not spawn.running(game) and time.time() - began < 60:
-            time.sleep(0.5)
-        crash = os.path.join(game, "except.txt")
-        sampled = False
-        while spawn.running(game) and time.time() - began < timeout:
-            time.sleep(0.5)   # (at 2 s, a game that had ended waited a second on average)
-            # a crash leaves the game hung on its error report: note it and move on
-            # hung while loading: no benchmark row two minutes after the launch. The DLL creates
-            # the CSV when it loads, but it stays empty until the first sample.
-            sampled = sampled or bench_rows(result) is not None
-            if time.time() - began > 120 and not sampled:
-                print(f"{outdir}: no game frames after 120 s, stopping", flush=True)
+        for attempt in range(2):
+            began = time.time()
+            launcher = spawn.launch(game, prefix, headless=None if slot is None else RES or (800, 600))
+            while not spawn.running(game) and time.time() - began < 60:
+                time.sleep(0.5)
+            crash = os.path.join(game, "except.txt")
+            sampled = False
+            while spawn.running(game) and time.time() - began < timeout:
+                time.sleep(0.5)   # (at 2 s, a game that had ended waited a second on average)
+                # a crash leaves the game hung on its error report: note it and move on
+                # hung while loading: no benchmark row two minutes after the launch. The DLL creates
+                # the CSV when it loads, but it stays empty until the first sample.
+                sampled = sampled or bench_rows(result) is not None
+                if time.time() - began > 120 and not sampled:
+                    print(f"{outdir}: no game frames after 120 s, stopping", flush=True)
+                    break
+                if os.path.exists(crash) and os.path.getmtime(crash) >= began:
+                    time.sleep(3)
+                    print(f"{outdir}: crashed, see except.txt", flush=True)
+                    break
+            stop(game)
+            # A launch that died before the DLL loaded (gone within a minute, no log of its own):
+            # 3 of about 600 games side by side, each then counted as never started. Once more.
+            log = os.path.join(game, "yspawn.log")
+            if attempt or time.time() - began >= 60 or (os.path.exists(log) and os.path.getmtime(log) >= began):
                 break
-            if os.path.exists(crash) and os.path.getmtime(crash) >= began:
-                time.sleep(3)
-                print(f"{outdir}: crashed, see except.txt", flush=True)
-                break
-        stop(game)
+            print(f"{outdir}: the game ended before it loaded, launching it again", flush=True)
+            end_launcher(launcher)
         for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv", "yspawn-duels.csv"):
             p = os.path.join(game, f)
             # from this game only: a second's leeway took the last game's log from a slot that had
@@ -263,13 +271,18 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
     finally:
         if slot is None:
             put_back()
-        if launcher and launcher.poll() is None:   # the Gamescope and Proton around the game
-            try:
-                os.killpg(launcher.pid, signal.SIGTERM)
-                launcher.wait(20)
-            except (ProcessLookupError, subprocess.TimeoutExpired):
-                pass
+        end_launcher(launcher)
     return summary(outdir)
+
+
+def end_launcher(launcher):
+    """The Gamescope and Proton around a game, if still there."""
+    if launcher and launcher.poll() is None:
+        try:
+            os.killpg(launcher.pid, signal.SIGTERM)
+            launcher.wait(20)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
 
 
 def stop(game=None, wait=20):
