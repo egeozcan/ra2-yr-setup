@@ -1749,6 +1749,25 @@ Isolation game about 110 late on against 220. Over eight full games at 800x600, 
   mean placement: 0 for the winner, 1 for the first house out. Eliminated houses rank by when they
   fell, survivors by buildings and army value.
 - `bench.py suite OUTDIR [tune|heldout|heldout2|hard]`: match sets, director vs stock Brutal.
+- `--jobs N` (suites) plays N games at once, with no windows (since 2026-10-07). With 8, the
+  48-game `strat_mcv` suite of 60,000 frames took 5½ minutes; one game at a time takes about 20 s
+  to 4 minutes each.
+  - Each game runs in a slot under `/mnt/data/SteamLibrary/ra2-bench-farm/slotK`. A slot has a
+    game dir of links to the game's files, with its own copies of the exe, the DLL, `RA2MD.INI` and
+    `ddraw.ini`, refreshed every game (a DLL installed between games is picked up). It also has its
+    own Proton prefix, a reflink copy: Proton waits for a prefix's wineserver to end before it
+    starts a game, so copies sharing one would play one after another. Your own files in the game
+    dir are never touched.
+  - For `Benchmark=1` the DLL skips WinMain's two named mutexes: the app's ("TibSun is already
+    running...Bail!", which ended every copy but the first) and the autoplay one (each later copy
+    waited 30 s on it). Your own games keep both.
+  - Each slot's `ddraw.ini` gets `singlecpu=false` in `[gamemd-spawn]`. The `[ddraw]` default pins
+    the game to CPU 0, and two copies took twice as long as one.
+  - A slot's game runs in a headless Gamescope at the benchmark resolution, found and stopped by
+    its working directory (each copy's is its slot).
+  - One seed gives the same `yspawn-bench.csv` in a slot as in the game dir (eight copies at once
+    were checked against a game played alone).
+  - Ctrl-C stops every copy. Games cut short lose their CSV, so a resumed suite plays them again.
 - `bench.py summary DIR...`: one line per match, plus a win/draw/loss tally.
 - `bench.py restore`: puts the user's `yspawn.ini/.log/.map` and `RA2MD.INI` back after runs.
 

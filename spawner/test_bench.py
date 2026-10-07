@@ -1,8 +1,10 @@
 """bench.py bookkeeping without launching the game: result CSVs, the backup of the user's launcher
 files, the yspawn.ini it writes, and its DirectorFlags masks."""
 from pathlib import Path
+import os
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -175,6 +177,90 @@ class ResolutionTests(unittest.TestCase):
         bench.set_resolution(str(self.game), 800, 600)
         self.assertEqual(ini.read_bytes(),
                          b"[Audio]\r\nSoundVolume=0.7\r\n[Video]\r\nScreenWidth=800\r\nScreenHeight=600\r\n")
+
+
+class SlotTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.game = self.root / "game"
+        (self.game / "Maps").mkdir(parents=True)
+        for name, text in (("gamemd-spawn.exe", "exe"), ("yspawn.dll", "dll 1"), ("ra2md.mix", "mix"),
+                           ("yspawn.log", "the user's"), ("RA2MD.INI", "[Video]\r\nScreenWidth=2560\r\n"),
+                           ("ddraw.ini", "[ddraw]\r\nsinglecpu=true\r\n\r\n[gamemd-spawn]\r\nminfps=-1\r\n"
+                                         "singlecpu=true\r\n\r\n[other]\r\nsinglecpu=true\r\n")):
+            (self.game / name).write_bytes(text.encode())
+        (self.root / "compat" / "pfx").mkdir(parents=True)
+        (self.root / "compat" / "pfx" / "user.reg").write_text("reg")
+        for target, value, path in ((bench.spawn, "GAME", self.game), (bench.spawn, "PREFIX", self.root / "compat"),
+                                    (bench, "FARM", self.root / "farm")):
+            p = patch.object(target, value, str(path))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_a_slot_links_the_game_and_copies_what_it_writes(self):
+        game, prefix = map(Path, bench.make_slot(2))
+        self.assertTrue((game / "ra2md.mix").is_symlink() and (game / "Maps").is_symlink())
+        for name in ("gamemd-spawn.exe", "yspawn.dll", "RA2MD.INI", "ddraw.ini"):
+            self.assertFalse((game / name).is_symlink(), name)
+        self.assertFalse((game / "yspawn.log").exists())   # the user's log stays theirs
+        self.assertEqual((prefix / "pfx" / "user.reg").read_text(), "reg")
+        self.assertEqual((game / "ddraw.ini").read_bytes(),
+                         b"[ddraw]\r\nsinglecpu=true\r\n\r\n[gamemd-spawn]\r\nsinglecpu=false\r\nminfps=-1\r\n"
+                         b"\r\n[other]\r\nsinglecpu=true\r\n")
+        (self.game / "yspawn.dll").write_text("dll 2")      # installed since
+        (self.game / "new.mix").write_text("mix")
+        bench.make_slot(2)
+        self.assertEqual((game / "yspawn.dll").read_text(), "dll 2")
+        self.assertTrue((game / "new.mix").is_symlink())
+
+    def test_slots_are_never_shared(self):
+        import threading
+        busy, seen, lock = set(), [], threading.Lock()
+
+        def fake_run(out, *args, slot=None, **kw):
+            with lock:
+                self.assertNotIn(slot, busy)
+                busy.add(slot)
+                seen.append(slot)
+            time.sleep(0.02)
+            with lock:
+                busy.discard(slot)
+            return f"{out}: win h1 @100 (1s)"
+
+        todo = [(f"o{i}", "A.mmx", [], 3, None, i + 1) for i in range(9)]
+        with patch.object(bench, "run", fake_run), patch.object(bench, "JOBS", 3), \
+                patch.object(bench.spawn, "sync_ddraw_ini"), patch("builtins.print"):
+            lines = bench.play(todo, 1000)
+        self.assertEqual(len(lines), 9)
+        self.assertEqual(set(seen), {1, 2, 3})
+
+    def test_three_that_never_start_stop_every_slot(self):
+        stopped = []
+        with patch.object(bench, "run", lambda out, *a, **kw: f"{out}: no result"), patch.object(bench, "JOBS", 2), \
+                patch.object(bench, "stop", lambda game=None: stopped.append(game)), \
+                patch.object(bench.spawn, "sync_ddraw_ini"), patch("builtins.print"):
+            with self.assertRaises(SystemExit):
+                bench.play([(str(self.root / f"o{i}"), "A.mmx", [], 3, None) for i in range(6)], 1000)
+        self.assertEqual(sorted(stopped), [str(self.root / "farm" / f"slot{k}" / "game") for k in (1, 2)])
+
+    def test_games_cut_short_are_played_again(self):
+        def fake_run(out, *args, slot=None, **kw):
+            Path(out).mkdir()
+            rows = [HEADER, row(300, 0, "Americans")] + (["result,300,win,0"] if out.endswith("0") else [])
+            (Path(out) / "yspawn-bench.csv").write_text("".join(r + "\n" for r in rows))
+            if out.endswith("2"):
+                raise KeyboardInterrupt
+            return f"{out}: played"
+        outs = [str(self.root / f"o{i}") for i in range(3)]
+        with patch.object(bench, "run", fake_run), patch.object(bench, "JOBS", 3), \
+                patch.object(bench, "stop", lambda game=None: None), \
+                patch.object(bench.spawn, "sync_ddraw_ini"), patch("builtins.print"):
+            with self.assertRaises(KeyboardInterrupt):
+                bench.play([(o, "A.mmx", [], 3, None) for o in outs], 1000)
+        self.assertEqual([bool(bench.bench_rows(os.path.join(o, "yspawn-bench.csv"))) for o in outs],
+                         [True, False, False])
 
 
 class FlagTests(unittest.TestCase):

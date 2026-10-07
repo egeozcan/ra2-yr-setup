@@ -8,8 +8,9 @@ usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--s
            PLAN 0-3 forces balanced, rush, boom or siege)
        bench.py restore          put back the game directory's own yspawn.ini/.log/.map and RA2MD.INI after runs
        bench.py summary DIR...   print one line per match directory
-       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N] [--res WxH|native]
-                                 director vs stock Brutal match sets
+       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N] [--res WxH|native] [--jobs N]
+                                 director vs stock Brutal match sets; --jobs N plays N at once, without
+                                 windows, each in its own slot under FARM
        bench.py ab DIR...        strategy on against off, per plan and country: wins and mean placement
 
 The idle human uses Human in peace, so it never takes part and never loses. The game directory's
@@ -17,7 +18,7 @@ yspawn.ini, yspawn.log, yspawn.map and RA2MD.INI are saved first and restored af
 at 800x600 (--res): drawing is most of a frame's cost at the user's resolution; --res native keeps
 RA2MD.INI's own, to watch a game.
 """
-import configparser, csv, glob, os, shutil, subprocess, sys, time
+import configparser, csv, glob, os, shutil, signal, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import spawn
@@ -156,29 +157,80 @@ def parse_ai(text):
     return tuple(parts[:6])
 
 
-def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, timeout=3600, extra=None):
-    if spawn.running():
-        raise SystemExit("game already running")
+# Slots for games side by side (--jobs N): slot K has a game dir of links to the game's files, with
+# its own copies of what a game writes or we set, and its own Proton prefix (Proton waits for the
+# prefix's wineserver to end before it starts a game). On the prefix's btrfs, the copy shares blocks.
+FARM = "/mnt/data/SteamLibrary/ra2-bench-farm"
+SLOT_OWN = {"yspawn.ini", "yspawn.log", "yspawn.map", "yspawn-bench.csv", "yspawn-kills.csv", "yspawn-teams.csv",
+            "except.txt", "RA2MD.INI", "ddraw.ini", "gamemd-spawn.exe", "yspawn.dll"}
+
+
+def make_slot(k):
+    """Slot k's (game dir, prefix), brought up to date: links for whatever the game dir gained, and
+    fresh copies of the exe, the DLL (an install since the last run counts) and the user's settings.
+    The exe is a copy so that its directory, which the game and the DLL work in, is the slot's."""
+    game = os.path.join(FARM, f"slot{k}", "game")
+    prefix = os.path.join(FARM, f"slot{k}", "prefix")
+    os.makedirs(game, exist_ok=True)
+    for name in os.listdir(spawn.GAME):
+        if name not in SLOT_OWN and not name.endswith(".tmp") and not os.path.lexists(os.path.join(game, name)):
+            os.symlink(os.path.join(spawn.GAME, name), os.path.join(game, name))
+    for name in ("gamemd-spawn.exe", "yspawn.dll", "RA2MD.INI", "ddraw.ini"):   # (ddraw.ini synced by play())
+        shutil.copy2(os.path.join(spawn.GAME, name), os.path.join(game, name + ".tmp"))
+        os.replace(os.path.join(game, name + ".tmp"), os.path.join(game, name))
+    unpin(os.path.join(game, "ddraw.ini"))
+    if not os.path.isdir(os.path.join(prefix, "pfx")):
+        shutil.rmtree(prefix, ignore_errors=True)
+        subprocess.run(["cp", "-a", "--reflink=auto", spawn.PREFIX, prefix + ".tmp"], check=True)
+        os.rename(prefix + ".tmp", prefix)
+    return game, prefix
+
+
+def unpin(path):
+    """singlecpu=false in a slot's ddraw.ini [gamemd-spawn]: the [ddraw] default, true, pins the game to
+    CPU 0, and copies side by side shared that one core (two took twice as long as one)."""
+    with open(path, newline="", encoding="latin-1") as f:
+        lines = f.read().split("\r\n")
+    s = lines.index("[gamemd-spawn]")
+    e = next((i for i in range(s + 1, len(lines)) if lines[i].startswith("[")), len(lines))
+    lines = [l for i, l in enumerate(lines) if not (s < i < e and l.split("=", 1)[0].strip() == "singlecpu")]
+    lines.insert(s + 1, "singlecpu=false")
+    spawn.atomic_write(path, "w", "\r\n".join(lines), newline="", encoding="latin-1")
+
+
+def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, timeout=3600, extra=None, slot=None):
+    """One match in the game dir (slot None: the user's files are saved first and put back after), or
+    in benchmark slot `slot`, beside other slots' games."""
+    if slot is None:
+        if spawn.running():
+            raise SystemExit("game already running")
+        game, prefix = spawn.GAME, spawn.PREFIX
+    else:
+        game, prefix = make_slot(slot)
+        stop(game)   # a game a killed run left there
     os.makedirs(outdir, exist_ok=True)
-    snapshot()
-    result = os.path.join(spawn.GAME, "yspawn-bench.csv")
-    for stale in (result, os.path.join(spawn.GAME, "yspawn-kills.csv")):
-        if os.path.exists(stale):
-            os.remove(stale)
+    if slot is None:
+        snapshot()
+    result = os.path.join(game, "yspawn-bench.csv")
+    # (the game dir's telemetry and crash report may be the user's: run() only takes ones from after the launch)
+    for stale in ("yspawn-bench.csv", "yspawn-kills.csv") + (("yspawn-teams.csv", "except.txt") if slot else ()):
+        if os.path.exists(os.path.join(game, stale)):
+            os.remove(os.path.join(game, stale))
+    launcher = None
     try:
         ini = write_ini(map_file, ais, human_start, frames, speed, seed or int(time.time()) & 0x7FFFFFFF, extra)
         with open(os.path.join(outdir, "yspawn.ini"), "w") as f:
             ini.write(f)
-        spawn.prepare(ini)
+        spawn.prepare(ini, game)
         if RES:
-            set_resolution(spawn.GAME, *RES)
+            set_resolution(game, *RES)
         began = time.time()
-        spawn.launch()
-        while not spawn.running() and time.time() - began < 60:
+        launcher = spawn.launch(game, prefix, headless=None if slot is None else RES or (800, 600))
+        while not spawn.running(game) and time.time() - began < 60:
             time.sleep(1)
-        crash = os.path.join(spawn.GAME, "except.txt")
+        crash = os.path.join(game, "except.txt")
         sampled = False
-        while spawn.running() and time.time() - began < timeout:
+        while spawn.running(game) and time.time() - began < timeout:
             time.sleep(2)
             # a crash leaves the game hung on its error report: note it and move on
             # hung while loading: no benchmark row two minutes after the launch. The DLL creates
@@ -191,9 +243,9 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
                 time.sleep(3)
                 print(f"{outdir}: crashed, see except.txt", flush=True)
                 break
-        stop()
+        stop(game)
         for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv"):
-            p = os.path.join(spawn.GAME, f)
+            p = os.path.join(game, f)
             if os.path.exists(p) and os.path.getmtime(p) >= began - 1:
                 shutil.move(p, os.path.join(outdir, f)) if f != "yspawn.log" else shutil.copy2(p, outdir)
         played = os.path.join(outdir, "yspawn-bench.csv")
@@ -202,19 +254,32 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         with open(os.path.join(outdir, "wall.txt"), "w") as f:
             f.write(f"{time.time() - began:.0f}\n")
     finally:
-        put_back()
+        if slot is None:
+            put_back()
+        if launcher and launcher.poll() is None:   # the Gamescope and Proton around the game
+            try:
+                os.killpg(launcher.pid, signal.SIGTERM)
+                launcher.wait(20)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                pass
     return summary(outdir)
 
 
-def stop(wait=20):
-    """End the game, and wait for it to go: the next run() refuses to start beside it."""
-    for sig in ("-TERM", "-KILL"):
-        if not spawn.running():
+def stop(game=None, wait=20):
+    """End the game (that dir's, or every copy), and wait for it to go: the next run() refuses to
+    start beside it."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        pids = spawn.game_pids(game)
+        if not pids:
             return
-        subprocess.run(["pkill", sig, "-x", "gamemd-spawn.ex"])
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
         for _ in range(wait):
             time.sleep(1)
-            if not spawn.running():
+            if not spawn.game_pids(game):
                 return
     raise SystemExit("gamemd-spawn.ex survived SIGKILL: stopping")
 
@@ -486,38 +551,85 @@ POSTURE = [(m, 3, [(a, s, NOPOSTURE if on == 0 else NOSTRAT, 0), (b, 1 - s, NOST
 SUITES = {"posture": POSTURE, "mind": MIND, "strat": STRAT, "strat_iso": STRAT_ISO, "strat_mcv": STRAT_MCV, "tune": None, "heldout": HELDOUT, "heldout2": HELDOUT2, "hard": HARD, "balance": BALANCE}
 
 
-def suite_list(outdir, matches, frames=60000):
-    lines = []
-    failed = 0   # games that never started in a row: the launch is broken (no monitor, ...), stop
-    for i, (m, human, ais, extra) in enumerate(matches):
-        out = os.path.join(outdir, f"{i:02d}-{os.path.splitext(os.path.basename(m))[0].replace(' ', '_')}")
-        if bench_rows(os.path.join(out, "yspawn-bench.csv")):   # resumable: played already
-            continue
-        line = run(out, m, ais, human, frames, extra=dict(extra) if extra else None)
+JOBS = 1   # --jobs N: games side by side, each in a benchmark slot (1: one at a time, in the game dir)
+
+
+def play(todo, frames):
+    """Play (out, map, ais, human, extra[, seed]) matches, JOBS at once, printing a line per match as
+    it ends.
+    Three in a row that never started stop it: the launch is broken (no monitor, ...)."""
+    lines, failed = [], 0
+
+    def ended(line, out):
+        nonlocal failed
         print(line, flush=True)
         lines.append(line)
         failed = failed + 1 if line.endswith("no result") else 0
         if failed >= 3:
             shutil.rmtree(out, ignore_errors=True)   # so a rerun plays them
             raise SystemExit("3 games in a row never started: stopping the suite")
+
+    if JOBS <= 1:
+        for out, m, ais, human, extra, *seed in todo:
+            ended(run(out, m, ais, human, frames, seed=seed[0] if seed else 0, extra=dict(extra) if extra else None), out)
+        return lines
+    import concurrent.futures, queue
+    spawn.sync_ddraw_ini()   # once, before the slots copy it
+    free = queue.Queue()
+    for k in range(1, JOBS + 1):
+        free.put(k)
+
+    def one(item):
+        out, m, ais, human, extra, *seed = item
+        k = free.get()
+        try:
+            return run(out, m, ais, human, frames, seed=seed[0] if seed else 0, extra=dict(extra) if extra else None,
+                       slot=k), out
+        finally:
+            free.put(k)
+
+    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+        futures = [pool.submit(one, item) for item in todo]
+        try:
+            for f in concurrent.futures.as_completed(futures):
+                ended(*f.result())
+        except BaseException:   # stopped (^C, or the launch is broken): end the games still running
+            for f in futures:
+                f.cancel()
+            for k in range(1, JOBS + 1):
+                stop(os.path.join(FARM, f"slot{k}", "game"))
+            concurrent.futures.wait(futures)
+            for item in todo:   # cut short, with no result row: kept, a resumed suite counted it played
+                played = os.path.join(item[0], "yspawn-bench.csv")
+                rows = bench_rows(played)
+                if rows and rows[2] is None:
+                    os.remove(played)
+            raise
     return lines
 
 
+def suite_list(outdir, matches, frames=60000):
+    todo = []
+    for i, (m, human, ais, extra) in enumerate(matches):
+        out = os.path.join(outdir, f"{i:02d}-{os.path.splitext(os.path.basename(m))[0].replace(' ', '_')}")
+        if not bench_rows(os.path.join(out, "yspawn-bench.csv")):   # resumable: played already
+            todo.append((out, m, ais, human, extra))
+    return play(todo, frames)
+
+
 def suite(outdir, filt=None, frames=60000, games=None):
-    lines = []
+    todo = []
     for i, (m, human, dc, bc, ds, bs) in enumerate(SUITE):
         if filt and filt not in m:
             continue
-        if games is not None and len(lines) >= games:
+        if games is not None and len(todo) >= games:
             break
         # director is AI1 in even runs, AI2 in odd ones, so slot order doesn't favour it
         ais = [(dc, ds, 1, 0), (bc, bs, 0, 0)]
         if i % 2:
             ais.reverse()
-        line = run(os.path.join(outdir, f"{i:02d}-{os.path.splitext(m)[0]}"), m, ais, human, frames)
-        print(line, flush=True)
-        lines.append(line)
-    return lines
+        todo.append((os.path.join(outdir, f"{i:02d}-{os.path.splitext(m)[0]}"), m, ais, human, None))
+    return play(todo, frames)
 
 
 if __name__ == "__main__":
@@ -532,6 +644,10 @@ if __name__ == "__main__":
         value = args[i + 1].lower()
         del args[i:i + 2]
         RES = None if value == "native" else tuple(int(v) for v in value.split("x"))
+    if "--jobs" in args:   # N games side by side (suites)
+        i = args.index("--jobs")
+        JOBS = int(args[i + 1])
+        del args[i:i + 2]
     if args[0] == "suite":
         # --frames N and --games N: a short smoke run of a suite's first games
         frames, games = 60000, None

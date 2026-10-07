@@ -23,9 +23,28 @@ GAMESCOPE = os.path.join(HERE, "..", "yuri-gamescope.py")
 FILES = ["gamemd-spawn.exe", "yspawn.dll", "yspawn.ini", "yspawn.map", "yspawn.log"]
 
 
-def running():
-    # Wine names the process after the exe, cut to 15 characters
-    return subprocess.run(["pgrep", "-x", "gamemd.exe|gamemd-spawn.ex"], capture_output=True).returncode == 0
+def game_pids(game=None):
+    """The game's processes (Wine names them after the exe, cut to 15 characters); with game, only
+    those running in that directory (a benchmark slot's: each copy's working directory is its own)."""
+    want = os.path.realpath(game) if game else None
+    pids = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f"/proc/{pid}/comm", "rb") as f:
+                if f.read().strip() not in (b"gamemd.exe", b"gamemd-spawn.ex"):
+                    continue
+            if want and os.path.realpath(os.readlink(f"/proc/{pid}/cwd")) != want:
+                continue
+        except OSError:
+            continue
+        pids.append(int(pid))
+    return pids
+
+
+def running(game=None):
+    return bool(game_pids(game))
 
 
 def atomic_write(path, mode, data, **kw):
@@ -164,11 +183,14 @@ def list_maps():
     return sorted(maps, key=lambda m: m["name"].lower())
 
 
-def prepare(ini):
+def prepare(ini, game=None):
     """Extract the map named by Map= and write the game-dir yspawn.ini that yspawn.dll reads.
-    ini: a ConfigParser laid out like spawner/yspawn.ini. Returns the map archive name."""
+    ini: a ConfigParser laid out like spawner/yspawn.ini; game: the game dir, or a benchmark slot's.
+    Returns the map archive name."""
     settings = ini["Settings"]
-    if settings.get("Benchmark") != "1" and not running():
+    own = game is None or game == GAME
+    game = game or GAME
+    if own and settings.get("Benchmark") != "1" and not running():
         import bench   # a killed benchmark run left its files behind, RA2MD.INI at its low resolution too
         if bench.bench_leftover():
             bench.restore()
@@ -176,29 +198,36 @@ def prepare(ini):
     info = map_info(archive)
     # extract before touching yspawn.map: a packet can name a map its archive lacks (KeyError)
     scenario = mixextract.extract(info["data"], info["map"].lower() + ".map")
-    atomic_write(os.path.join(GAME, "yspawn.map"), "wb", scenario)
+    atomic_write(os.path.join(game, "yspawn.map"), "wb", scenario)
     settings["Scenario"] = "yspawn.map"
     # write a comment-free copy with CRLF line endings for GetPrivateProfile*
     lines = []
     for sec in ini.sections():
         lines += [f"[{sec}]"] + [f"{k}={v}" for k, v in ini[sec].items()] + [""]
-    atomic_write(os.path.join(GAME, "yspawn.ini"), "w", "\n".join(lines), newline="\r\n")
+    atomic_write(os.path.join(game, "yspawn.ini"), "w", "\n".join(lines), newline="\r\n")
     return archive
 
 
-def launch():
-    """Start gamemd-spawn.exe the way Steam starts the game; returns at once."""
+def launch(game=None, prefix=None, headless=None):
+    """Start gamemd-spawn.exe the way Steam starts the game; returns the launcher's Popen at once.
+    A benchmark slot passes its own game dir and Proton prefix (Proton waits for the prefix's
+    wineserver to end before it starts a game, so copies side by side need one each), and
+    headless=(W, H): a Gamescope of that size with no window."""
+    game, prefix = game or GAME, prefix or PREFIX
     sync_ddraw_ini()   # apply-working.sh restores a ddraw.ini without our [gamemd-spawn] settings
-    env = dict(os.environ, STEAM_COMPAT_DATA_PATH=PREFIX, STEAM_COMPAT_CLIENT_INSTALL_PATH=STEAM,
-               STEAM_COMPAT_INSTALL_PATH=GAME, STEAM_COMPAT_APP_ID="2229850",
+    env = dict(os.environ, STEAM_COMPAT_DATA_PATH=prefix, STEAM_COMPAT_CLIENT_INSTALL_PATH=STEAM,
+               STEAM_COMPAT_INSTALL_PATH=game, STEAM_COMPAT_APP_ID="2229850",
                SteamAppId="2229850", SteamGameId="2229850")
-    cmd = ["/usr/bin/python3", GAMESCOPE,
-           os.path.join(STEAM, "steamapps/common/SteamLinuxRuntime_4/_v2-entry-point"),
-           "--verb=waitforexitandrun", "--",
-           os.path.join(STEAM, "steamapps/common/Proton - Experimental/proton"),
-           "waitforexitandrun", os.path.join(GAME, "gamemd-spawn.exe")]
-    subprocess.Popen(cmd, cwd=GAME, env=env, start_new_session=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proton = [os.path.join(STEAM, "steamapps/common/SteamLinuxRuntime_4/_v2-entry-point"),
+              "--verb=waitforexitandrun", "--",
+              os.path.join(STEAM, "steamapps/common/Proton - Experimental/proton"),
+              "waitforexitandrun", os.path.join(game, "gamemd-spawn.exe")]
+    if headless:
+        cmd = ["gamescope", "-w", str(headless[0]), "-h", str(headless[1]), "--backend", "headless", "--", *proton]
+    else:
+        cmd = ["/usr/bin/python3", GAMESCOPE, *proton]
+    return subprocess.Popen(cmd, cwd=game, env=env, start_new_session=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def installed():
