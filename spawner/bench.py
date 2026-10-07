@@ -2,21 +2,22 @@
 """Run unattended AI-vs-AI skirmishes and collect yspawn-bench.csv results.
 
 usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--speed N] [--seed N] [--set KEY=VALUE]
-           [--res WxH|native]
+           [--res WxH|native] [--draw N]
            each AI is COUNTRY[:START[:DIRECTOR[:DIFFICULTY[:TEAM[:PLAN]]]]], e.g. 8:0:1 9:1:0 (DIRECTOR 1 = new logic,
            0 = stock Brutal, >1 = DirectorFlags bitmask; 16319 = everything but the strategy layer;
            PLAN 0-3 forces balanced, rush, boom or siege)
        bench.py restore          put back the game directory's own yspawn.ini/.log/.map and RA2MD.INI after runs
        bench.py summary DIR...   print one line per match directory
-       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N] [--res WxH|native] [--jobs N]
+       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N] [--res WxH|native] [--draw N]
+                         [--jobs N]
                                  director vs stock Brutal match sets; --jobs N plays N at once, without
                                  windows, each in its own slot under FARM
        bench.py ab DIR...        strategy on against off, per plan and country: wins and mean placement
 
 The idle human uses Human in peace, so it never takes part and never loses. The game directory's
 yspawn.ini, yspawn.log, yspawn.map and RA2MD.INI are saved first and restored afterwards. Games run
-at 800x600 (--res): drawing is most of a frame's cost at the user's resolution; --res native keeps
-RA2MD.INI's own, to watch a game.
+at 800x600 (--res) and draw one frame in 60 (--draw): drawing is most of a frame's cost; --res native
+keeps RA2MD.INI's own resolution and draws every frame, to watch a game.
 """
 import configparser, csv, glob, os, shutil, signal, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,10 @@ ABSENT = "absent.txt"   # in BACKUP: the SAVED files the game dir did not have
 # CPU: at 2560x1440 a frame's drawing cost several times its logic (one 1v1 game ran 360-410
 # frames a second, at 800x600 2200-3100).
 RES = (800, 600)
+# Benchmark games draw one frame in DRAW (--draw N; every frame with --res native, to watch). The
+# logic doesn't read what is drawn: one seed gives the same CSV. A 1v1 ran 2150 frames/s drawing
+# every frame at 800x600 and 4140 drawing one in 60; a 7-AI game, mostly logic, 330 and 390.
+DRAW = 60
 
 
 def set_resolution(game, width, height):
@@ -128,7 +133,7 @@ def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
                            Team="-1", Credits="10000", GameSpeed=str(speed), UnitCount="0", TechLevel="10",
                            ShortGame="1", Superweapons="1", HumanInPeace="1", RevealMap="1", TeamTelemetry="0", Crates="0",
                            Bases="1", MCVRedeploy="1", BuildOffAlly="1", GameMode="1", Benchmark="1",
-                           FrameLimit=str(frames), Seed=str(seed))
+                           FrameLimit=str(frames), Seed=str(seed), DrawEvery=str(DRAW if RES else 1))
     if extra:
         units = extra.pop("Units", None)   # [Units] lines: TYPE,COUNTRY,X,Y,FACING,MISSION
         ini["Settings"].update(extra)
@@ -644,6 +649,10 @@ if __name__ == "__main__":
         value = args[i + 1].lower()
         del args[i:i + 2]
         RES = None if value == "native" else tuple(int(v) for v in value.split("x"))
+    if "--draw" in args:   # draw one frame in N
+        i = args.index("--draw")
+        DRAW = int(args[i + 1])
+        del args[i:i + 2]
     if "--jobs" in args:   # N games side by side (suites)
         i = args.index("--jobs")
         JOBS = int(args[i + 1])

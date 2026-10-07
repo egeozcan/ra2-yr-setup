@@ -34,6 +34,18 @@ static int director_slot[8] = { DIR_F_DEFAULT, DIR_F_DEFAULT, DIR_F_DEFAULT, DIR
 static int director_house[32], director_mapped;
 static int director_plan_slot[8] = { -1, -1, -1, -1, -1, -1, -1, -1 }, director_plan_house[32];
 
+/* [Settings] DrawEvery=N: a benchmark game nobody watches draws one frame in N. Its logic doesn't
+ * read what is drawn (one seed gives the same yspawn-bench.csv either way); drawing now and then
+ * still clears the redraw lists. GScreenClass::Render, called by the main loop on the map. */
+#define GSCREEN_RENDER 0x4F4480
+static int bench_draw_every = 1;
+
+static void GTHISCALL bench_render(void *map)
+{
+    if (CURRENT_FRAME % bench_draw_every == 0)
+        ((void (GTHISCALL *)(void *))GSCREEN_RENDER)(map);
+}
+
 static void bench_init(void)
 {
     for (int i = 1; i < 8; i++) {
@@ -54,6 +66,14 @@ static void bench_init(void)
      * one (each later copy waited 30 s on it). Both handles stay 0, which the exit code allows. */
     if (patch_checked("single copy check", 0x6BBE56, (const BYTE[]){ 0x68, 0x14, 0x0F, 0x84, 0x00 }, 5))
         patch_rel(0x6BBE56, 0xE9, 0x6BBFAD);
+    bench_draw_every = ini_int("Settings", "DrawEvery", 1);
+    for (int i = 0; bench_draw_every > 1 && i < 3; i++) {
+        static const DWORD calls[3] = { 0x55D84F, 0x55D8F2, 0x55DBBE };   /* the main loop's draws */
+        BYTE expect[5];
+        call_bytes(expect, calls[i], GSCREEN_RENDER);
+        if (patch_checked("draw call", calls[i], expect, 5))
+            patch_rel(calls[i], 0xE8, (DWORD)bench_render);
+    }
     bench_limit = ini_int("Settings", "FrameLimit", 0);
     bench_camera = ini_int("Settings", "Camera", -1);        /* follow this house's army front */
     bench_fleet = ini_int("Settings", "FleetTest", 0);       /* N warships for AI house 1 at frame 300 */

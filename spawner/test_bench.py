@@ -59,6 +59,13 @@ class ResultTests(unittest.TestCase):
             bench.suite_list(str(self.dir), matches)
         self.assertEqual([c.args[0] for c in run.call_args_list], [str(self.dir / "00-A")])
 
+    def test_watching_draws_every_frame(self):
+        self.assertEqual(bench.write_ini("A.mmx", [], -1, 1000, 0, 1)["Settings"]["DrawEvery"], str(bench.DRAW))
+        with patch.object(bench, "RES", None):   # --res native: to watch
+            self.assertEqual(bench.write_ini("A.mmx", [], -1, 1000, 0, 1)["Settings"]["DrawEvery"], "1")
+        ini = bench.write_ini("A.mmx", [], -1, 1000, 0, 1, {"DrawEvery": "5"})
+        self.assertEqual(ini["Settings"]["DrawEvery"], "5")
+
     def test_start_base_zero_keeps_the_mcv(self):
         ini = bench.write_ini("A.mmx", [(0, 0, 1, 0)], -1, 1000, 0, 1, {"StartBase": "0"})
         self.assertNotIn("StartBase", ini)

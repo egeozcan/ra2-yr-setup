@@ -1726,6 +1726,13 @@ Isolation game about 110 late on against 220. Over eight full games at 800x600, 
 980–2,500 frames/s and Isolation 270. Resolution doesn't touch the game: one seed gave the same
 `yspawn-bench.csv` at 640x480, 800x600 and 2560x1440. Launching and loading still take about 17 s a game.
 
+They also draw only one frame in 60 (`--draw N`; `--res native` draws every frame, to watch). For
+`DrawEvery=N` the DLL routes the main loop's three calls to `GScreenClass::Render` (0x4F4480, at
+0x55D84F, 0x55D8F2 and 0x55DBBE) through one that draws when the frame number divides by N. Drawing
+now and then still clears the redraw lists. The logic doesn't read what is drawn: one seed gave the
+same CSV either way, for a 1v1 and a 7-AI Isolation game. The 1v1 ran 4,140 frames/s instead of 2,150,
+and Isolation, mostly logic, 390 instead of 330.
+
 - `bench.py run OUTDIR MAP AI... [--frames N] [--camera HOUSE] [--set KEY=VALUE]`: one match.
   - Each AI is `COUNTRY:START:DIRECTOR[:DIFFICULTY[:TEAM[:PLAN]]]`. `DIRECTOR` above 1 is a
     `DirectorFlags` mask (16319: no strategy layer), `PLAN` forces a plan.
