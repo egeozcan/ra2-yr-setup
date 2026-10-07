@@ -619,12 +619,17 @@ static int dir_is_ferry(DirState *d, BYTE *o)
 static int GFASTCALL dir_unit_production(BYTE *house, void *unused)
 {
     (void)unused;
+    int pending = FIELD(house, H_PRODUCING_UNIT, int);
     int result = dir_unit_original(house);
     if (!dir_active(house) || !(director_enabled(house) & DIR_F_PRODUCTION))
         return result;
     DirState *d = dir_get(house);
     if (!d)
         return result;
+    /* a factory's kick-out clears the pick: our request is used up, and a later stock pick of the
+     * same type is not ours (it passed the vetoes as if it were) */
+    if (pending != d->unit_request)
+        d->unit_request = -1;
     dir_veto_production(house, d);   /* right after the stock pick */
     int current = FIELD(house, H_PRODUCING_UNIT, int);
     /* A request the factory never picked up would block the queue; drop it after a while. */
