@@ -6424,7 +6424,7 @@ static int dir_land_steps(BYTE *house, CellXY from)
     DynVec *hv = HOUSE_ARRAY;
     for (int i = 0; i < hv->Count && nt < 32; i++) {
         BYTE *h = hv->Items[i];
-        if (dir_hostile(house, h) && dir_house_alive(h) && !h[H_ISHUMAN])
+        if (dir_hostile(house, h) && dir_house_alive(h))   /* a human too (dir_hostile drops one in peace) */
             targets[nt++] = dir_house_center(h);
     }
     if (!nt || !dir_cell(from))
