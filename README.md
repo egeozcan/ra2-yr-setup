@@ -1873,6 +1873,11 @@ plus army value, and within 20% count as a draw.
 | 2026-10-06 final build: 1 director vs 2 allied stock Brutals | no losses: 3 wins, 2 time limits led by the director, Kaliforn and Death won by the second director (the round before, without allies counted: 2 losses) |
 | Strategy A/B from MCVs, 14 rounds since postures went off (2026-10-05/06) | 348–324 for the strategy layer (rounds ranged from 31–17 to 20–28) |
 | Isolation convoys, last rounds | 47–114 units shipped a game, 8–33 stall recoveries |
+| **2026-10-07 build** (review fixes, stock trigger conditions repaired, landings out of the defences' reach): held-out set 1 | **13/13** |
+| 2026-10-07 build: held-out set 2 | **13W 1L**: 12/12 duels and Potomac; Powder Keg (1 director vs 5) lost at the time limit, the director on 73 buildings but a 9.8k army to Yuri's 48.6k |
+| 2026-10-07 build: 1 director vs 2 allied stock Brutals | **4W 3L**: Arena, Hills, and both FFAs (won by the second director); Lostlake at the time limit, the director ahead of each opponent (60 buildings to 45 and 45) but behind the pair; Tower at the time limit, 12 buildings to 49 and 41; EB4 destroyed at frame 55k after 368 kills. The likely reason: the stock Brutals' counters, air strikes and naval attacks fire as meant since the trigger fix, and these are the first runs against them |
+| 2026-10-07 build: strategy A/B from built bases / from MCVs | 25–23 / 22–26; Yuri won 25 and 23 of its 32 |
+| 2026-10-07 build: Isolation FFA, strategy A/B (4 games) | 4–0 for the strategy layer; the naval plan was picked 7 times (never in MCV starts before the fix) |
 
 | 2026-10-01 build, tuning suite (3 runs) | 16/16, 12W 2L 2D, 12W 2L 2D; the 2026-09-30 build rerun alongside it also scored 12W 2L 2D |
 | 2026-10-01, 7 directors FFA on *Don't Step on The Crocodile* (user's settings) | old build: no house ever launched an attack by frame 40k; new build: 40–54 attack launches per match, 5 of 7 houses eliminated in each of 5 full-length matches, and one match won outright at frame 48,640 |
@@ -1895,8 +1900,10 @@ plus army value, and within 20% count as a draw.
 
 ### Known limits
 
-- **Results above predate the 2026-10-06 review fixes**, and every run since 2026-09-29 used the
-  swapped AI trigger conditions; the suites need running again.
+- **Results before the 2026-10-07 rows predate the review fixes**, and every run from 2026-09-29 to
+  then used the swapped AI trigger conditions: the stock Brutals they beat were weaker than meant.
+  The 2026-10-07 rows are the first against the repaired stock AI. Every game's seed is in its
+  `yspawn.ini`, so any of them can be replayed exactly (`--seed`).
 - An MCV that takes over 3000 frames to build (low power) can be ordered a second time.
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
   post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
