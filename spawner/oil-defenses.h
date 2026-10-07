@@ -216,6 +216,9 @@ static int GFASTCALL oil_build_update(BYTE *house, void *unused)
                 oil_orders[idx].type = NULL;  /* completed: don't redirect subsequent stock orders */
         }
     }
+    if (FIELD(house, OIL_H_PRODUCING, int) != -1)
+        return oil_build_original(house);
+    combat_queue_factory(house);   /* a wanted war factory takes the free queue first */
     if (FIELD(house, OIL_H_PRODUCING, int) != -1 || CURRENT_FRAME < oil_orders[idx].next_build
         || CURRENT_FRAME < oil_orders[idx].next_scan)
         return oil_build_original(house);

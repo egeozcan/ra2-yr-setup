@@ -4,10 +4,6 @@
 #include "combat-ai-policy.h"
 #include "director-policy.h"
 
-/* base defences and wall pieces: a pending one gives way to a wanted war factory */
-#define COMBAT_DEFENSES "GAPILL,NASAM,ATESLA,GTGCAN,NALASR,NAFLAK,TESLA,NABNKR,YAGGUN,YAPSYT,NATBNK"
-#define COMBAT_WALLS "GAWALL,NAWALL,YAWALL,GAFWLL"
-
 #define COMBAT_SELECT_WEAPON 0x2E4
 #define COMBAT_CLOSE_ENOUGH 0x3A8
 #define COMBAT_SET_DESTINATION 0x480
@@ -132,26 +128,75 @@ static int combat_owned_planes(BYTE *house)
 
 static struct {
     BYTE *house;
-    int next_scan;
+    int next_scan, next_factory;
 } combat_expansions[32];
+
+/* a new house object at the index starts with fresh throttles */
+static void combat_slot(BYTE *house, int idx)
+{
+    if (combat_expansions[idx].house != house) {
+        memset(&combat_expansions[idx], 0, sizeof combat_expansions[idx]);
+        combat_expansions[idx].house = house;
+    }
+}
+
+/* Native placement rejects inland yards and crowded/invalid terrain. Probe before requesting
+ * production, so impossible picks don't stall it. Nonzero: queued. */
+static int combat_queue_building(BYTE *house, BYTE *type)
+{
+    CellXY at;
+    oil_place_original(house, &at, type, (void *)0x505F80, (DWORD)-1);
+    /* the stock planner found no room (cramped islands): the director places it where the
+     * engine allows, near the base centre (dir_note_placement does the same at build time) */
+    if ((at.X <= 0 || at.Y <= 0) && (director_enabled(house) & DIR_F_ECONOMY))
+        dir_fallback_spot(house, type, &at);
+    if (at.X <= 0 || at.Y <= 0
+        || !((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &at, house))
+        return 0;
+    FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
+    return 1;
+}
+
+/* Director economy: production, not money, limits the army, so war factories are added as cash
+ * piles up. A wanted one takes the free building queue ahead of oil defences, base defences and
+ * walls (oil_build_update calls this before the oil scan and the stock picker). Checked every 900
+ * frames with the yards and airbases, it seldom found the queue free: a Yuri rush with 45000
+ * unspent got its second factory at frame 7000 behind a wall, gattling cannons and psychic towers
+ * (its opponent had three by 6400). A pending pick is not replaced: it is the building already
+ * under construction, and placing that building clears the queue (0x444F3F). */
+static void combat_queue_factory(BYTE *house)
+{
+    int idx = FIELD(house, 0x30, int), side = FIELD(house, OIL_H_SIDE, int);
+    if (!(director_enabled(house) & DIR_F_ECONOMY) || !oil_eligible(house) || idx < 0 || idx >= 32
+        || side < 0 || side > 2 || FIELD(house, OIL_H_PRODUCING, int) != -1)
+        return;
+    combat_slot(house, idx);
+    if (CURRENT_FRAME < combat_expansions[idx].next_factory)
+        return;
+    combat_expansions[idx].next_factory = CURRENT_FRAME + 90;   /* its own: the yards and airbases keep 900 */
+    static const char *factories[] = { "GAWEAP", "NAWEAP", "YAWEAP" };
+    BYTE *type = find_type(BUILDINGTYPE_ARRAY, factories[side]);
+    if (!type)
+        return;
+    int count = combat_building_count(house, factories[side]);
+    int cost = ((int (GTHISCALL *)(BYTE *))VFUNC(type, 0xAC))(type); /* GetCost */
+    int cash = FIELD(house, OIL_H_CASH, int);
+    int power = FIELD(house, OIL_H_POWER, int) - FIELD(house, OIL_H_DRAIN, int);
+    int wanted = dir_wanted_factories(cash * 100 / dir_factory_cash_pct(house), CURRENT_FRAME,
+                                      FIELD(house, OIL_H_REFINERIES, int));
+    if (count < 1 || count >= wanted || cash - cost < 2000 || power < FIELD(type, OIL_BT_DRAIN, int) + 50
+        || !ai_can_build(house, type) || !combat_queue_building(house, type))
+        return;
+    logmsg("combat AI: house %d queued %s (factory %d of %d wanted)", idx, factories[side], count + 1, wanted);
+}
 
 static void combat_queue_expansion(BYTE *house)
 {
     int idx = FIELD(house, 0x30, int), side = FIELD(house, OIL_H_SIDE, int);
-    /* The building queue holds one pick. A war factory may take the place of a pending defence or
-     * wall: picks are checked every 900 frames, and a Yuri rush with 45000 unspent got its second
-     * factory at frame 7000 behind a wall, gattling cannons and psychic towers (its opponent had
-     * three factories by 6400). */
-    int pending = FIELD(house, OIL_H_PRODUCING, int);
-    DynVec *bts = BUILDINGTYPE_ARRAY;
-    int displaceable = pending >= 0 && pending < bts->Count && (director_enabled(house) & DIR_F_ECONOMY)
-        && in_list(COMBAT_DEFENSES "," COMBAT_WALLS, (char *)bts->Items[pending] + T_ID);
-    if (!oil_eligible(house) || idx < 0 || idx >= 32 || side < 0 || side > 2 || (pending != -1 && !displaceable))
+    if (!oil_eligible(house) || idx < 0 || idx >= 32 || side < 0 || side > 2
+        || FIELD(house, OIL_H_PRODUCING, int) != -1)
         return;
-    if (combat_expansions[idx].house != house) {
-        combat_expansions[idx].house = house;
-        combat_expansions[idx].next_scan = 0;
-    }
+    combat_slot(house, idx);
     if (CURRENT_FRAME < combat_expansions[idx].next_scan)
         return;
     combat_expansions[idx].next_scan = CURRENT_FRAME + 900;
@@ -164,7 +209,8 @@ static void combat_queue_expansion(BYTE *house)
     int cash = FIELD(house, OIL_H_CASH, int);
     int power = FIELD(house, OIL_H_POWER, int) - FIELD(house, OIL_H_DRAIN, int);
     for (int role = 0; role < 4; role++) {
-        if ((role >= 2 && side != 0) || (displaceable && role != 1))
+        /* the director's war factories come from combat_queue_factory */
+        if ((role >= 2 && side != 0) || (role == 1 && (director_enabled(house) & DIR_F_ECONOMY)))
             continue;
         const char *id = candidates[role];
         BYTE *type = find_type(BUILDINGTYPE_ARRAY, id);
@@ -178,35 +224,16 @@ static void combat_queue_expansion(BYTE *house)
                 || !combat_building_count(house, factories[side])
                 || !combat_building_count(house, "GAAIRC,AMRADR,NARADR,NAPSIS"))
                 continue;
-        } else if (role == 1 && (director_enabled(house) & DIR_F_ECONOMY)) {
-            /* Director: production, not money, limits the army. Add factories as cash piles up. */
-            if (count < 1 || count >= dir_wanted_factories(cash * 100 / dir_factory_cash_pct(house), CURRENT_FRAME,
-                                                       FIELD(house, OIL_H_REFINERIES, int))
-                || cash - cost < 2000 || power < drain + 50)
-                continue;
         } else if (!combat_expand(CURRENT_FRAME, FIELD(house, 0x2F0, int),
                      FIELD(house, OIL_H_REFINERIES, int), cash, power, cost, drain,
                      count, role == 1 ? combat_need_factory(ground_pending)
                                       : combat_need_airbase(owned_planes, plane_pending))) {
             continue;
         }
-        if (!ai_can_build(house, type))
+        if (!ai_can_build(house, type) || !combat_queue_building(house, type))
             continue;
-        /* Native placement rejects inland yards and crowded/invalid terrain.
-         * Probe before requesting production, so impossible yards don't stall it. */
-        CellXY at;
-        oil_place_original(house, &at, type, (void *)0x505F80, (DWORD)-1);
-        /* the stock planner found no room (cramped islands): the director places it where the
-         * engine allows, near the base centre (dir_note_placement does the same at build time) */
-        if ((at.X <= 0 || at.Y <= 0) && (director_enabled(house) & DIR_F_ECONOMY))
-            dir_fallback_spot(house, type, &at);
-        if (at.X <= 0 || at.Y <= 0
-            || !((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &at, house))
-            continue;
-        FIELD(house, OIL_H_PRODUCING, int) = building_type_index(type);
-        logmsg("combat AI: house %d queued %s (ground pending %d, planes %d+%d)%s%.24s",
-               idx, id, ground_pending, owned_planes, plane_pending, displaceable ? " ahead of " : "",
-               displaceable ? (char *)bts->Items[pending] + T_ID : "");
+        logmsg("combat AI: house %d queued %s (ground pending %d, planes %d+%d)",
+               idx, id, ground_pending, owned_planes, plane_pending);
         return;
     }
 }

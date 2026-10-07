@@ -1082,6 +1082,7 @@ static void start_bases(void)
 }
 
 static void combat_queue_expansion(BYTE *house);
+static void combat_queue_factory(BYTE *house);
 static void team_telemetry_sample(BYTE *house);
 static void bench_sample(void);
 static void observer_reveal(void);
