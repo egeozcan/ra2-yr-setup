@@ -1433,7 +1433,7 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
 /* A unit the ferry has put across: nearer the enemy's base than to ours. */
 static int dir_landed(DirState *d, CellXY c)
 {
-    return d->enemy && dir_dist2(c, FIELD(d->enemy, H_BASE_CENTER, CellXY)) < dir_dist2(c, d->base);
+    return d->enemy && dir_dist2(c, dir_house_center(d->enemy)) < dir_dist2(c, d->base);
 }
 
 /* ---- units walled in ----
