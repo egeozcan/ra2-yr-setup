@@ -7056,10 +7056,31 @@ static void bench_camera_update(void)
 /* ---- benchmark kill statistics ----
  * Every destroyed object reports its destroyer through ObjectClass::RegisterDestruction (vtable 0xE0;
  * TechnoClass 0x702D40, UnitClass 0x744720). In benchmark matches a wrapper credits the victim's cost
- * to the killer's type, and the loss to the victim's type; yspawn-kills.csv gets the totals. */
+ * to the killer's type, and the loss to the victim's type; yspawn-kills.csv gets the totals.
+ * yspawn-duels.csv has them per pair: killer house and type against victim house and type (owners
+ * when it happened, so a house's units of another side's types were mind-controlled; a killer house
+ * of -1 had no destroyer). Per type alone, a lost game's 63 Apocalypses could not be told apart
+ * from Apocalypses it lost to mind control and then met. */
 #define VT_REGISTER_DESTRUCTION 0xE0
 static struct { BYTE *type; int kills, killed_value, deaths, lost_value; } kill_stats[512];
+static struct { BYTE *ktype, *vtype; signed char kh, vh; int count, value; } duel_stats[4096];
+static int duel_count;
 static void *kill_original[4];
+
+static void duel_note(int kh, BYTE *kt, int vh, BYTE *vt, int value)
+{
+    int i = 0;
+    while (i < duel_count && !(duel_stats[i].kh == kh && duel_stats[i].ktype == kt && duel_stats[i].vh == vh
+                               && duel_stats[i].vtype == vt))
+        i++;
+    if (i == duel_count) {
+        if (duel_count == 4096)
+            return;
+        duel_stats[duel_count++] = (typeof(duel_stats[0])){ kt, vt, (signed char)kh, (signed char)vh, 0, 0 };
+    }
+    duel_stats[i].count++;
+    duel_stats[i].value += value;
+}
 
 static int kill_slot(BYTE *type)
 {
@@ -7085,8 +7106,9 @@ static void kill_note(BYTE *victim, BYTE *destroyer)
         kill_stats[v].lost_value += cost;
     }
     BYTE *kt = destroyer && (FIELD(destroyer, 0x14, DWORD) & 1) ? dir_type(destroyer) : NULL;
-    BYTE *owner = destroyer ? FIELD(destroyer, O_OWNER, BYTE *) : NULL;
-    if (!kt || !owner || owner == FIELD(victim, O_OWNER, BYTE *))
+    BYTE *owner = destroyer ? FIELD(destroyer, O_OWNER, BYTE *) : NULL, *vowner = FIELD(victim, O_OWNER, BYTE *);
+    duel_note(kt && owner ? FIELD(owner, 0x30, int) : -1, kt, vowner ? FIELD(vowner, 0x30, int) : -1, vt, cost);
+    if (!kt || !owner || owner == vowner)
         return;
     int k = kill_slot(kt);
     if (k >= 0) {
@@ -7133,5 +7155,12 @@ static void bench_kills_dump(void)
     for (int i = 0; i < 512 && kill_stats[i].type; i++)
         fprintf(f, "%.24s,%d,%d,%d,%d,%d\n", (char *)kill_stats[i].type + T_ID, dir_cost(kill_stats[i].type),
                 kill_stats[i].kills, kill_stats[i].killed_value, kill_stats[i].deaths, kill_stats[i].lost_value);
+    fclose(f);
+    if (!(f = fopen("yspawn-duels.csv", "w")))
+        return;
+    fputs("killer_house,killer_type,victim_house,victim_type,count,value\n", f);
+    for (int i = 0; i < duel_count; i++)
+        fprintf(f, "%d,%.24s,%d,%.24s,%d,%d\n", duel_stats[i].kh, duel_stats[i].ktype ? (char *)duel_stats[i].ktype + T_ID : "-",
+                duel_stats[i].vh, (char *)duel_stats[i].vtype + T_ID, duel_stats[i].count, duel_stats[i].value);
     fclose(f);
 }

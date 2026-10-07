@@ -166,8 +166,8 @@ def parse_ai(text):
 # its own copies of what a game writes or we set, and its own Proton prefix (Proton waits for the
 # prefix's wineserver to end before it starts a game). On the prefix's btrfs, the copy shares blocks.
 FARM = "/mnt/data/SteamLibrary/ra2-bench-farm"
-SLOT_OWN = {"yspawn.ini", "yspawn.log", "yspawn.map", "yspawn-bench.csv", "yspawn-kills.csv", "yspawn-teams.csv",
-            "except.txt", "RA2MD.INI", "ddraw.ini", "gamemd-spawn.exe", "yspawn.dll"}
+SLOT_OWN = {"yspawn.ini", "yspawn.log", "yspawn.map", "yspawn-bench.csv", "yspawn-kills.csv", "yspawn-duels.csv",
+            "yspawn-teams.csv", "except.txt", "RA2MD.INI", "ddraw.ini", "gamemd-spawn.exe", "yspawn.dll"}
 
 
 def make_slot(k):
@@ -218,7 +218,7 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         snapshot()
     result = os.path.join(game, "yspawn-bench.csv")
     # (the game dir's telemetry and crash report may be the user's: run() only takes ones from after the launch)
-    for stale in ("yspawn-bench.csv", "yspawn-kills.csv") + (("yspawn-teams.csv", "except.txt") if slot else ()):
+    for stale in ("yspawn-bench.csv", "yspawn-kills.csv", "yspawn-duels.csv") + (("yspawn-teams.csv", "except.txt") if slot else ()):
         if os.path.exists(os.path.join(game, stale)):
             os.remove(os.path.join(game, stale))
     launcher = None
@@ -249,7 +249,7 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
                 print(f"{outdir}: crashed, see except.txt", flush=True)
                 break
         stop(game)
-        for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv"):
+        for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv", "yspawn-duels.csv"):
             p = os.path.join(game, f)
             if os.path.exists(p) and os.path.getmtime(p) >= began - 1:
                 shutil.move(p, os.path.join(outdir, f)) if f != "yspawn.log" else shutil.copy2(p, outdir)

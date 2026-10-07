@@ -1796,6 +1796,9 @@ Bench-only `[Settings]` keys, for tests:
 - `FleetTest=N` puts N warships for the first AI on the water nearest its base at frame 300.
 - Every benchmark match also writes `yspawn-kills.csv`: per unit type, kills and the value destroyed
   (credited through `RegisterDestruction`, vtable 0xE0), deaths and the value lost.
+- And `yspawn-duels.csv` (since 2026-10-07): the same per pair, killer house and type against victim
+  house and type, with owners as they were then. A house's units of another side's types were
+  mind-controlled; a killer house of -1 had no destroyer.
 
 First balance run (2026-10-01, director vs director, 24 matches, the Liberator already at speed 2,
 750 HP and half fire rate):
