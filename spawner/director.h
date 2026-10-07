@@ -2826,11 +2826,14 @@ static int dir_watch_harvester(BYTE *house, BYTE *o)
     }
     CellXY at = object_cell(o);
     int m = FIELD(o, COMBAT_MISSION, int);
+    int on_ore = dir_cell(at) && ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(dir_cell(at)) > 0;   /* mining */
     if (dir_harv[k].unit != o || dir_dist2(dir_harv[k].at, at) > 1 || (m != 5 && m != 10 && m != 11 && m != 0)
-        || FIELD(o, COMBAT_DESTINATION, BYTE *) || ((BYTE *(GTHISCALL *)(BYTE *, int))RADIO_CONTACT)(o, 0)
-        || (dir_cell(at) && ((int (GTHISCALL *)(BYTE *))CELL_ORE_VALUE)(dir_cell(at)) > 0)) {   /* mining */
-        /* moving, docked, or busy with a real job: not stranded */
-        if (dir_harv[k].unit != o)
+        || FIELD(o, COMBAT_DESTINATION, BYTE *) || ((BYTE *(GTHISCALL *)(BYTE *, int))RADIO_CONTACT)(o, 0) || on_ore) {
+        /* moving, docked, or busy with a real job: not stranded. On ore, it got somewhere to mine
+         * since the last send, so that field is no dead end: kept, the next stranding (the field
+         * mined out) put it on the out-of-reach list. Moving or docking doesn't tell: a harvester
+         * that never got there does both. */
+        if (dir_harv[k].unit != o || on_ore)
             dir_harv[k].sent_frame = 0;
         dir_harv[k].unit = o;
         dir_harv[k].at = at;
@@ -2842,10 +2845,12 @@ static int dir_watch_harvester(BYTE *house, BYTE *o)
     if (dir_harv[k].sent_frame && CURRENT_FRAME - dir_harv[k].sent_frame < 1500)
         return 1;   /* give the last order time */
     if (dir_harv[k].sent_frame) {   /* sent there and never left: that field is out of reach... */
-        int f = dir_bad_ore_next++ % 32;
-        dir_bad_ore[f].house = house;
-        dir_bad_ore[f].at = dir_harv[k].sent;
-        dir_bad_ore[f].frame = CURRENT_FRAME;
+        if (dir_harv[k].sent.X >= 0) {   /* (not "nothing to send it to": that took a slot of the shared ring each time) */
+            int f = dir_bad_ore_next++ % 32;
+            dir_bad_ore[f].house = house;
+            dir_bad_ore[f].at = dir_harv[k].sent;
+            dir_bad_ore[f].frame = CURRENT_FRAME;
+        }
         /* ...or the harvester is walled in by our own buildings */
         DirState *d = dir_get(house);
         if (d && CURRENT_FRAME >= d->next_unstick && (director_enabled(house) & DIR_F_UNSTICK))
