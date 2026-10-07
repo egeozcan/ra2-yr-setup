@@ -744,6 +744,7 @@ static void patch_magnetron(void)
 #define T_ID              0x024      /* AbstractTypeClass: char ID[0x18] */
 #define VT_CREATEOBJECT   0x08C      /* ObjectTypeClass::CreateObject(HouseClass*) */
 #define VT_UNLIMBO        0x0D8      /* ObjectClass::Unlimbo(const CoordStruct&, DirType) */
+#define VT_UNINIT         0x0F8      /* ObjectClass::UnInit: limbo now, delete (and untrack) at the end of the frame */
 #define VT_QUEUEMISSION   0x1E8      /* MissionClass::QueueMission(Mission, bool) */
 
 static BYTE *find_type(DynVec *v, const char *id)
@@ -791,9 +792,15 @@ static int building_spot(BYTE *type, BYTE *house, int *x, int *y)
 static BYTE *put_object(BYTE *type, BYTE *house, int x, int y, int facing)
 {
     BYTE *obj = ((BYTE *(GTHISCALL *)(BYTE *, BYTE *))VFUNC(type, VT_CREATEOBJECT))(type, house);
+    if (!obj)
+        return NULL;
     Coord c = { x * 256 + 128, y * 256 + 128, 0 };
     c.Z = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
-    return obj && ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(obj, VT_UNLIMBO))(obj, &c, facing & 0xFF) ? obj : NULL;
+    if (((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(obj, VT_UNLIMBO))(obj, &c, facing & 0xFF))
+        return obj;
+    /* left in limbo it would stay listed and owned by the house all match */
+    ((void (GTHISCALL *)(BYTE *))VFUNC(obj, VT_UNINIT))(obj);
+    return NULL;
 }
 
 static int mission_number(const char *name)
@@ -861,7 +868,6 @@ static void spawn_units(void)
 #define BTYPE_WIDTH       0x45EC90   /* BuildingTypeClass::GetFoundationWidth() */
 #define BTYPE_HEIGHT      0x45ECA0   /* BuildingTypeClass::GetFoundationHeight(bool with the bib) */
 #define VT_LIMBO          0x0D4      /* ObjectClass::Limbo: off the map */
-#define VT_UNINIT         0x0F8      /* ObjectClass::UnInit: limbo now, delete (and untrack) at the end of the frame */
 #define HOUSE_IS_HUMAN    0x50B730   /* HouseClass::IsControlledByHuman() */
 #define HOUSE_PLAN_BASE   0x505180   /* HouseClass: makes the base plan (Base.Nodes) if it has none */
 #define HOUSE_BASE_READY  0x50C920   /* HouseClass: the last step of the deploy's AI set-up */
@@ -902,8 +908,9 @@ static int base_clear(int x, int y, int w, int h)
 /* the top-left cell for a building centred as near as it can be to cx,cy: the closest in the first square ring around
  * it that has a spot the placement check accepts and base_clear leaves free. The first pass also keeps to the start
  * cell's level and out of passages (dir_blocks_passage: ramps, gaps between cliffs): a War Factory put at the foot of
- * the ramp below its base jammed new units going up against the army coming down. */
-static int base_spot(BYTE *type, BYTE *house, int cx, int cy, int *x, int *y)
+ * the ramp below its base jammed new units going up against the army coming down. The caller records the rectangle
+ * once the building stands. */
+static int base_spot(BYTE *type, BYTE *house, int cx, int cy, Rect *spot)
 {
     int w = ((int (GTHISCALL *)(BYTE *))BTYPE_WIDTH)(type);
     int h = ((int (GTHISCALL *)(BYTE *, char))BTYPE_HEIGHT)(type, 1);
@@ -921,15 +928,11 @@ static int base_spot(BYTE *type, BYTE *house, int cx, int cy, int *x, int *y)
                     && ((char (GTHISCALL *)(BYTE *, CellXY *, BYTE *))BTYPE_CAN_PLACE)(type, &c, house)
                     && (!strict || (abs(dir_height(c) - level) <= 52 && !dir_blocks_passage(type, c)))) {
                     best = d;
-                    *x = c.X;
-                    *y = c.Y;
+                    *spot = (Rect){ c.X, c.Y, w, h };
                 }
             }
-        if (best >= 0) {
-            if (base_count < (int)(sizeof base_rects / sizeof *base_rects))
-                base_rects[base_count++] = (Rect){ *x, *y, w, h };
+        if (best >= 0)
             return 1;
-        }
     }
     return 0;
 }
@@ -1020,26 +1023,59 @@ static void start_bases(void)
         int n = 0;
         for (char *id = strtok(list, ", "); id; id = strtok(NULL, ", ")) {
             BYTE *type = find_type(BUILDINGTYPE_ARRAY, id), *obj = NULL;
-            int x, y;
+            Rect spot;
             if (!type)
                 logmsg("start base: %s: no such building", id);
-            else if (!base_spot(type, house, start.X, start.Y, &x, &y))
+            else if (!base_spot(type, house, start.X, start.Y, &spot))
                 logmsg("start base: %s: no room near %d,%d", id, start.X, start.Y);
-            else
-                logmsg("start base: %s at %d,%d (height %+d): %s", id, x, y,
-                       dir_height((CellXY){ (short)x, (short)y }) - dir_height(start),
-                       (obj = put_object(type, house, x, y, 0)) ? "placed" : "could not be placed");
-            if (obj && n < (int)(sizeof placed / sizeof *placed) && (n || FIELD(obj, B_TYPE, BYTE *)[B_CONSTRUCTIONYARD]))
+            else {
+                obj = put_object(type, house, spot.x, spot.y, 0);
+                logmsg("start base: %s at %d,%d (height %+d): %s", id, spot.x, spot.y,
+                       dir_height((CellXY){ (short)spot.x, (short)spot.y }) - dir_height(start),
+                       obj ? "placed" : "could not be placed");
+            }
+            if (obj && !n && !FIELD(obj, B_TYPE, BYTE *)[B_CONSTRUCTIONYARD]) {
+                /* off the map at once, so the MCVs can have their cells back */
+                logmsg("start base: %s comes first but is no Construction Yard, removed", id);
+                ((void (GTHISCALL *)(BYTE *))VFUNC(obj, VT_UNINIT))(obj);
+                obj = NULL;
+            }
+            if (obj && base_count < (int)(sizeof base_rects / sizeof *base_rects))
+                base_rects[base_count++] = spot;   /* only a building that stands keeps the next ones a cell away */
+            if (obj && n < (int)(sizeof placed / sizeof *placed))
                 placed[n++] = obj;
             if (!n)
                 break;   /* no Construction Yard: no base */
         }
-        for (int k = 0; k < m; k++)   /* UnInit deletes it at the end of the frame; Unlimbo puts it back */
-            if (n)
+        int back = 0;
+        for (int k = 0; k < m; k++) {   /* UnInit deletes it at the end of the frame; Unlimbo puts it back */
+            if (n) {
                 ((void (GTHISCALL *)(BYTE *))VFUNC(mcvs[k], VT_UNINIT))(mcvs[k]);
-            else
-                ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(mcvs[k], VT_UNLIMBO))(mcvs[k], &at[k], 0);
-        logmsg("start base: %d vehicles %s", m, n ? "removed" : "put back, as the Construction Yard found no room");
+                continue;
+            }
+            /* where it stood, else the nearest free cell within 4 */
+            int ok = 0;
+            for (int r = 0; r <= 4 && !ok; r++)
+                for (int dy = -r; dy <= r && !ok; dy++)
+                    for (int dx = -r; dx <= r && !ok; dx++) {
+                        if (abs(dx) != r && abs(dy) != r)
+                            continue;
+                        Coord c = { at[k].X + dx * 256, at[k].Y + dy * 256, at[k].Z };
+                        ok = ((char (GTHISCALL *)(BYTE *, Coord *, int))VFUNC(mcvs[k], VT_UNLIMBO))(mcvs[k], &c, 0);
+                    }
+            if (ok) {
+                back++;
+                continue;
+            }
+            /* left off the map it would still count as the house's, which then never lost */
+            logmsg("start base: the %s at %d,%d could not be put back, removed",
+                   (char *)FIELD(mcvs[k], U_TYPE, BYTE *) + T_ID, at[k].X >> 8, at[k].Y >> 8);
+            ((void (GTHISCALL *)(BYTE *))VFUNC(mcvs[k], VT_UNINIT))(mcvs[k]);
+        }
+        if (n)
+            logmsg("start base: %d vehicles removed", m);
+        else
+            logmsg("start base: %d of %d vehicles put back, as no Construction Yard was placed", back, m);
         if (n && !((char (GTHISCALL *)(BYTE *))HOUSE_IS_HUMAN)(house))
             start_ai_base(house, placed, n);
     }
