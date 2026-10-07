@@ -1808,6 +1808,8 @@ and Isolation, mostly logic, 390 instead of 330.
     own Proton prefix, a reflink copy: Proton waits for a prefix's wineserver to end before it
     starts a game, so copies sharing one would play one after another. Your own files in the game
     dir are never touched.
+  - `--dll PATH` (or `bench.DLL` from a script): the slots run that `yspawn.dll` instead of the
+    installed one, so a build under test never replaces the DLL a game of yours may be using.
   - For `Benchmark=1` the DLL skips WinMain's two named mutexes: the app's ("TibSun is already
     running...Bail!", which ended every copy but the first) and the autoplay one (each later copy
     waited 30 s on it). Your own games keep both.

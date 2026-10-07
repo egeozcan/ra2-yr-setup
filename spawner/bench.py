@@ -9,9 +9,10 @@ usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--s
        bench.py restore          put back the game directory's own yspawn.ini/.log/.map and RA2MD.INI after runs
        bench.py summary DIR...   print one line per match directory
        bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N] [--res WxH|native] [--draw N]
-                         [--jobs N]
+                         [--jobs N] [--dll PATH]
                                  director vs stock Brutal match sets; --jobs N plays N at once, without
-                                 windows, each in its own slot under FARM
+                                 windows, each in its own slot under FARM; --dll: the slots run that
+                                 yspawn.dll instead of the installed one
        bench.py ab DIR...        strategy on against off, per plan and country: wins and mean placement
 
 The idle human uses Human in peace, so it never takes part and never loses. The game directory's
@@ -170,6 +171,9 @@ SLOT_OWN = {"yspawn.ini", "yspawn.log", "yspawn.map", "yspawn-bench.csv", "yspaw
             "yspawn-teams.csv", "except.txt", "RA2MD.INI", "ddraw.ini", "gamemd-spawn.exe", "yspawn.dll"}
 
 
+DLL = None   # --dll: the yspawn.dll slots run instead of the installed one (a build under test)
+
+
 def make_slot(k):
     """Slot k's (game dir, prefix), brought up to date: links for whatever the game dir gained, and
     fresh copies of the exe, the DLL (an install since the last run counts) and the user's settings.
@@ -181,7 +185,8 @@ def make_slot(k):
         if name not in SLOT_OWN and not name.endswith(".tmp") and not os.path.lexists(os.path.join(game, name)):
             os.symlink(os.path.join(spawn.GAME, name), os.path.join(game, name))
     for name in ("gamemd-spawn.exe", "yspawn.dll", "RA2MD.INI", "ddraw.ini"):   # (ddraw.ini synced by play())
-        shutil.copy2(os.path.join(spawn.GAME, name), os.path.join(game, name + ".tmp"))
+        src = DLL if name == "yspawn.dll" and DLL else os.path.join(spawn.GAME, name)
+        shutil.copy2(src, os.path.join(game, name + ".tmp"))
         os.replace(os.path.join(game, name + ".tmp"), os.path.join(game, name))
     unpin(os.path.join(game, "ddraw.ini"))
     if not os.path.isdir(os.path.join(prefix, "pfx")):
@@ -673,6 +678,10 @@ if __name__ == "__main__":
     if "--jobs" in args:   # N games side by side (suites)
         i = args.index("--jobs")
         JOBS = int(args[i + 1])
+        del args[i:i + 2]
+    if "--dll" in args:   # slots run this yspawn.dll, not the installed one
+        i = args.index("--dll")
+        DLL = os.path.abspath(args[i + 1])
         del args[i:i + 2]
     if args[0] == "suite":
         # --frames N and --games N: a short smoke run of a suite's first games
