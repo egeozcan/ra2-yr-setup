@@ -2909,6 +2909,13 @@ static int dir_object_listed(DynVec *v, BYTE *obj)
     return 0;
 }
 
+/* A unit kept for a job is still there and still ours: a mind-controlled engineer would keep its
+ * job, capture the target for Yuri and be walked home to our base. */
+static int dir_own_unit(BYTE *house, BYTE *o)
+{
+    return o && dir_object_listed(OIL_TECHNO_ARRAY, o) && oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house;
+}
+
 /* Engineer jobs, one at a time: repair the nearest broken bridge within reach, otherwise capture an
  * enemy tech building (oil derrick first) near our army or base once no armed enemy guards it. */
 struct dir_dead_hut { BYTE *hut; int tries; };
@@ -3151,11 +3158,10 @@ static void dir_engineers(BYTE *house, DirState *d)
     /* An engineer gone (inside the hut, or dead) while its bridge still reads down: some map bridges
      * (the barrier-gated ones) read "destroyed" for good and can't be mended. Two such tries and the
      * hut is left alone for the rest of the match. */
-    if (d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))
+    if (dir_own_unit(house, d->repair_engineer))
         d->repair_eng_at = object_cell(d->repair_engineer);
     /* gone on the way (killed): no evidence against the bridge, just send another */
-    if (job && alive && !done && d->repair_mode == 0 && d->repair_engineer
-        && !(dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))
+    if (job && alive && !done && d->repair_mode == 0 && d->repair_engineer && !dir_own_unit(house, d->repair_engineer)
         && dir_dist2(d->repair_eng_at, object_cell(job)) > 3 * 3) {
         logmsg("director: house %d frame %d: the engineer for the hut at %d,%d was lost on the way at %d,%d",
                FIELD(house, 0x30, int), CURRENT_FRAME, object_cell(job).X, object_cell(job).Y, d->repair_eng_at.X,
@@ -3164,8 +3170,7 @@ static void dir_engineers(BYTE *house, DirState *d)
         d->repair_hut = NULL;
         job = NULL;
     }
-    if (job && alive && !done && d->repair_mode == 0 && d->repair_engineer
-        && !(dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))) {
+    if (job && alive && !done && d->repair_mode == 0 && d->repair_engineer && !dir_own_unit(house, d->repair_engineer)) {
         int k = 0;
         while (k < dir_dead_hut_count && dir_dead_huts[k].hut != job)
             k++;
@@ -3181,8 +3186,7 @@ static void dir_engineers(BYTE *house, DirState *d)
     }
     /* a capturing engineer killed on the way: the target counts one failure (it is guarded, or
      * the way there is), and the next engineer goes at once rather than when the job times out */
-    if (job && alive && !done && d->repair_mode == 1 && d->repair_engineer
-        && !(dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer) && oil_live(d->repair_engineer))) {
+    if (job && alive && !done && d->repair_mode == 1 && d->repair_engineer && !dir_own_unit(house, d->repair_engineer)) {
         int *f = dir_job_fail_slot(house, job, 1);
         ++*f;
         logmsg("director: house %d frame %d: the engineer for the %.24s at %d,%d was killed at %d,%d, %d cells off (%d)%s",
@@ -3193,8 +3197,7 @@ static void dir_engineers(BYTE *house, DirState *d)
         job = NULL;
     }
     if (job && (done || CURRENT_FRAME - d->repair_frame > d->repair_timeout)) {
-        if (!done && d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer)
-            && oil_live(d->repair_engineer)) {
+        if (!done && dir_own_unit(house, d->repair_engineer)) {
             CellXY ec = object_cell(d->repair_engineer);
             logmsg("director: house %d frame %d: engineer still at %d,%d, %d cells off, mission %d", FIELD(house, 0x30, int),
                    CURRENT_FRAME, ec.X, ec.Y, dir_isqrt(dir_dist2(ec, object_cell(job))),
@@ -3214,16 +3217,14 @@ static void dir_engineers(BYTE *house, DirState *d)
         /* an engineer still walking to a hut whose bridge is already whole (mended by someone else,
          * or the job timed out) is called home instead of entering it for nothing */
         BYTE *eng = d->repair_engineer;
-        if (eng && dir_object_listed(OIL_TECHNO_ARRAY, eng) && oil_live(eng)
-            && FIELD(eng, COMBAT_MISSION, int) != MISSION_CAPTURE) {
+        if (dir_own_unit(house, eng) && FIELD(eng, COMBAT_MISSION, int) != MISSION_CAPTURE) {
             dir_why = "engineer home";
             dir_command(eng, d->base, NULL, 0);
         }
         d->repair_hut = d->repair_engineer = NULL;
     }
     d->want_engineer = 0;
-    if (d->repair_hut && d->repair_engineer && dir_object_listed(OIL_TECHNO_ARRAY, d->repair_engineer)
-        && oil_live(d->repair_engineer)) {
+    if (d->repair_hut && dir_own_unit(house, d->repair_engineer)) {
         /* its order taken off it on the way (30 of 35 timed-out engineers stood on Area Guard): again */
         BYTE *eng = d->repair_engineer;
         int want = d->repair_mode ? MISSION_CAPTURE : MISSION_ENTER, m = FIELD(eng, COMBAT_MISSION, int);
@@ -5989,9 +5990,9 @@ static void dir_colonize(BYTE *house, DirState *d)
         return;
     }
     BYTE *t = d->col_ferry, *e = d->col_eng;
-    if (t && (!dir_object_listed(tv, t) || !oil_live(t)))
+    if (t && !dir_own_unit(house, t))
         t = d->col_ferry = NULL;
-    if (e && d->col_state < 3 && (!dir_object_listed(tv, e) || !oil_live(e)) && !(t && FIELD(t, T_PASSENGERS, int)))
+    if (e && d->col_state < 3 && !dir_own_unit(house, e) && !(t && FIELD(t, T_PASSENGERS, int)))
         e = d->col_eng = NULL;
     CellXY target = object_cell(d->col_target);
     if (d->col_state == 1) {   /* an engineer and a transport, the engineer aboard */
@@ -6089,7 +6090,7 @@ static void dir_colonize(BYTE *house, DirState *d)
                 dir_order(t, MISSION_UNLOAD, NULL, NULL);
             return;
         }
-        if (e && dir_object_listed(tv, e) && oil_live(e)) {
+        if (dir_own_unit(house, e)) {
             dir_order(e, MISSION_CAPTURE, d->col_target, NULL);
             if (t)
                 dir_order(t, MISSION_MOVE, NULL, dir_cell(d->rally));
