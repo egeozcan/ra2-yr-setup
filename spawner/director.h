@@ -6091,11 +6091,14 @@ static void dir_colonize(BYTE *house, DirState *d)
         d->col_return = rt = NULL;
     }
     if (rt) {
-        if (dir_dist2(object_cell(rt), d->dock) <= 5 * 5) {
+        /* the dock, or the rally where no convoy ever set one (on a land map it stayed 0,0: never
+         * arrived, never unloaded) */
+        CellXY home = d->dock.X ? d->dock : d->rally;
+        if (dir_dist2(object_cell(rt), home) <= 5 * 5) {
             if (!dir_recent_order(rt, (BYTE *)3, 300))
                 dir_order(rt, MISSION_UNLOAD, NULL, NULL);
-        } else if (!dir_recent_order(rt, dir_cell(d->dock), 450))
-            dir_order(rt, MISSION_MOVE, NULL, dir_cell(d->dock));
+        } else if (!dir_recent_order(rt, dir_cell(home), 450))
+            dir_order(rt, MISSION_MOVE, NULL, dir_cell(home));
     }
     BYTE *towner = d->col_target && dir_object_listed(bv, d->col_target) ? FIELD(d->col_target, O_OWNER, BYTE *) : NULL;
     if (d->col_state && (CURRENT_FRAME - d->col_frame > 3000 || !d->col_target
@@ -6293,6 +6296,7 @@ static void dir_colonize(BYTE *house, DirState *d)
         logmsg("director: house %d frame %d: island %.24s at %d,%d taken", FIELD(house, 0x30, int), CURRENT_FRAME,
                (char *)FIELD(d->col_target, B_TYPE, BYTE *) + T_ID, target.X, target.Y);
         d->col_state = 0;
+        d->col_ferry = d->col_eng = NULL;   /* the transport joins the convoys again */
         d->next_outpost = 0;   /* fortify it next */
     }
 }
