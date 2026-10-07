@@ -39,6 +39,7 @@
 #define UT_HARVESTER 0xE0E         /* UnitTypeClass::Harvester (read at 0x7476A6) */
 #define TT_NAVAL 0xCCE             /* TechnoTypeClass::Naval (after Repairable 0xCCC, Crewed 0xCCD) */
 #define VT_SELL 0x1A0              /* ObjectClass::Sell(control): 1 queues the Selling mission */
+#define VT_GETHEIGHT 0x1C8         /* ObjectClass::GetHeight (0x5F5F40): Z above the floor, less the deck when OnBridge */
 #define T_CAPTURE_MANAGER 0x2BC    /* TechnoClass::CaptureManager: set on mind-controllers */
 #define T_MIND_CONTROLLED_BY 0x2C0 /* TechnoClass::MindControlledBy */
 #define T_BUNKER_LINK 0x2E4        /* TechnoClass::BunkerLinkedItem: unit <-> the tank bunker holding it */
@@ -1035,9 +1036,9 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
             d->enemy_minds += in_list(DIR_MIND_CONTROLLERS, (char *)type + T_ID);
             d->enemy_psytowers += what == 6 && !_stricmp((char *)type + T_ID, "YAPSYT");
         }
-        Coord c = FIELD(o, O_LOCATION, Coord);
-        int floor = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
-        e->air = what == 2 || c.Z > floor + 128;
+        /* the engine's height above ground: Location.Z less the floor counts a high bridge's deck
+         * (416), and tanks on a bridge read as aircraft */
+        e->air = what == 2 || ((int (GTHISCALL *)(BYTE *))VFUNC(o, VT_GETHEIGHT))(o) > 128;
         if (!e->armed)
             continue;
         BYTE *owner = FIELD(o, O_OWNER, BYTE *);

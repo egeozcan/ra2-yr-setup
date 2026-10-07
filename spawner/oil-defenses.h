@@ -100,10 +100,10 @@ static void oil_threats(BYTE *house, CellXY at, int *ground, int *air)
         BYTE *weapon = ((BYTE *(GTHISCALL *)(BYTE *, int))VFUNC(obj, VT_GETWEAPON))(obj, 0);
         if (!weapon || !FIELD(weapon, 0, BYTE *))
             continue;  /* unarmed engineers, transports and miners */
-        Coord c = FIELD(obj, O_LOCATION, Coord);
-        int floor = ((int (GTHISCALL *)(void *, Coord *))MAP_FLOOR_HEIGHT)(MAP_INSTANCE, &c);
-        int flying = c.Z > floor + 128
-            || ((int (GTHISCALL *)(BYTE *))VFUNC(obj, VT_WHATAMI))(obj) == 2;
+        /* ObjectClass::GetHeight (vtable 0x1C8): Location.Z less the floor read a unit on a high
+         * bridge's deck (416 up) as flying */
+        int flying = ((int (GTHISCALL *)(BYTE *))VFUNC(obj, VT_WHATAMI))(obj) == 2
+            || ((int (GTHISCALL *)(BYTE *))VFUNC(obj, 0x1C8))(obj) > 128;
         if (flying)
             (*air)++;
         else
