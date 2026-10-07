@@ -470,11 +470,13 @@ def suite_list(outdir, matches, frames=60000):
     return lines
 
 
-def suite(outdir, filt=None, frames=60000):
+def suite(outdir, filt=None, frames=60000, games=None):
     lines = []
     for i, (m, human, dc, bc, ds, bs) in enumerate(SUITE):
         if filt and filt not in m:
             continue
+        if games is not None and len(lines) >= games:
+            break
         # director is AI1 in even runs, AI2 in odd ones, so slot order doesn't favour it
         ais = [(dc, ds, 1, 0), (bc, bs, 0, 0)]
         if i % 2:
@@ -505,7 +507,7 @@ if __name__ == "__main__":
         if SUITES.get(name):
             suite_list(args[1], SUITES[name][:games], frames)
         else:
-            suite(args[1], None if name == "tune" else name)
+            suite(args[1], None if name == "tune" else name, frames, games)
         raise SystemExit
     if args[0] == "ab":
         print(strategy_ab(args[1:]))
