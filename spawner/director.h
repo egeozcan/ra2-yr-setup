@@ -5340,6 +5340,7 @@ static void dir_man_fortresses(BYTE *house, DirState *d)
             d->garrison_frame[g] = CURRENT_FRAME;
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(best, VT_QUEUEMISSION))(best, MISSION_ENTER, 0);
             ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(best, COMBAT_SET_DESTINATION))(best, f, 1);
+            dir_reserve(best, 600);   /* the Enter takes over later: meanwhile no convoy calls it away */
             sent++;
             static int last_log;
             if (CURRENT_FRAME - last_log > 600) {
@@ -5753,6 +5754,9 @@ static void dir_garrison(BYTE *house, DirState *d)
         d->garrison_site[g] = b;
         d->garrison_frame[g] = CURRENT_FRAME;
         dir_order(best, MISSION_CAPTURE, NULL, b);   /* garrisoning is Capture (see above) */
+        /* the Capture takes over later: until then the next pass could send the same soldier to
+         * another building, and this one stay locked with nobody going */
+        dir_reserve(best, 900);
         logmsg("director: house %d frame %d: %.24s garrisons the %.24s at %d,%d (%d held)", FIELD(house, 0x30, int),
                CURRENT_FRAME, (char *)dir_type(best) + T_ID, (char *)type + T_ID, at.X, at.Y, held);
     }
