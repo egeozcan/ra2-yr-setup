@@ -196,6 +196,7 @@ static int ini_team(const char *sec)
 
 static void start_bases(void);
 static void spawn_units(void);
+static void arena_clear(void);
 
 static char GFASTCALL spawn_start(char unused)
 {
@@ -342,6 +343,7 @@ static char GFASTCALL spawn_start(char unused)
     logmsg("StartScenario returned %d", ok);
     if (ok) {
         start_bases();
+        arena_clear();
         spawn_units();
     }
     return ok;
@@ -734,7 +736,8 @@ static void patch_magnetron(void)
 
 /* ---- test units ----
  * Optional [Units] section in yspawn.ini, read once the scenario is loaded: n=TYPE,COUNTRY,X,Y,FACING,MISSION puts a
- * vehicle or a building (a UnitTypeClass or BuildingTypeClass ID such as ATTNK or GAWEAP) on map cell X,Y for the
+ * vehicle, an infantryman, an aircraft or a building (a UnitTypeClass, InfantryTypeClass, AircraftTypeClass or
+ * BuildingTypeClass ID such as ATTNK, E1 or GAWEAP) on map cell X,Y for the
  * house playing COUNTRY (a HouseTypeClass ID such as Americans). FACING is 0-255 (0 north, 64 east); MISSION is Sleep
  * (never fires), Guard, Area_Guard, Hunt or a number, and is ignored for buildings. A building goes on the nearest
  * cell to X,Y (its top-left corner) where the game's own placement check lets it stand. For screenshots and tests: vehicles in the map's own [Units] did not show up for the player. Vtable slots follow the YRpp
@@ -835,6 +838,8 @@ static void spawn_units(void)
         BYTE *type = find_type(UNITTYPE_ARRAY, type_id), *house = find_house(country);
         if (!type)
             type = find_type((DynVec *)0xA8B218, type_id);   /* AircraftTypeClass::Array (Kirovs etc.) */
+        if (!type)
+            type = find_type((DynVec *)0xA8E348, type_id);   /* InfantryTypeClass::Array */
         int building = !type && (type = find_type(BUILDINGTYPE_ARRAY, type_id));
         if (!type || !house) {
             logmsg("units: %s: no %s", line, type ? "house" : "vehicle or building type");
@@ -845,6 +850,14 @@ static void spawn_units(void)
             continue;
         }
         BYTE *obj = put_object(type, house, x, y, facing);
+        /* a unit whose cell is taken (a tree, a rock, another unit) goes on the nearest free one, up to 3 cells away */
+        for (int r = 1; !obj && !building && r <= 3; r++)
+            for (int dy = -r; !obj && dy <= r; dy++)
+                for (int dx = -r; !obj && dx <= r; dx++)
+                    if ((dx == -r || dx == r || dy == -r || dy == r) && (obj = put_object(type, house, x + dx, y + dy, facing))) {
+                        x += dx;
+                        y += dy;
+                    }
         if (obj && !building)
             ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(obj, VT_QUEUEMISSION))(obj, mission_number(mission), 0);
         logmsg("units: %s %s at %d,%d facing %d %s: %s", type_id, country, x, y, facing, mission,
@@ -992,6 +1005,27 @@ static void start_ai_base(BYTE *house, BYTE **placed, int n)
     }
     logmsg("start base: computer player started at %d,%d; %d base plan nodes, %d of %d buildings marked on it",
            cell.X, cell.Y, count, marked, n - 1);
+}
+
+/* [Settings] Arena=1 (bench only, for unit duels): the computer players' starting vehicles (their MCVs) are taken
+ * off the map before [Units] goes down, so each one has only its [Units] and no base: with no Construction Yard it
+ * never builds, and its AI triggers and base building stay off. Play it with ShortGame=0, so a house without
+ * buildings lasts until its last unit dies. */
+static void arena_clear(void)
+{
+    if (!ini_int("Settings", "Arena", 0))
+        return;
+    DynVec *uv = UNIT_ARRAY;
+    BYTE *gone[32];
+    int n = 0;
+    for (int k = 0; k < uv->Count && n < 32; k++) {
+        BYTE *unit = uv->Items[k], *owner = FIELD(unit, O_OWNER, BYTE *);
+        if (owner && !owner[H_ISHUMAN])
+            gone[n++] = unit;
+    }
+    for (int k = 0; k < n; k++)   /* collected first: UnInit may take it out of the list */
+        ((void (GTHISCALL *)(BYTE *))VFUNC(gone[k], VT_UNINIT))(gone[k]);
+    logmsg("arena: %d computer player vehicles removed", n);
 }
 
 static void start_bases(void)
