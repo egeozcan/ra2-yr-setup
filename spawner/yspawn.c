@@ -173,6 +173,7 @@ static void ini_str(const char *sec, const char *key, const char *def, char *out
 /* ---- the replacement for the main menu ---- */
 static int started;
 static int human_in_peace, peace_ready;
+static int oil_hooked, bench_unhooked;   /* the per-house AI hook (oil-defenses.h); Benchmark=1 without it */
 
 /* Start positions and teams go where the skirmish menu puts them; the game's own code then uses them:
  * ScenarioClass::AssignHouses (0x687F10) copies them into each house (HouseClass +0x16058 start,
@@ -207,6 +208,11 @@ static char GFASTCALL spawn_start(char unused)
         logmsg("human in peace: required hooks unavailable; refusing to start");
         MessageBoxA(NULL, "Human in peace could not be enabled for this game executable. See yspawn.log.",
                     "Skirmish Setup", MB_OK | MB_ICONERROR);
+        return 0;
+    }
+    /* No message box: nobody is there to close it, and the game would run on until bench.py's timeout. */
+    if (bench_unhooked) {
+        logmsg("benchmark: AI production hook not installed, so no rows, result or exit would come; refusing to start");
         return 0;
     }
 
@@ -1081,10 +1087,10 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved)
      * allied against you. Returning at once makes "no team" mean everyone for themselves. */
     patch(AI_GANG_UP, (const BYTE[]){ 0xC3 }, 1);
     patch_magnetron();
-    patch_oil_defenses();
+    oil_hooked = patch_oil_defenses();
     patch_director();
     team_telemetry_init();
-    bench_init();
+    bench_init();   /* after the oil hook: a benchmark needs it */
     human_in_peace = ini_int("Settings", "HumanInPeace", 0) != 0;
     if (human_in_peace)
         peace_ready = patch_human_peace();

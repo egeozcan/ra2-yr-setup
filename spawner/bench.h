@@ -62,6 +62,13 @@ static void bench_init(void)
         logmsg("benchmark: could not open yspawn-bench.csv");
         return;
     }
+    if (!oil_hooked) {   /* bench_sample, the result row and the exit run only from the oil hook */
+        fclose(bench_file);   /* left empty, before the header: bench.py reads it as a match that never started */
+        bench_file = NULL;
+        bench_unhooked = 1;   /* spawn_start refuses the match */
+        logmsg("benchmark: AI production hook not installed; the match will be refused");
+        return;
+    }
     fputs("frame,ms,house,country,human,director,defeated,units,infantry,aircraft,navy,buildings,cash,"
           "harvesters,refineries,killed_units,killed_buildings,cost_infantry,cost_vehicles,cost_aircraft,power,drain,"
           "war_factories,building_order,unit_order,infantry_order,state,army_value,flags,plan,posture,plan_now\n",

@@ -298,17 +298,22 @@ static CellXY *GFASTCALL oil_find_location(BYTE *house, void *unused, CellXY *ou
     return r;
 }
 
-static void patch_oil_defenses(void)
+/* Nonzero once installed. The director, benchmark rows and exit, RevealMap and team telemetry all run from
+ * oil_build_update: without it they are off. */
+static int patch_oil_defenses(void)
 {
     const BYTE build[] = { 0x83, 0xEC, 0x30, 0x53, 0x55, 0x8B, 0xE9 };
     const BYTE place[] = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8 };
     if (!patch_checked("oil building production", OIL_BUILD_UPDATE, build, sizeof build)
-        || !patch_checked("oil building placement", OIL_FIND_BUILD_LOCATION, place, sizeof place))
-        return;
+        || !patch_checked("oil building placement", OIL_FIND_BUILD_LOCATION, place, sizeof place)) {
+        logmsg("oil defense: not patched; the director, benchmark, RevealMap and team telemetry are off");
+        return 0;
+    }
     BYTE *tramp = VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!tramp) {
-        logmsg("oil defense: could not allocate trampolines, not patched");
-        return;
+        logmsg("oil defense: could not allocate trampolines, not patched; the director, benchmark, RevealMap and "
+               "team telemetry are off");
+        return 0;
     }
     memcpy(tramp, build, sizeof build);
     patch_rel((DWORD)tramp + sizeof build, 0xE9, OIL_BUILD_UPDATE + sizeof build);
@@ -321,4 +326,5 @@ static void patch_oil_defenses(void)
     patch(OIL_FIND_BUILD_LOCATION, (const BYTE[]){ 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, sizeof place);
     patch_rel(OIL_FIND_BUILD_LOCATION, 0xE9, (DWORD)oil_find_location);
     logmsg("oil defense: production and placement patches applied (Brutal skirmish only)");
+    return 1;
 }
