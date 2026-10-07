@@ -4414,6 +4414,8 @@ static void dir_ferry(BYTE *house, DirState *d)
     int together = ready == docked && (!coming || waited >= 900) && (!called || waited >= 1800);
     if (!ready || (waited < 3000 && !together && !(!called && waited > 300)))
         return;
+    if (!d->enemy)
+        return;   /* no enemy left (island and blocked lag behind it): nowhere to land */
     CellXY out = dir_landing_spot(d, dir_house_center(d->enemy));
     if (out.X <= 0)
         out = d->landing;   /* crowded now: the last landing spot */
