@@ -28,6 +28,14 @@ def running():
     return subprocess.run(["pgrep", "-x", "gamemd.exe|gamemd-spawn.ex"], capture_output=True).returncode == 0
 
 
+def atomic_write(path, mode, data, **kw):
+    """Write a file the game reads through a temporary file and a rename, so a failure part way
+    leaves the old file whole instead of a truncated one."""
+    with open(path + ".tmp", mode, **kw) as f:
+        f.write(data)
+    os.replace(path + ".tmp", path)
+
+
 def sync_ddraw_ini():
     """cnc-ddraw picks its per-game section by exe name. Its stock [gamemd-spawn] section (meant for CnCNet)
     lacks windowed=false, so give it the same settings as the tested [gamemd] section."""
@@ -46,7 +54,7 @@ def sync_ddraw_ini():
     s, e = body("gamemd-spawn")
     if lines[s + 1:e] != settings:
         lines[s + 1:e] = settings
-        open(path, "w", newline="", encoding="latin-1").write("\r\n".join(lines))
+        atomic_write(path, "w", "\r\n".join(lines), newline="", encoding="latin-1")
         print("ddraw.ini: [gamemd-spawn] now matches [gamemd]")
 
 
@@ -162,13 +170,15 @@ def prepare(ini):
     settings = ini["Settings"]
     archive = settings.pop("Map")
     info = map_info(archive)
-    open(os.path.join(GAME, "yspawn.map"), "wb").write(mixextract.extract(info["data"], info["map"].lower() + ".map"))
+    # extract before touching yspawn.map: a packet can name a map its archive lacks (KeyError)
+    scenario = mixextract.extract(info["data"], info["map"].lower() + ".map")
+    atomic_write(os.path.join(GAME, "yspawn.map"), "wb", scenario)
     settings["Scenario"] = "yspawn.map"
     # write a comment-free copy with CRLF line endings for GetPrivateProfile*
     lines = []
     for sec in ini.sections():
         lines += [f"[{sec}]"] + [f"{k}={v}" for k, v in ini[sec].items()] + [""]
-    open(os.path.join(GAME, "yspawn.ini"), "w", newline="\r\n").write("\n".join(lines))
+    atomic_write(os.path.join(GAME, "yspawn.ini"), "w", "\n".join(lines), newline="\r\n")
     return archive
 
 
