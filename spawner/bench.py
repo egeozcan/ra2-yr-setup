@@ -31,6 +31,23 @@ def restore():
     shutil.rmtree(BACKUP)
 
 
+def bench_rows(path):
+    """(header, house rows, result row or None) of a yspawn-bench.csv, or None when it holds no
+    house row: the game never reached its first sample (it hung or crashed while loading, or the
+    DLL refused the match). The header is buffered until that first sample, so the file is empty."""
+    try:
+        with open(path, newline="") as f:
+            rows = [r for r in csv.reader(f) if r]
+    except FileNotFoundError:
+        return None
+    if len(rows) < 2:
+        return None
+    header, body = rows[0], rows[1:]
+    result = next((r for r in body if r[0] == "result"), None)
+    houses = [r for r in body if r[0] != "result"]
+    return (header, houses, result) if houses else None
+
+
 def write_ini(map_file, ais, human_start, frames, speed, seed, extra=None):
     ini = configparser.ConfigParser(interpolation=None)
     ini.optionxform = str
@@ -94,11 +111,14 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         while not spawn.running() and time.time() - began < 60:
             time.sleep(1)
         crash = os.path.join(spawn.GAME, "except.txt")
+        sampled = False
         while spawn.running() and time.time() - began < timeout:
             time.sleep(2)
             # a crash leaves the game hung on its error report: note it and move on
-            # hung while loading: no benchmark row two minutes after the launch
-            if time.time() - began > 120 and not os.path.exists(result):
+            # hung while loading: no benchmark row two minutes after the launch. The DLL creates
+            # the CSV when it loads, but it stays empty until the first sample.
+            sampled = sampled or bench_rows(result) is not None
+            if time.time() - began > 120 and not sampled:
                 print(f"{outdir}: no game frames after 120 s, stopping", flush=True)
                 break
             if os.path.exists(crash) and os.path.getmtime(crash) >= began - 1:
@@ -112,6 +132,9 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
             p = os.path.join(spawn.GAME, f)
             if os.path.exists(p) and os.path.getmtime(p) >= began - 1:
                 shutil.move(p, os.path.join(outdir, f)) if f != "yspawn.log" else shutil.copy2(p, outdir)
+        played = os.path.join(outdir, "yspawn-bench.csv")
+        if os.path.exists(played) and not bench_rows(played):
+            os.remove(played)   # never started: a rerun of the suite plays it again
         with open(os.path.join(outdir, "wall.txt"), "w") as f:
             f.write(f"{time.time() - began:.0f}\n")
     finally:
@@ -125,16 +148,11 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
 def outcome(outdir):
     """'win' / 'loss' / 'draw' for the director house, or None. Timeouts go to the side with more
     buildings plus army value, and count as a draw within 20%."""
-    path = os.path.join(outdir, "yspawn-bench.csv")
-    if not os.path.exists(path):
+    rows = bench_rows(os.path.join(outdir, "yspawn-bench.csv"))
+    if not rows:
         return None
-    rows = list(csv.reader(open(path)))
-    header, body = rows[0], rows[1:]
-    result = next((r for r in body if r[0] == "result"), None)
-    last = {}
-    for r in body:
-        if r[0] != "result":
-            last[r[2]] = dict(zip(header, r))
+    header, houses, result = rows
+    last = {r[2]: dict(zip(header, r)) for r in houses}
     director = [h for h, d in last.items() if d["director"] == "1" and d["human"] == "0"]
     if not result or not director:
         return None
@@ -151,20 +169,16 @@ def outcome(outdir):
 
 def faction_result(outdir):
     """(countries in the match, winner country or 'draw') scored like outcome(), per country."""
-    path = os.path.join(outdir, "yspawn-bench.csv")
-    if not os.path.exists(path):
+    rows = bench_rows(os.path.join(outdir, "yspawn-bench.csv"))
+    if not rows:
         return None
-    rows = list(csv.reader(open(path)))
-    header, body = rows[0], rows[1:]
-    result = next((r for r in body if r[0] == "result"), None)
-    last = {}
-    for r in body:
-        if r[0] != "result":
-            last[r[2]] = dict(zip(header, r))
+    header, houses, result = rows
+    last = {r[2]: dict(zip(header, r)) for r in houses}
     ais = {h: d for h, d in last.items() if d["human"] == "0"}
     countries = sorted(d["country"] for d in ais.values())
     if result and result[2] == "win":
-        return countries, ais[result[3]]["country"]
+        # house -1: no AI survived (the last ones fell in the same sample interval)
+        return countries, ais[result[3]]["country"] if result[3] in ais else "draw"
     score = {h: int(d["buildings"]) * 1000 + int(d["cost_infantry"]) + int(d["cost_vehicles"])
              + int(d["cost_aircraft"]) for h, d in ais.items()}
     ranked = sorted(score, key=score.get, reverse=True)
@@ -176,15 +190,12 @@ def faction_result(outdir):
 def placements(outdir):
     """[(house row, placement 0..1)] for one match: 0 is the winner, 1 the first one out.
     Eliminated houses rank by when they fell; survivors by buildings*1000 plus army value."""
-    path = os.path.join(outdir, "yspawn-bench.csv")
-    if not os.path.exists(path):
+    rows = bench_rows(os.path.join(outdir, "yspawn-bench.csv"))
+    if not rows:
         return []
-    rows = list(csv.reader(open(path)))
-    header, body = rows[0], rows[1:]
+    header, houses, _ = rows
     last, fell = {}, {}
-    for r in body:
-        if r[0] == "result":
-            continue
+    for r in houses:
         d = dict(zip(header, r))
         if d["human"] == "1":
             continue
@@ -271,16 +282,11 @@ def tally(dirs):
 
 
 def summary(outdir):
-    path = os.path.join(outdir, "yspawn-bench.csv")
-    if not os.path.exists(path):
+    rows = bench_rows(os.path.join(outdir, "yspawn-bench.csv"))
+    if not rows:   # suite_list counts these as games that never started
         return f"{outdir}: no result"
-    rows = list(csv.reader(open(path)))
-    header, body = rows[0], rows[1:]
-    result = next((r for r in body if r[0] == "result"), None)
-    last = {}
-    for r in body:
-        if r[0] != "result":
-            last[r[2]] = dict(zip(header, r))
+    header, houses, result = rows
+    last = {r[2]: dict(zip(header, r)) for r in houses}
     parts = []
     for h in sorted(last, key=int):
         d = last[h]
@@ -290,7 +296,7 @@ def summary(outdir):
         parts.append(f"h{h}:{d['country']}{'*' if d['director'] == '1' else ''}"
                      f"{' DEAD' if d['defeated'] == '1' else ''} b{d['buildings']} army${value}"
                      f" k{d['killed_units']}/{d['killed_buildings']}")
-    frame = result[1] if result else body[-1][0]
+    frame = result[1] if result else houses[-1][0]
     outcome = f"{result[2]} h{result[3]}" if result else "unfinished"
     ms = last and max(int(d["ms"]) for d in last.values())
     return f"{os.path.basename(outdir)}: {outcome} @{frame} ({ms / 1000:.0f}s)  " + "  ".join(parts)
@@ -408,7 +414,7 @@ def suite_list(outdir, matches, frames=60000):
     failed = 0   # games that never started in a row: the launch is broken (no monitor, ...), stop
     for i, (m, human, ais, extra) in enumerate(matches):
         out = os.path.join(outdir, f"{i:02d}-{os.path.splitext(os.path.basename(m))[0].replace(' ', '_')}")
-        if os.path.exists(os.path.join(out, "yspawn-bench.csv")):   # resumable: played already
+        if bench_rows(os.path.join(out, "yspawn-bench.csv")):   # resumable: played already
             continue
         line = run(out, m, ais, human, frames, extra=dict(extra) if extra else None)
         print(line, flush=True)

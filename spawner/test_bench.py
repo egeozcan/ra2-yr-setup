@@ -1,0 +1,62 @@
+"""bench.py bookkeeping without launching the game: result CSVs, the backup of the user's launcher
+files, the yspawn.ini it writes, and its DirectorFlags masks."""
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import bench
+import startbase
+
+HERE = Path(__file__).resolve().parent
+HEADER = ("frame,ms,house,country,human,director,defeated,buildings,cost_infantry,cost_vehicles,"
+          "cost_aircraft,killed_units,killed_buildings,flags,plan")
+
+
+def row(frame, house, country, human=0, director=0, defeated=0, buildings=10, army=1000):
+    return (f"{frame},{frame * 10},{house},{country},{human},{director},{defeated},{buildings},"
+            f"{army},0,0,0,0,98239,0")
+
+
+class ResultTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.dir = Path(self.temp.name)
+
+    def write(self, *lines, name="yspawn-bench.csv", where=None):
+        path = (where or self.dir) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(line + "\n" for line in lines))
+        return path
+
+    def test_games_that_never_sampled_are_no_result(self):
+        # 0 bytes: the DLL opened the CSV but never flushed its header (hung, crashed or refused)
+        for lines in ((), (HEADER,), (HEADER, "result,0,error,-1")):
+            self.write(*lines)
+            self.assertIsNone(bench.bench_rows(str(self.dir / "yspawn-bench.csv")))
+            self.assertTrue(bench.summary(str(self.dir)).endswith("no result"))
+            self.assertIsNone(bench.outcome(str(self.dir)))
+            self.assertIsNone(bench.faction_result(str(self.dir)))
+            self.assertEqual(bench.placements(str(self.dir)), [])
+
+    def test_no_survivor_is_a_draw(self):
+        self.write(HEADER, row(300, 0, "Americans", director=1), row(300, 1, "Russians"),
+                   row(300, 2, "Allied", human=1), row(600, 0, "Americans", director=1, defeated=1),
+                   row(600, 1, "Russians", defeated=1), "result,600,win,-1")
+        self.assertEqual(bench.faction_result(str(self.dir)), (["Americans", "Russians"], "draw"))
+        self.assertIn("win h-1 @600", bench.summary(str(self.dir)))
+
+    def test_suite_replays_games_that_never_started(self):
+        matches = [("A.mmx", 3, [(0, 0, 1, 0), (8, 1, 0, 0)], None),
+                   ("B.mmx", 3, [(0, 0, 1, 0), (8, 1, 0, 0)], None)]
+        self.write(where=self.dir / "00-A")
+        self.write(HEADER, row(300, 0, "Americans"), where=self.dir / "01-B")
+        with patch.object(bench, "run", return_value="played") as run, patch("builtins.print"):
+            bench.suite_list(str(self.dir), matches)
+        self.assertEqual([c.args[0] for c in run.call_args_list], [str(self.dir / "00-A")])
+
+
+if __name__ == "__main__":
+    unittest.main()
