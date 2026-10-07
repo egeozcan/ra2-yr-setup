@@ -881,7 +881,7 @@ static int GFASTCALL dir_inf_production(BYTE *house, void *unused)
         if (dd->want_engineer && s1 >= 0 && s1 <= 2) {
             BYTE *et = dir_first_buildable(house, INFANTRYTYPE_ARRAY, eng_types[s1], 500);
             int ei = et ? dir_type_index(INFANTRYTYPE_ARRAY, et) : -1;
-            if (ei >= 0 && dir_owned_of(house, et) < 2) {
+            if (ei >= 0 && dir_owned_of(house, et) < 1 + dd->want_engineer) {   /* two, past any stranded */
                 FIELD(house, H_PRODUCING_INF, int) = ei;
                 return result;
             }
@@ -2919,9 +2919,9 @@ static int dir_own_unit(BYTE *house, BYTE *o)
 /* Engineer jobs, one at a time: repair the nearest broken bridge within reach, otherwise capture an
  * enemy tech building (oil derrick first) near our army or base once no armed enemy guards it. */
 struct dir_dead_hut { BYTE *hut; int tries; };
-/* Engineer targets a house gave up on: two timed-out jobs, or none reachable on foot from where
- * the engineer stood. Retried every 9000 frames, engineers walked to an outpost or a bridge hut and
- * back home all game (3 and 4 tries on Carville). */
+/* Engineer targets a house gave up on: two timed-out jobs, or none reachable on foot from any of
+ * its engineers nor from its base. Retried every 9000 frames, engineers walked to an outpost or a
+ * bridge hut and back home all game (3 and 4 tries on Carville). */
 static struct { BYTE *house, *obj; int fails; } dir_job_fails[64];
 static int dir_job_fail_count;
 
@@ -3311,21 +3311,37 @@ static void dir_engineers(BYTE *house, DirState *d)
     }
     if (!target)
         return;
+    /* An engineer that can walk there, not just the first in the list: that one could stand on an
+     * island or behind a fallen bridge, and every target it couldn't reach was given up for the
+     * match. Not the colonising one either: the two jobs would order it back and forth. */
     BYTE *engineer = NULL;
+    int engineers = 0;
     v = OIL_TECHNO_ARRAY;
     for (int i = 0; i < v->Count && !engineer; i++) {
         BYTE *o = v->Items[i];
-        if (oil_live(o) && FIELD(o, O_OWNER, BYTE *) == house && dir_whatami(o) == 15 && dir_is_engineer(o)
-            && !FIELD(o, F_TEAM, BYTE *))
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || dir_whatami(o) != 15 || !dir_is_engineer(o)
+            || FIELD(o, F_TEAM, BYTE *) || (d->col_state && o == d->col_eng))
+            continue;
+        if (!engineers++)
+            dir_fill_land(object_cell(target));
+        if (dir_land_reachable(object_cell(o)))
             engineer = o;
     }
-    if (!engineer) {
-        d->want_engineer = 1;
+    /* none can walk there, but one from home could: train one, past the cap of two owned when those
+     * are stranded (two on an island would otherwise hold every job back for good) */
+    if (!engineer && (!engineers || dir_land_reachable(d->base))) {
+        static int last_log[32];
+        int idx = FIELD(house, 0x30, int) & 31;
+        if (engineers && CURRENT_FRAME - last_log[idx] > 3000) {
+            last_log[idx] = CURRENT_FRAME;
+            logmsg("director: house %d frame %d: none of %d engineers can walk to %.24s at %d,%d; wants one from home", idx,
+                   CURRENT_FRAME, engineers, (char *)dir_type(target) + T_ID, object_cell(target).X, object_cell(target).Y);
+        }
+        d->want_engineer = 1 + engineers;
         return;
     }
-    /* not a walk that can't arrive (over a broken bridge, across water): given up at once */
-    dir_fill_land(object_cell(engineer));
-    if (!dir_land_reachable(object_cell(target))) {
+    /* not a walk that can't arrive from home either (over a broken bridge, across water): given up at once */
+    if (!engineer) {
         *dir_job_fail_slot(house, target, 1) = 2;
         logmsg("director: house %d frame %d: %.24s at %d,%d can't be reached on foot; given up", FIELD(house, 0x30, int),
                CURRENT_FRAME, (char *)dir_type(target) + T_ID, object_cell(target).X, object_cell(target).Y);
