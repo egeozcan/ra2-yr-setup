@@ -54,6 +54,7 @@ static int dir_height(CellXY c);
 static int dir_blocks_passage(BYTE *type, CellXY tl);
 typedef struct DirState DirState;
 static unsigned dir_next_roll(DirState *d);
+static int dir_land_house(DirState *d, BYTE *h);
 static int dir_ore_blocked(BYTE *house, CellXY c);
 typedef int (GTHISCALL *dir_prod_fn)(BYTE *);
 static const char *dir_mcvs = "AMCV,SMCV,PCV";
@@ -3931,13 +3932,18 @@ static int dir_near_water(CellXY c, int r);
 static int dir_is_land(CellXY c);
 
 /* Where the ferry puts troops ashore: the zone lookup's cell beside the enemy base, unless that
- * is on our own land (zone labels mislead); else the shore cell off our land nearest to it. */
+ * is on our own land (zone labels mislead); else the shore cell off our land nearest to it. That
+ * holds only with the enemy across the water: with the ground route blocked (a fallen bridge) but
+ * the enemy's base on our land, every cell by it is our land, so no landing could be found and
+ * loaded convoys would sit at the dock for good. */
 static CellXY dir_landing_spot(DirState *d, CellXY e)
 {
     CellXY out = { 0, 0 };
     ((nearby_fn)MAP_NEARBY)(MAP_INSTANCE, &out, &e, 1, dir_zone(e), 0, 0, 2, 2, 1, 0, 0, 0, &d->base, 0, 0);
-    dir_fill_land(d->base);
-    if (out.X > 0 && !dir_land_reachable(out))
+    /* the enemy off our land, judged afresh (fills from the base): the island flag lags a fallen
+     * bridge by up to 600 frames, and a convoy could then land on our own shore */
+    int cut = !dir_land_house(d, d->enemy);
+    if (out.X > 0 && (!cut || !dir_land_reachable(out)))
         return out;
     for (int r = 0; r < 40; r++)
         for (int dy = -r; dy <= r; dy++)
@@ -3946,7 +3952,7 @@ static CellXY dir_landing_spot(DirState *d, CellXY e)
                     continue;
                 CellXY c = { (short)(e.X + dx), (short)(e.Y + dy) };
                 BYTE *cell = dir_cell(c);
-                if (!cell || dir_is_land(c))
+                if (!cell || (cut && dir_is_land(c)))
                     continue;
                 int land = FIELD(cell, C_LANDTYPE, int);
                 if (land != 2 && land != 3 && land != 4 && !(FIELD(cell, C_OCCUPATION, DWORD) & 0x80)
@@ -5913,9 +5919,9 @@ static int dir_house_on_land(BYTE *h)
     return 0;
 }
 
-/* Our ground units can walk to the enemy: some building of theirs is on our land. Without a base
+/* Our ground units can walk to house h: some building of theirs is on our land. Without a base
  * of ours on the map yet, or buildings of theirs, there is nothing to tell: assume they can. */
-static int dir_land_house(DirState *d)
+static int dir_land_house(DirState *d, BYTE *h)
 {
     dir_fill_land(d->base);
     if (!dir_is_land(d->base))
@@ -5923,8 +5929,8 @@ static int dir_land_house(DirState *d)
     DynVec *bv = OIL_BUILDING_ARRAY;
     int any = 0;
     for (int i = 0; i < bv->Count && !any; i++)
-        any = oil_live(bv->Items[i]) && FIELD(bv->Items[i], O_OWNER, BYTE *) == d->enemy;
-    return !any || dir_house_on_land(d->enemy);
+        any = oil_live(bv->Items[i]) && FIELD(bv->Items[i], O_OWNER, BYTE *) == h;
+    return !any || dir_house_on_land(h);
 }
 
 /* ---- colonising islands ----
@@ -6536,7 +6542,7 @@ static void dir_update(BYTE *house)
          * building of the enemy stands on it, the enemy is across the water from the start, and
          * the army is planned for that at once instead of after five failed attacks. Another
          * enemy we can walk to is fought first. */
-        int island = d->enemy && (bench_force_island || !dir_land_house(d));
+        int island = d->enemy && (bench_force_island || !dir_land_house(d, d->enemy));
         if (island && !bench_force_island) {
             dir_house_strengths();
             BYTE *alt = NULL;
