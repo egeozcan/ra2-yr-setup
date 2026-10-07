@@ -5828,19 +5828,20 @@ static void dir_bunkers(BYTE *house, DirState *d)
         if (!u)
             continue;
         int live = dir_object_listed(OIL_TECHNO_ARRAY, u) && oil_live(u);
+        int site_ok = dir_object_listed(OIL_BUILDING_ARRAY, d->bunker_site[k]) && oil_live(d->bunker_site[k]);
         if (live && FIELD(u, T_BUNKER_LINK, BYTE *)) {
-            CellXY c = object_cell(d->bunker_site[k]);
+            CellXY c = object_cell(site_ok ? d->bunker_site[k] : u);   /* linked elsewhere after ours fell */
             logmsg("director: house %d frame %d: %.24s is in the tank bunker at %d,%d", FIELD(house, 0x30, int),
                    CURRENT_FRAME, (char *)dir_type(u) + T_ID, c.X, c.Y);
             d->bunker_unit[k] = NULL;
-        } else if (!live || !dir_object_listed(OIL_BUILDING_ARRAY, d->bunker_site[k]) || !oil_live(d->bunker_site[k])
-                   || FIELD(d->bunker_site[k], T_BUNKER_LINK, BYTE *) || CURRENT_FRAME - d->bunker_frame[k] > 900) {
-            if (live) {
-                CellXY c = object_cell(u), bc = object_cell(d->bunker_site[k]);
+        } else if (!live || !site_ok || FIELD(d->bunker_site[k], T_BUNKER_LINK, BYTE *)
+                   || CURRENT_FRAME - d->bunker_frame[k] > 900) {
+            if (live) {   /* the bunker itself only while it stands (destroyed, it is freed memory) */
+                CellXY c = object_cell(u), bc = site_ok ? object_cell(d->bunker_site[k]) : (CellXY){ 0, 0 };
                 logmsg("director: house %d frame %d: %.24s at %d,%d never reached the bunker at %d,%d (mission %d, "
                        "link %p, bunker link %p, dest %p target %p bunker %p)", FIELD(house, 0x30, int), CURRENT_FRAME, (char *)dir_type(u) + T_ID,
                        c.X, c.Y, bc.X, bc.Y, FIELD(u, COMBAT_MISSION, int), FIELD(u, T_BUNKER_LINK, BYTE *),
-                       FIELD(d->bunker_site[k], T_BUNKER_LINK, BYTE *), FIELD(u, COMBAT_DESTINATION, BYTE *),
+                       site_ok ? FIELD(d->bunker_site[k], T_BUNKER_LINK, BYTE *) : NULL, FIELD(u, COMBAT_DESTINATION, BYTE *),
                        FIELD(u, O_TARGET, BYTE *), d->bunker_site[k]);
             }
             if (live && !FIELD(u, T_BUNKER_LINK, BYTE *)) {
