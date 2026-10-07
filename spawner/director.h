@@ -359,20 +359,24 @@ static int dir_is_reserved(BYTE *unit)
     return dir_reserved[k].unit == unit && CURRENT_FRAME < dir_reserved[k].until;
 }
 
-static int dir_poolable(BYTE *obj, int what)
+/* A type the army fights with: not harvesters, builders, infiltrators, heroes or boats. */
+static int dir_army_type(BYTE *obj, int what)
 {
-    if (what != 1 && what != 15)
-        return 0;
-    if (!dir_armed(obj))
-        return 0;
     BYTE *type = dir_type(obj);
     if (!type || in_list("HARV,CMIN,SMIN,SLAV,AMCV,SMCV,PCV,SBDOZR,ENGINEER,SENGINEER,YENGINEER,SPY,"
                          "IVAN,CIVAN,TERROR,SHAD,JUMPJET,CCOMAND,TANY,BORIS,GHOST,YURIPR,"
                          "CARRIER,DEST,SUB,AEGIS,LCRF,DRED,SQD,DLPH,HYD,BSUB,SAPC,YHVR,VIRUS,DTRUCK",
                          (char *)type + T_ID))
         return 0;
-    if (what == 1 && type[UT_HARVESTER])
-        return 0;   /* any other harvester the list doesn't name */
+    return !(what == 1 && type[UT_HARVESTER]);   /* any other harvester the list doesn't name */
+}
+
+static int dir_poolable(BYTE *obj, int what)
+{
+    if (what != 1 && what != 15)
+        return 0;
+    if (!dir_armed(obj) || !dir_army_type(obj, what))
+        return 0;
     if (FIELD(obj, T_BUNKER_LINK, BYTE *) || dir_is_reserved(obj))
         return 0;   /* garrisoning a tank bunker, or on its way to a job */
     int mission = FIELD(obj, COMBAT_MISSION, int);
@@ -1799,7 +1803,10 @@ static void dir_recall_guards(BYTE *house, DirState *d)
         ((char (GTHISCALL *)(BYTE *, BYTE *, int, char))TEAM_LIBERATE)(team, o, -1, 0);
         if (FIELD(o, F_TEAM, BYTE *))
             continue;
-        o[T_RECRUITABLE] = 0;
+        /* types the army never pools (heroes, Rocketeers, Ivans...) stay recruitable: barred from
+         * teams as well, they served nobody for the rest of the game */
+        if (dir_army_type(o, what))
+            o[T_RECRUITABLE] = 0;
         dir_why = "recalled";
         dir_command(o, d->threat_at, NULL, 1);
         n++;

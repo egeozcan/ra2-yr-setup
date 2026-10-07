@@ -1528,7 +1528,8 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
     (the first by frame 1,504).
 - **Guards fall back.** While the base is defended and the raid outvalues the army at home by 1.2×
   (and is worth 3,000+), units of guard, oil and base-defence teams more than 15 cells out leave their
-  teams and join the fight. They then stay team-less and join the army.
+  teams and join the fight. They then stay team-less and join the army; units the army never takes
+  (commandos, Yuri Prime, Rocketeers, Demolition Trucks and the like) stay recruitable by teams.
 - **Infantry defence.** Two raids in five, a draw from the house's random stream, are met with a
   barracks flood while they last, up to 60 infantry:
   - anti-tank infantry against vehicles: Guardian GI, Tesla Trooper, Brute;
