@@ -641,7 +641,7 @@ static void carry_update(BYTE *unit)
         return;
     if (thrown(victim))
         return;
-    if ((CURRENT_FRAME + ((DWORD)unit >> 4)) % 8)
+    if ((CURRENT_FRAME + FIELD(unit, 0x10, DWORD)) % 8)   /* staggered by unique ID: by address, runs on one seed differed */
         return;
     /* follow: when the Magnetron is over 1.5 cells from where the victim is heading, head for the Magnetron
      * again. Move_To picks the nearest free cell to it. */

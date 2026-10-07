@@ -1725,6 +1725,12 @@ AI-vs-AI matches run unattended. An idle observer uses Human in peace, the game 
     `DirectorFlags` mask (16319: no strategy layer), `PLAN` forces a plan.
   - `--camera` follows that house's army.
   - `--set` sets any `[Settings]` key, for example `--set StartBase=3 --set Superweapons=0`.
+  - `--seed N` replays a game exactly: the same seed gives the same `yspawn-bench.csv`, sample for
+    sample (since 2026-10-07; a 7-AI Isolation game of 20,000 frames came out identical three times).
+    Two things had kept it from that. `Init_Random` (0x52FC20) makes a skirmish's seed from the clock
+    unless 0xA8ED98 holds one, so `Seed=` was overwritten. And the director's per-unit tables were
+    slotted by object address, which differs from run to run; they use the unique ID now
+    (`AbstractClass` +0x10, numbered in creation order). Without `--seed`, each game gets its own.
 - `bench.py suite OUTDIR strat|strat_mcv|strat_iso`: the strategy A/B. Directors with plans play
   directors without them: America, Russia and Yuri paired on four maps, starts and the strategy
   side swapped (48 matches each), or 7-AI Isolation free-for-alls with alternate slots. Suites skip

@@ -347,6 +347,15 @@ static int dir_take_from_team(BYTE *obj)
 
 /* Units the director may command: armed ground combat units, not harvesters, builders, infiltrators
  * or boats, and never while a trigger team owns them. */
+/* The slot of a unit in the per-unit tables below: its unique ID (AbstractClass +0x10, numbered in
+ * creation order), not its address. The heap isn't laid out alike from run to run, so slots keyed
+ * by address collided differently, and two games on one seed went apart. */
+#define AB_UNIQUE_ID 0x10
+static unsigned dir_key(BYTE *obj)
+{
+    return FIELD(obj, AB_UNIQUE_ID, DWORD);
+}
+
 /* Units sent on a job of their own (a tank to a bunker, a soldier into a building) stay out of
  * the army pool until it is done or lapses: the Enter mission takes over only at the unit's next
  * mission update, and meanwhile the army or the convoy ordered it elsewhere (18 of 20 tanks sent
@@ -355,14 +364,14 @@ static struct { BYTE *unit; int until; } dir_reserved[1024];
 
 static void dir_reserve(BYTE *unit, int frames)
 {
-    unsigned k = ((DWORD)unit >> 3) % 1024;
+    unsigned k = dir_key(unit) % 1024;
     dir_reserved[k].unit = unit;
     dir_reserved[k].until = CURRENT_FRAME + frames;
 }
 
 static int dir_is_reserved(BYTE *unit)
 {
-    unsigned k = ((DWORD)unit >> 3) % 1024;
+    unsigned k = dir_key(unit) % 1024;
     return dir_reserved[k].unit == unit && CURRENT_FRAME < dir_reserved[k].until;
 }
 
@@ -1256,7 +1265,7 @@ static struct { BYTE *unit, *what; int frame; } dir_orders[DIR_ORDERS];
 
 static int dir_recent_order(BYTE *unit, BYTE *what, int hold)
 {
-    unsigned h = ((DWORD)unit >> 3) % DIR_ORDERS;
+    unsigned h = dir_key(unit) % DIR_ORDERS;
     for (int i = 0; i < 16; i++) {
         unsigned k = (h + i) % DIR_ORDERS;
         if (dir_orders[k].unit == unit) {
@@ -1293,7 +1302,7 @@ static void dir_note_order(BYTE *unit)
 {
     if (!bench_file)
         return;
-    unsigned k = ((DWORD)unit >> 3) % 1024;
+    unsigned k = dir_key(unit) % 1024;
     dir_last_order[k].unit = unit;
     dir_last_order[k].why = dir_why;
     dir_last_order[k].frame = CURRENT_FRAME;
@@ -1328,7 +1337,7 @@ static struct { BYTE *unit; int frame; } dir_engaged[4096];   /* last engagement
 
 static int dir_same_goal(BYTE *unit, CellXY goal)
 {
-    unsigned k = ((DWORD)unit >> 3) % 4096;
+    unsigned k = dir_key(unit) % 4096;
     if (dir_goals[k].unit == unit && CURRENT_FRAME - dir_goals[k].frame < 450 && dir_dist2(dir_goals[k].goal, goal) <= 6 * 6)
         return 1;
     dir_goals[k].unit = unit;
@@ -1396,7 +1405,7 @@ static void dir_command(BYTE *unit, CellXY goal, BYTE *goal_obj, int engage)
         best->focus++;
         /* a new attack order needs the unit's target to settle first: before it does, the choice
          * can flip between two enemies every tick, and each flip restarted the unit */
-        unsigned k = ((DWORD)unit >> 3) % 4096;
+        unsigned k = dir_key(unit) % 4096;
         if (dir_engaged[k].unit == unit && CURRENT_FRAME - dir_engaged[k].frame < 60)
             return;
         if (!dir_recent_order(unit, best->obj, 90)) {
@@ -1456,7 +1465,7 @@ static struct { BYTE *unit; CellXY at; int frame, stranded, seen; } dir_moves[DI
  * frames, so a repaired bridge brings it back into the army. */
 static int dir_stranded(BYTE *unit)
 {
-    unsigned h = ((DWORD)unit >> 3) % DIR_STUCK;
+    unsigned h = dir_key(unit) % DIR_STUCK;
     for (int i = 0; i < 8; i++) {
         unsigned j = (h + i) % DIR_STUCK;
         if (dir_moves[j].unit == unit)
@@ -1500,7 +1509,7 @@ static int dir_infantry_deploy(BYTE *unit, CellXY at, int may_deploy)
     BYTE *type = dir_type(unit);
     if (dir_whatami(unit) != 15 || !type || !in_list(dir_deployers, (char *)type + T_ID))
         return 0;
-    unsigned k = ((DWORD)unit >> 3) % 1024;
+    unsigned k = dir_key(unit) % 1024;
     if (dir_deploy[k].unit != unit) {
         dir_deploy[k].unit = unit;
         dir_deploy[k].toggled = dir_deploy[k].last_enemy = -100000;
@@ -1549,7 +1558,7 @@ static const char *dir_aa_vehicles[3], *dir_aa_infantry[3];
 
 static int dir_dodge_air(BYTE *house, BYTE *unit, CellXY at)
 {
-    unsigned k = ((DWORD)unit >> 3) % 512;
+    unsigned k = dir_key(unit) % 512;
     if (dir_dodge[k].unit == unit && CURRENT_FRAME < dir_dodge[k].until)
         return 1;
     DirEnemy *air = NULL;
@@ -1630,7 +1639,7 @@ static struct { BYTE *unit; CellXY at; int since, until; } dir_evac[512];
 
 static int dir_bridge_evac(BYTE *unit, CellXY at)
 {
-    unsigned k = ((DWORD)unit >> 3) % 512;
+    unsigned k = dir_key(unit) % 512;
     if (dir_evac[k].unit == unit && CURRENT_FRAME < dir_evac[k].until)
         return 1;
     if (!dir_on_bridge(at)) {
@@ -1772,7 +1781,7 @@ static void dir_unstick(BYTE *house, DirState *d, BYTE *unit, CellXY at)
 
 static void dir_track_stuck(BYTE *house, DirState *d, BYTE *unit, CellXY at, CellXY goal)
 {
-    unsigned h = ((DWORD)unit >> 3) % DIR_STUCK, k = h;
+    unsigned h = dir_key(unit) % DIR_STUCK, k = h;
     for (int i = 0; i < 8; i++) {
         unsigned j = (h + i) % DIR_STUCK;
         if (dir_moves[j].unit == unit || !dir_moves[j].unit || CURRENT_FRAME - dir_moves[j].seen > 6000) {
@@ -2836,7 +2845,7 @@ static int dir_find_ore_free(BYTE *house, CellXY from, CellXY *out, const CellXY
 /* Returns 1 when the harvester is stranded (counts as idle for refinery and expansion decisions). */
 static int dir_watch_harvester(BYTE *house, BYTE *o)
 {
-    unsigned h = ((DWORD)o >> 3) % 256, k = h;
+    unsigned h = dir_key(o) % 256, k = h;
     for (int i = 0; i < 8; i++) {
         unsigned j = (h + i) % 256;
         if (dir_harv[j].unit == o || !dir_harv[j].unit || CURRENT_FRAME - dir_harv[j].frame > 20000) {
@@ -4644,8 +4653,8 @@ static void dir_ferry(BYTE *house, DirState *d)
                    (char *)dir_type(u) + T_ID, CURRENT_FRAME - d->walker_frame[j], f.X, f.Y, dir_isqrt(dir_dist2(f, t)),
                    c.X, c.Y, dir_isqrt(dir_dist2(c, t)), dir_isqrt(dir_dist2(c, f)), FIELD(u, COMBAT_MISSION, int),
                    dc.X, dc.Y, dir_height(c), dir_height(t),
-                   dir_last_order[((DWORD)u >> 3) % 1024].unit == u ? dir_last_order[((DWORD)u >> 3) % 1024].why : "?",
-                   dir_last_order[((DWORD)u >> 3) % 1024].unit == u ? CURRENT_FRAME - dir_last_order[((DWORD)u >> 3) % 1024].frame : -1);
+                   dir_last_order[dir_key(u) % 1024].unit == u ? dir_last_order[dir_key(u) % 1024].why : "?",
+                   dir_last_order[dir_key(u) % 1024].unit == u ? CURRENT_FRAME - dir_last_order[dir_key(u) % 1024].frame : -1);
         }
         CellXY to = dir_beach_near(d->rally, d->rally, stuck);
         logmsg("director: house %d frame %d: convoy stalled, %d called (%d can't walk there) and nobody aboard (transport at %d,%d, dock "
