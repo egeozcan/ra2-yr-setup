@@ -1481,6 +1481,60 @@ and they landed piecemeal. On Isolation, the armies grew to 50–80k at home wit
 - **Engineers** the director wants outrank the stock infantry pick (up to two owned): derricks
   captured went from 5.0 to 7.7 a game in the MCV rounds.
 
+### Review fixes (2026-10-06)
+
+A full review of the DLL, director and tooling (8 reviewers, each finding checked again before it was
+fixed). None of these has been benchmarked yet.
+
+- **Crash:** a convoy ready to sail after its house's last AI enemy fell (Human in peace with several AI
+  teams) read the base of a missing enemy; it now waits.
+- **AI trigger conditions** in the generated `aimd.ini` were the wrong way round (see the Brutal AI
+  section): counters answered the AI's own army, Allied air strikes and navy bombardment needed the
+  *enemy's* airbases and shipyards, and oil reclaim/hold teams were swapped. The four naval hunter
+  clones' yard check was always true (`>= 0`). The neutral power-plant capture script pointed at the
+  LA Movie Theater (`[BuildingTypes]` lists NAPSYA twice; the engine keeps one). These take effect
+  once the mod is reinstalled (`python3 mod/build-tesla-mod.py install`, game closed).
+- **Production:** an idle naval yard no longer takes the MCV order and refuses it (that held every war
+  factory back for up to 3000 frames); the MCV order stays wanted until a war factory takes it; an
+  unaffordable MCV no longer hides ferry, anti-air or warship orders; our own naval orders go ahead of
+  the naval plan's fleet; War Miners, Slave Miners and ships no longer count as main tanks in the mix;
+  a wanted war factory takes the free building slot ahead of defences, walls, shipyards and airbases
+  (the rule meant to put it ahead of a pending defence or wall never ran).
+- **Army:** the end of an attack that turned into a retreat or a new target is recorded (the next
+  launch, the duel wait and the rush's end had used an old date); enemy tanks on high bridges no
+  longer count as aircraft; the enemy list holds 4096 (was 1024); bridge decks count as a way out of
+  a walled-in rally; a per-unit list lookup in targeting is done once.
+- **Convoys:** a route blocked by a fallen bridge to an enemy still on our land now finds a landing;
+  when the ground route opens again the convoy stands down (loads put ashore, walkers let go, empty
+  transports released) instead of keeping its troops aboard for good; a transport homeward is sent
+  again when the dock moves; a convoy slot is checked by type as well.
+- **Engineers:** a job goes to an engineer that can walk to the target, not the first in the list
+  (one on an island wrote off every mainland target for the match); with all of them stranded, one
+  more is trained; a mind-controlled engineer counts as lost; the colonising engineer isn't taken by
+  the other jobs; a colonising transport sent home on a land map unloads at the rally; a successful
+  colony frees its transport for convoys.
+- **Navy:** the unreachable-target list is a real 8-slot ring (once full, every new entry went into
+  slot 0); a fleet called home to defend no longer counts the time as no progress.
+- **Garrisons and posts:** soldiers sent into buildings are reserved (the same soldier could be sent
+  to two in one pass); post soldiers aren't taken for garrisons; posts follow the front (dug-in
+  soldiers far from their new post pack up and move); fortress boarders on the way count as aboard;
+  a bunker's "can't get in" count resets when it is full; the send ring holds 64 (was 24).
+- **Strategy:** human enemies count in the walking distance to the nearest enemy (against a human the
+  AI planned as if across water); the free-for-all re-pick no longer switches back to an enemy across
+  the water while one by land remains.
+- **Expansion and outposts:** a failed site search no longer leaves a raw ore cell as the site; the
+  last yard lost during a spare MCV's trip no longer blocks deploying; the site search covers the base
+  surroundings only; an outpost with no room for its building doesn't queue it (it went up in the main
+  base); a field a stranded harvester did reach isn't blacklisted.
+- **DLL:** the Magnetron patches go in all or none; a `Benchmark=1` run whose oil hook didn't install
+  exits at once (an empty CSV, reported as "never started") instead of running to the timeout; failed
+  start-base placements are cleaned up, and an MCV that can't be put back where it stood goes on a
+  free cell nearby (or is removed rather than left off the map).
+- **Tools:** `bench.py` handles empty or row-less CSVs, waits for the game to exit, keeps your own
+  `yspawn.ini/.log/.map` (and removes what you didn't have) on restore, and the `mind` suite's flags
+  follow the current default; `spawn.py` writes the game's files atomically; the shell helpers also
+  wait for `gamemd-spawn.exe`.
+
 ### Economy, defence and watching (2026-10-02, from the user's playtest notes)
 
 - **Power ahead of need.** The combat AI adds war factories only with 50 power to spare, and stock
@@ -1769,6 +1823,9 @@ plus army value, and within 20% count as a draw.
 
 ### Known limits
 
+- **Results above predate the 2026-10-06 review fixes**, and every run since 2026-09-29 used the
+  swapped AI trigger conditions; the suites need running again.
+- An MCV that takes over 3000 frames to build (low power) can be ordered a second time.
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
   post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
   12W 2L 2D to 16/16 for the same build.
