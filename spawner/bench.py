@@ -244,14 +244,16 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
             if time.time() - began > 120 and not sampled:
                 print(f"{outdir}: no game frames after 120 s, stopping", flush=True)
                 break
-            if os.path.exists(crash) and os.path.getmtime(crash) >= began - 1:
+            if os.path.exists(crash) and os.path.getmtime(crash) >= began:
                 time.sleep(3)
                 print(f"{outdir}: crashed, see except.txt", flush=True)
                 break
         stop(game)
         for f in ("yspawn-bench.csv", "yspawn.log", "except.txt", "yspawn-teams.csv", "yspawn-kills.csv", "yspawn-duels.csv"):
             p = os.path.join(game, f)
-            if os.path.exists(p) and os.path.getmtime(p) >= began - 1:
+            # from this game only: a second's leeway took the last game's log from a slot that had
+            # just changed hands, for a game that then never got going
+            if os.path.exists(p) and os.path.getmtime(p) >= began:
                 shutil.move(p, os.path.join(outdir, f)) if f != "yspawn.log" else shutil.copy2(p, outdir)
         played = os.path.join(outdir, "yspawn-bench.csv")
         if os.path.exists(played) and not bench_rows(played):
