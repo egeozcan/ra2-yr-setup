@@ -35,7 +35,7 @@
                             * full army looked bigger than ours forever (stalemates to the time limit) */
 #define MAP_ZONE 0x56D230          /* MapClass::GetMovementZoneType(cell, MovementZone, bridge) */
 #define T_PASSENGERS 0x114         /* TechnoClass::Passengers.NumPassengers */
-#define MAX_ENEMY 1024
+#define MAX_ENEMY 4096   /* room for big free-for-alls: at 1024 the newest enemies could go unseen */
 #define UT_HARVESTER 0xE0E         /* UnitTypeClass::Harvester (read at 0x7476A6) */
 #define TT_NAVAL 0xCCE             /* TechnoTypeClass::Naval (after Repairable 0xCCC, Crewed 0xCCD) */
 #define VT_SELL 0x1A0              /* ObjectClass::Sell(control): 1 queues the Selling mission */
@@ -1004,8 +1004,11 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
     d->threat_near = d->target_home = d->raid_inf = d->raid_armor = d->enemy_subs = d->enemy_minds = d->enemy_psytowers = 0;
     CellXY target_base = d->enemy ? dir_house_center(d->enemy) : (CellXY){ 0, 0 };
     int threat_best = 0x7FFFFFFF;
+    /* past MAX_ENEMY the rest still count toward the totals and threats, only unlisted (and so not
+     * targeted): stopping there left the newest units (fresh raiders) out of the totals too */
+    DirEnemy spare;
     DynVec *v = OIL_TECHNO_ARRAY;
-    for (int i = 0; i < v->Count && dir_enemy_count < MAX_ENEMY; i++) {
+    for (int i = 0; i < v->Count; i++) {
         BYTE *o = v->Items[i];
         BYTE *owner0 = oil_live(o) ? FIELD(o, O_OWNER, BYTE *) : NULL;
         int neutral = dir_passive(owner0);
@@ -1019,7 +1022,7 @@ static void dir_scan_enemies(BYTE *house, DirState *d)
          * their houses alone, so infantry can garrison them instead */
         if (neutral && (what != 6 || !in_list("CAOILD,CAAIRP,CATHOSP,CAOUTP,CAMACH,CAPOWR", (char *)type + T_ID)))
             continue;
-        DirEnemy *e = &dir_enemies[dir_enemy_count++];
+        DirEnemy *e = dir_enemy_count < MAX_ENEMY ? &dir_enemies[dir_enemy_count++] : &spare;
         e->obj = o;
         e->at = object_cell(o);
         e->value = dir_cost(type);
