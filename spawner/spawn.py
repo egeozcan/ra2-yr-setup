@@ -168,6 +168,10 @@ def prepare(ini):
     """Extract the map named by Map= and write the game-dir yspawn.ini that yspawn.dll reads.
     ini: a ConfigParser laid out like spawner/yspawn.ini. Returns the map archive name."""
     settings = ini["Settings"]
+    if settings.get("Benchmark") != "1" and not running():
+        import bench   # a killed benchmark run left its files behind, RA2MD.INI at its low resolution too
+        if bench.bench_leftover():
+            bench.restore()
     archive = settings.pop("Map")
     info = map_info(archive)
     # extract before touching yspawn.map: a packet can name a map its archive lacks (KeyError)

@@ -2,25 +2,53 @@
 """Run unattended AI-vs-AI skirmishes and collect yspawn-bench.csv results.
 
 usage: bench.py run OUTDIR MAP AI1 AI2 [...] [--human-start N] [--frames N] [--speed N] [--seed N] [--set KEY=VALUE]
+           [--res WxH|native]
            each AI is COUNTRY[:START[:DIRECTOR[:DIFFICULTY[:TEAM[:PLAN]]]]], e.g. 8:0:1 9:1:0 (DIRECTOR 1 = new logic,
            0 = stock Brutal, >1 = DirectorFlags bitmask; 16319 = everything but the strategy layer;
            PLAN 0-3 forces balanced, rush, boom or siege)
-       bench.py restore          put back the game directory's own yspawn.ini/.log/.map after runs
+       bench.py restore          put back the game directory's own yspawn.ini/.log/.map and RA2MD.INI after runs
        bench.py summary DIR...   print one line per match directory
-       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N]   director vs stock Brutal match sets
+       bench.py suite OUTDIR [tune|heldout|hard|MAPFILTER] [--frames N] [--games N] [--res WxH|native]
+                                 director vs stock Brutal match sets
        bench.py ab DIR...        strategy on against off, per plan and country: wins and mean placement
 
 The idle human uses Human in peace, so it never takes part and never loses. The game directory's
-yspawn.ini, yspawn.log and yspawn.map are saved first and restored afterwards.
+yspawn.ini, yspawn.log, yspawn.map and RA2MD.INI are saved first and restored afterwards. Games run
+at 800x600 (--res): drawing is most of a frame's cost at the user's resolution; --res native keeps
+RA2MD.INI's own, to watch a game.
 """
 import configparser, csv, glob, os, shutil, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import spawn
 
-SAVED = ["yspawn.ini", "yspawn.log", "yspawn.map"]
+SAVED = ["yspawn.ini", "yspawn.log", "yspawn.map", "RA2MD.INI"]
 BACKUP = os.path.expanduser("~/.cache/ra2-bench-saved")
 ABSENT = "absent.txt"   # in BACKUP: the SAVED files the game dir did not have
+# Benchmark games' resolution (--res WxH, --res native for the user's own). The game draws on the
+# CPU: at 2560x1440 a frame's drawing cost several times its logic (one 1v1 game ran 360-410
+# frames a second, at 800x600 2200-3100).
+RES = (800, 600)
+
+
+def set_resolution(game, width, height):
+    """ScreenWidth/ScreenHeight in the game dir's RA2MD.INI [Video], the rest of the file as it was
+    (put_back restores it with the other SAVED files)."""
+    path = os.path.join(game, "RA2MD.INI")
+    with open(path, newline="", encoding="latin-1") as f:
+        lines = f.read().split("\r\n")
+    want = {"ScreenWidth": str(width), "ScreenHeight": str(height)}
+    video = next((i for i, l in enumerate(lines) if l.strip().lower() == "[video]"), None)
+    if video is None:
+        lines[-1:-1] = ["[Video]"] + [f"{k}={v}" for k, v in want.items()]
+    else:
+        end = next((i for i in range(video + 1, len(lines)) if lines[i].startswith("[")), len(lines))
+        for i in range(video + 1, end):
+            key = lines[i].split("=", 1)[0].strip()
+            if key in want:
+                lines[i] = f"{key}={want.pop(key)}"
+        lines[video + 1:video + 1] = [f"{k}={v}" for k, v in want.items()]
+    spawn.atomic_write(path, "w", "\r\n".join(lines), newline="", encoding="latin-1")
 
 
 def bench_leftover():
@@ -142,6 +170,8 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         with open(os.path.join(outdir, "yspawn.ini"), "w") as f:
             ini.write(f)
         spawn.prepare(ini)
+        if RES:
+            set_resolution(spawn.GAME, *RES)
         began = time.time()
         spawn.launch()
         while not spawn.running() and time.time() - began < 60:
@@ -497,6 +527,11 @@ if __name__ == "__main__":
     if args[0] == "restore":
         restore()
         raise SystemExit
+    if "--res" in args:   # WxH, or native: RA2MD.INI's own resolution
+        i = args.index("--res")
+        value = args[i + 1].lower()
+        del args[i:i + 2]
+        RES = None if value == "native" else tuple(int(v) for v in value.split("x"))
     if args[0] == "suite":
         # --frames N and --games N: a short smoke run of a suite's first games
         frames, games = 60000, None

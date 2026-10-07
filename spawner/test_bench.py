@@ -118,6 +118,65 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(self.files(), user)
 
 
+class ResolutionTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.game = Path(temp.name) / "game"
+        self.game.mkdir()
+        for target, value in ((bench.spawn, "GAME"), (bench, "BACKUP")):
+            p = patch.object(target, value, str(Path(temp.name) / ("game" if value == "GAME" else "backup")))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_only_the_resolution_changes(self):
+        user = ("[Options]\r\nGameSpeed=2\r\n\r\n[Video]\r\nScreenWidth=2560\r\nStretchMovies=no\r\n"
+                "ScreenHeight=1440\r\n\r\n[Audio]\r\nScreenWidth=7\r\n")
+        ini = self.game / "RA2MD.INI"
+        ini.write_bytes(user.encode("latin-1"))
+        bench.snapshot()
+        bench.set_resolution(str(self.game), 800, 600)
+        self.assertEqual(ini.read_bytes().decode("latin-1"),
+                         user.replace("Width=2560", "Width=800").replace("Height=1440", "Height=600"))
+        bench.put_back()
+        self.assertEqual(ini.read_bytes().decode("latin-1"), user)
+
+    def prepare(self, benchmark):
+        import configparser
+        ini = configparser.ConfigParser(interpolation=None)
+        ini.optionxform = str
+        ini["Settings"] = {"Map": "A.mmx", **({"Benchmark": "1"} if benchmark else {})}
+        with patch.object(bench.spawn, "running", return_value=False), \
+                patch.object(bench.spawn, "map_info", return_value={"data": b"", "map": "a"}), \
+                patch.object(bench.spawn.mixextract, "extract", return_value=b"map"):
+            bench.spawn.prepare(ini)
+
+    def test_a_killed_run_is_undone_before_the_users_game(self):
+        user = b"[Video]\r\nScreenWidth=2560\r\nScreenHeight=1440\r\n"
+        ini = self.game / "RA2MD.INI"
+        ini.write_bytes(user)
+        for _ in range(2):                               # as run() does; the first run is killed
+            bench.snapshot()
+            self.prepare(benchmark=True)                 # (a benchmark's own leaves it alone)
+            bench.set_resolution(str(self.game), 800, 600)
+            self.assertIn(b"ScreenWidth=800", ini.read_bytes())
+        self.prepare(benchmark=False)                    # the user's own game puts theirs back
+        self.assertEqual(ini.read_bytes(), user)
+        self.assertFalse(Path(bench.BACKUP).exists())
+        self.assertNotIn("Benchmark", (self.game / "yspawn.ini").read_text())
+
+    def test_missing_keys_are_added_to_video(self):
+        ini = self.game / "RA2MD.INI"
+        ini.write_bytes(b"[Video]\r\nStretchMovies=no\r\n\r\n[Audio]\r\n")
+        bench.set_resolution(str(self.game), 640, 480)
+        self.assertEqual(ini.read_bytes(),
+                         b"[Video]\r\nScreenWidth=640\r\nScreenHeight=480\r\nStretchMovies=no\r\n\r\n[Audio]\r\n")
+        ini.write_bytes(b"[Audio]\r\nSoundVolume=0.7\r\n")
+        bench.set_resolution(str(self.game), 800, 600)
+        self.assertEqual(ini.read_bytes(),
+                         b"[Audio]\r\nSoundVolume=0.7\r\n[Video]\r\nScreenWidth=800\r\nScreenHeight=600\r\n")
+
+
 class FlagTests(unittest.TestCase):
     def test_director_default_mirrors_policy(self):
         with tempfile.TemporaryDirectory() as tmp:

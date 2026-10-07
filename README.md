@@ -1717,14 +1717,24 @@ From a 20,000-frame Isolation smoke game (seven AIs) after the review fixes:
 
 ### Benchmark (`spawner/bench.py`)
 
-AI-vs-AI matches run unattended. An idle observer uses Human in peace, the game runs uncapped
-(roughly 300–600 frames/s at speed 0), and the DLL exits when one side is left or at the frame limit.
+AI-vs-AI matches run unattended. An idle observer uses Human in peace, the game runs uncapped at
+speed 0, and the DLL exits when one side is left or at the frame limit.
+
+Benchmark games run at 800x600 (since 2026-10-07). The game draws on the CPU, and at 2560x1440 drawing
+took most of each frame: a 1v1 ran 360–410 frames/s there and 2,000–3,100 at 800x600, and a 7-AI
+Isolation game about 110 late on against 220. Over eight full games at 800x600, 1v1 maps averaged
+980–2,500 frames/s and Isolation 270. Resolution doesn't touch the game: one seed gave the same
+`yspawn-bench.csv` at 640x480, 800x600 and 2560x1440. Launching and loading still take about 17 s a game.
 
 - `bench.py run OUTDIR MAP AI... [--frames N] [--camera HOUSE] [--set KEY=VALUE]`: one match.
   - Each AI is `COUNTRY:START:DIRECTOR[:DIFFICULTY[:TEAM[:PLAN]]]`. `DIRECTOR` above 1 is a
     `DirectorFlags` mask (16319: no strategy layer), `PLAN` forces a plan.
   - `--camera` follows that house's army.
   - `--set` sets any `[Settings]` key, for example `--set StartBase=3 --set Superweapons=0`.
+  - `--res WxH` sets the resolution, and `--res native` keeps `RA2MD.INI`'s own, to watch a game.
+    `RA2MD.INI` is saved and put back with the other launcher files. A run killed outright leaves
+    the benchmark's behind; `bench.py restore`, or your next game from `spawn.py` or the Skirmish
+    Setup window, puts yours back.
   - `--seed N` replays a game exactly: the same seed gives the same `yspawn-bench.csv`, sample for
     sample (since 2026-10-07; a 7-AI Isolation game of 20,000 frames came out identical three times).
     Two things had kept it from that. `Init_Random` (0x52FC20) makes a skirmish's seed from the clock
@@ -1740,7 +1750,7 @@ AI-vs-AI matches run unattended. An idle observer uses Human in peace, the game 
   fell, survivors by buildings and army value.
 - `bench.py suite OUTDIR [tune|heldout|heldout2|hard]`: match sets, director vs stock Brutal.
 - `bench.py summary DIR...`: one line per match, plus a win/draw/loss tally.
-- `bench.py restore`: puts the user's `yspawn.ini/.log/.map` back after runs.
+- `bench.py restore`: puts the user's `yspawn.ini/.log/.map` and `RA2MD.INI` back after runs.
 
 Bench-only `[Settings]` keys, for tests:
 - `Camera=HOUSE`: what `--camera` sets. Benchmark matches always set `RevealMap=1` (see below).
