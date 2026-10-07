@@ -232,11 +232,11 @@ def run(outdir, map_file, ais, human_start=-1, frames=40000, speed=0, seed=0, ti
         began = time.time()
         launcher = spawn.launch(game, prefix, headless=None if slot is None else RES or (800, 600))
         while not spawn.running(game) and time.time() - began < 60:
-            time.sleep(1)
+            time.sleep(0.5)
         crash = os.path.join(game, "except.txt")
         sampled = False
         while spawn.running(game) and time.time() - began < timeout:
-            time.sleep(2)
+            time.sleep(0.5)   # (at 2 s, a game that had ended waited a second on average)
             # a crash leaves the game hung on its error report: note it and move on
             # hung while loading: no benchmark row two minutes after the launch. The DLL creates
             # the CSV when it loads, but it stays empty until the first sample.
@@ -282,8 +282,8 @@ def stop(game=None, wait=20):
                 os.kill(pid, sig)
             except ProcessLookupError:
                 pass
-        for _ in range(wait):
-            time.sleep(1)
+        for _ in range(wait * 4):
+            time.sleep(0.25)
             if not spawn.game_pids(game):
                 return
     raise SystemExit("gamemd-spawn.ex survived SIGKILL: stopping")

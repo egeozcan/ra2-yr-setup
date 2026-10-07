@@ -1775,6 +1775,11 @@ and Isolation, mostly logic, 390 instead of 330.
   - One seed gives the same `yspawn-bench.csv` in a slot as in the game dir (eight copies at once
     were checked against a game played alone).
   - Ctrl-C stops every copy. Games cut short lose their CSV, so a resumed suite plays them again.
+  - Where a game's time goes (a slot game of 10,000 frames, 19 s in all): Proton and Wine start in
+    3.7 s, the game's own setup takes 3 s and `StartScenario` 8.4 s, the game itself 2.5 s, and
+    stopping and collecting the files under 0.5 s. Loading is the engine's, so more slots are the
+    lever: 16 at once (16 identical copies of a seeded game) took 28 s and about 4 GB of memory, and
+    each game ran about as fast as alone.
 - `bench.py summary DIR...`: one line per match, plus a win/draw/loss tally.
 - `bench.py restore`: puts the user's `yspawn.ini/.log/.map` and `RA2MD.INI` back after runs.
 
