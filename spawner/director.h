@@ -161,6 +161,7 @@ struct DirState {
     BYTE *cover_unit[3];                /* Floating Discs flying cover over Yuri's fleet */
     int cover_frame;
     int naval_pick_quota;               /* naval_pick is the naval plan's fleet ship, which our own orders displace */
+    int standdown_frame;                /* when the convoy began standing down (0: it isn't) */
 };
 static DirState dir_state[32];
 
@@ -4133,11 +4134,21 @@ static void dir_ferry(BYTE *house, DirState *d)
 {
     dir_why = "ferry";
     int side = FIELD(house, OIL_H_SIDE, int);
-    if (!(d->island || d->blocked) || side < 0 || side > 2)
+    /* The ground route open again (a bridge mended, the 6000-frame retry, an enemy by land): the
+     * convoy stands down. Returning here at once left the loads aboard, docked or at the landing,
+     * for as long as the route stayed open. Crossing transports still land theirs, the rest put
+     * theirs ashore where they are, units walking over to board are let go, and a transport leaves
+     * the convoy once empty. */
+    int down = !(d->island || d->blocked);
+    if (!down)
+        d->standdown_frame = 0;
+    else if (!d->standdown_frame)
+        d->standdown_frame = CURRENT_FRAME;
+    if (side < 0 || side > 2 || (down && !dir_ferry_count(d)))
         return;
     DynVec *v = OIL_TECHNO_ARRAY;
     /* transports wanted: one per six ground units waiting on this side, two to four */
-    if (CURRENT_FRAME % 300 < 15) {
+    if (!down && CURRENT_FRAME % 300 < 15) {
         int n = 0, what;
         for (int i = 0; i < v->Count; i++)
             n += dir_boardable(house, d, v->Items[i], &what) && dir_poolable(v->Items[i], what);
@@ -4148,7 +4159,7 @@ static void dir_ferry(BYTE *house, DirState *d)
         BYTE *t = d->ferry[k];
         if (t && !dir_ferry_ok(house, d, t, side))
             d->ferry[k] = NULL;
-        if (d->ferry[k])
+        if (d->ferry[k] || down)
             continue;
         for (int i = 0; i < v->Count && !d->ferry[k]; i++) {
             BYTE *o = v->Items[i];
@@ -4162,15 +4173,34 @@ static void dir_ferry(BYTE *house, DirState *d)
         d->ferry_frame[k] = CURRENT_FRAME;
         d->ferry_docked[k] = 0;
     }
-    if (!dir_ferry_count(d))
+    if (!dir_ferry_count(d)) {
+        if (down)
+            d->convoy_since = d->dock_frame = 0;   /* stood down: a later convoy starts afresh */
         return;
+    }
+    /* standing down, units walking over to board are let go first (while they still count as
+     * bound for a ferry); one beside a transport, getting in, holds it in the convoy (called off
+     * in the middle of boarding, units were counted aboard but never joined the passengers) */
+    int held[DIR_CONVOY] = { 0 };
+    for (int i = 0; down && i < v->Count; i++) {
+        BYTE *o = v->Items[i], *dest;
+        if (!oil_live(o) || FIELD(o, O_OWNER, BYTE *) != house || FIELD(o, COMBAT_MISSION, int) != MISSION_ENTER
+            || !dir_is_ferry(d, dest = FIELD(o, COMBAT_DESTINATION, BYTE *)))
+            continue;
+        if (dir_dist2(object_cell(o), object_cell(dest)) > 3 * 3) {
+            ((void (GTHISCALL *)(BYTE *, BYTE *, char))VFUNC(o, COMBAT_SET_DESTINATION))(o, NULL, 1);
+            ((char (GTHISCALL *)(BYTE *, int, char))VFUNC(o, VT_QUEUEMISSION))(o, MISSION_AREA_GUARD, 1);
+        } else
+            for (int k = 0; k < DIR_CONVOY; k++)
+                held[k] |= d->ferry[k] == dest;
+    }
     for (int k = 0; k < DIR_CONVOY; k++)
             if (d->ferry[k])
                 dir_check_passengers(house, d->ferry[k]);
     /* The dock: a beach (land type 6, water beside it) near the rally that our ground units can walk
      * to. Docking at the rally itself wedged transports in among the waiting army on cliff-top
      * bases, where they never got out to the water again. Re-picked every 3000 frames. */
-    if (!d->dock.X || CURRENT_FRAME >= d->dock_frame) {
+    if (!d->dock.X || (!down && CURRENT_FRAME >= d->dock_frame)) {
         d->dock_frame = CURRENT_FRAME + 3000;
         d->dock = dir_beach_near(d->rally, d->rally, d->dock_failed);
         if (!d->dock.X)
@@ -4187,6 +4217,14 @@ static void dir_ferry(BYTE *house, DirState *d)
             dir_take_from_team(t);
         CellXY at = object_cell(t);
         int passengers = FIELD(t, T_PASSENGERS, int);
+        if (down && !passengers && !held[k]) {   /* standing down, empty: home to the dock, out of the convoy */
+            logmsg("director: house %d frame %d: ferry %d at %d,%d stands down, empty (state %d)", FIELD(house, 0x30, int),
+                   CURRENT_FRAME, k, at.X, at.Y, d->ferry_state[k]);
+            if (dir_dist2(at, d->dock) > 5 * 5 && !dir_recent_order(t, dir_cell(d->dock), 450))
+                dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
+            d->ferry[k] = NULL;
+            continue;
+        }
         /* no headway for 900 frames while it should be moving (to the dock, across, home): it is
          * wedged in. Docking, it loads where it stands; out at sea or homeward, the order is given
          * again, and after a second stall it unloads (sailing) or counts as home. */
@@ -4278,7 +4316,16 @@ static void dir_ferry(BYTE *house, DirState *d)
                 continue;
             }
         }
-        if (d->ferry_state[k] == 0) {
+        if (d->ferry_state[k] == 0 && down) {   /* standing down: everyone off, here */
+            /* docked in the water (kept from the dock): ashore at the dock first, for a while after the
+             * stand-down began (timed from docking, one docked long before would unload in the water) */
+            BYTE *atcell = dir_cell(at);
+            if (atcell && FIELD(atcell, C_LANDTYPE, int) == 2 && CURRENT_FRAME - d->standdown_frame < 900) {
+                if (!dir_recent_order(t, dir_cell(d->dock), 450))
+                    dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
+            } else if (passengers && FIELD(t, COMBAT_MISSION, int) != MISSION_UNLOAD && !dir_recent_order(t, (BYTE *)2, 150))
+                dir_order(t, 16, NULL, NULL);
+        } else if (d->ferry_state[k] == 0) {
             docked++;
             if (passengers != d->ferry_aboard[k]) {
                 d->ferry_aboard[k] = passengers;
@@ -4311,6 +4358,12 @@ static void dir_ferry(BYTE *house, DirState *d)
             d->ferry_docked[k] = 0;
         } else if (!dir_recent_order(t, dir_cell(d->dock), 450))   /* the dock may have moved since it set off */
             dir_order(t, MISSION_MOVE, NULL, dir_cell(d->dock));
+    }
+    if (down) {
+        d->convoy_since = 0;   /* if the route blocks again, the convoy's wait starts afresh */
+        if (!dir_ferry_count(d))
+            d->dock_frame = 0;
+        return;
     }
     if (!docked) {
         d->convoy_since = 0;
@@ -4589,7 +4642,8 @@ static void dir_ferry(BYTE *house, DirState *d)
         memset(boarding, 0, sizeof boarding);
     for (int k = 0; k < DIR_CONVOY; k++)
         sailable += d->ferry[k] && d->ferry_state[k] == 0 && d->ferry_docked[k]
-            && FIELD(d->ferry[k], T_PASSENGERS, int) && !boarding[k];
+            && FIELD(d->ferry[k], T_PASSENGERS, int) && !boarding[k]
+            && FIELD(d->ferry[k], COMBAT_MISSION, int) != MISSION_UNLOAD;
     if (!sailable)
         return;
     d->landing = out;
@@ -4598,8 +4652,9 @@ static void dir_ferry(BYTE *house, DirState *d)
     for (int k = 0; k < DIR_CONVOY; k++) {
         BYTE *t = d->ferry[k];
         /* not while a unit beside it is getting in: sailing off mid-boarding left it counted aboard
-         * but out of the passenger list */
-        if (!t || d->ferry_state[k] != 0 || !d->ferry_docked[k] || !FIELD(t, T_PASSENGERS, int) || boarding[k])
+         * but out of the passenger list; nor mid-unload (a stand-down's, the route blocked again) */
+        if (!t || d->ferry_state[k] != 0 || !d->ferry_docked[k] || !FIELD(t, T_PASSENGERS, int) || boarding[k]
+            || FIELD(t, COMBAT_MISSION, int) == MISSION_UNLOAD)
             continue;
         ships++;
         aboard += FIELD(t, T_PASSENGERS, int);
