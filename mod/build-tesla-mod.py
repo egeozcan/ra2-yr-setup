@@ -204,6 +204,15 @@ BALANCE = {
     ("YTNK", "Soylent"): "750",
     ("DISK", "Cost"): "2000",         # 1750
     ("DISK", "Soylent"): "2000",
+    # 2026-10-07: Yuri beat America 43-17 and Russia 46-17 (64 director games each) with even trades
+    # (0.84 against 0.85): its Slave Miners, a refinery and five slaves on the ore for 1,750 from the
+    # war factory, put it on five refineries by frame 6,000 against 1.5, and its army was 25-40%
+    # larger from frame 12,000. Dearer, at the user's request; holding the AI back did nothing (17 and
+    # 18 wins). The deployed refinery (also built at the yard) keeps the same price and refund.
+    ("SMIN", "Cost"): "2250",         # 1750
+    ("SMIN", "Soylent"): "2250",
+    ("YAREFN", "Cost"): "2250",       # 1750
+    ("YAREFN", "Soylent"): "2250",
 }
 
 

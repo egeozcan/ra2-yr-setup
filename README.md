@@ -1834,6 +1834,10 @@ First balance run (2026-10-01, director vs director, 24 matches, the Liberator a
   `BALANCE` in `mod/build-tesla-mod.py`. America's 16 matches afterwards: still 2 wins, though the
   Grizzly's ratio rose from 0.49 to 0.67. America's army is as large as the others (49k at frame
   20,000 against 45k and 41k), so it is losing trades, not economy.
+- **Slave Miner dearer** (2026-10-07, user's call: change the game's balance, not the AI): `SMIN` and
+  its deployed `YAREFN` 1,750 → 2,250, refund alike. On the same 192 seeded strategy games, America
+  went from 17 to 20 wins of 64 against Yuri and Russia from 17 to 21; Yuri still stood on 4.7
+  refineries at frame 6,000 (the AIs start with 50,000, so the price slows it little).
 
 Balance tools:
 - `bench.py suite OUTDIR balance`: director against director for America, Russia and Yuri, every
