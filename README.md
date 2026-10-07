@@ -1933,6 +1933,19 @@ plus army value, and within 20% count as a draw.
     harvesters a refinery on top, 20 and 20; Yuri's Slave Miners held to the refinery schedule, 17
     and 18. So the gap looks like the game's balance: the Slave Miner's price or slaves, or Yuri's
     unit prices, are the levers (the user's call, as with the earlier price rises).
+  - **Then the Slave Miner went to 2,250** (see Benchmark): America 20 and Russia 21 wins of 64.
+  - **How the attacks go** (the same games): the American and Russian attacks don't fail at razing.
+    Per attack on Yuri, America destroyed 13.5 buildings and Russia 7.7, Yuri 7.0 on them. But
+    against Yuri they attacked 0.4 and 0.6 times a game (America 1.2 against Russia), Yuri 1.4–1.6.
+    Each house launches at about 1.5 times the defender's army and then wins: Yuri arrived with
+    37.6k against 24.8k, the defender's army halved and a third of its buildings fell (Russia on
+    America the same). Ruled out: armed miners inflating Yuri's army in the director's eyes (every
+    side sees its target about 1.33 times its own count), defences resetting the launch patience
+    (they don't), and a counter-attack window (after Yuri's attacks the defender kept a median 9%
+    of Yuri's army). Yuri also ran 3.8 war factories to their 3.1 (its fourth needs two
+    refineries, which Slave Miners give it at once); letting the others build theirs on cash alone
+    left them at 18 and 20 wins (America–Russia 32–31). So it comes down to army size, from Yuri's
+    economy.
 - Match-to-match variance is large: the same set gave 13W 1D (v8) and 10W 4L (final), and the only
   post-v8 behaviours those matches triggered were expansions. The tuning suite alone ranges from
   12W 2L 2D to 16/16 for the same build.
