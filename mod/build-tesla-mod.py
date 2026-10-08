@@ -18,9 +18,9 @@ Only Yuri's Revenge reads these *md files; base Red Alert 2 is unaffected.
 import os, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import csf, mixextract, bulldozer, oil_ai, combat_ai
+import csf, mixextract, bulldozer, oil_ai, combat_ai, ra2paths
 
-GAME = "/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
+GAME = ra2paths.GAME
 ASSETS = ["attnk.vxl", "attnk.hva", "attnktur.vxl", "attnktur.hva", "attkicon.shp"]
 # Cheat Defense art, made by cheatdef_art.py (same list as its FILES)
 DEF_ASSETS = ["ggchdf.shp", "chdfglow.shp", "chdftur.vxl", "chdftur.hva", "chdficon.shp"] + \

@@ -165,8 +165,9 @@ def parse_ai(text):
 
 # Slots for games side by side (--jobs N): slot K has a game dir of links to the game's files, with
 # its own copies of what a game writes or we set, and its own Proton prefix (Proton waits for the
-# prefix's wineserver to end before it starts a game). On the prefix's btrfs, the copy shares blocks.
-FARM = "/mnt/data/SteamLibrary/ra2-bench-farm"
+# prefix's wineserver to end before it starts a game). On the prefix's btrfs, the copy shares blocks,
+# so the farm sits in the game's Steam library, on the prefix's filesystem (RA2YR_BENCH_FARM overrides).
+FARM = os.environ.get("RA2YR_BENCH_FARM") or os.path.join(spawn.ra2paths.LIBRARY, "ra2-bench-farm")
 SLOT_OWN = {"yspawn.ini", "yspawn.log", "yspawn.map", "yspawn-bench.csv", "yspawn-kills.csv", "yspawn-duels.csv",
             "yspawn-teams.csv", "except.txt", "RA2MD.INI", "ddraw.ini", "gamemd-spawn.exe", "yspawn.dll"}
 

@@ -2,11 +2,14 @@
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
-GAME = Path('/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II')
+sys.path.insert(0, str(HERE.parent / 'mod'))
+import ra2paths
+GAME = Path(ra2paths.GAME)
 
 
 class OilDefenseTests(unittest.TestCase):
@@ -53,6 +56,7 @@ class OilDefenseTests(unittest.TestCase):
                             '-I', str(HERE), str(tmp/'policy.c'), '-o', str(tmp/'policy')], check=True)
             subprocess.run([str(tmp/'policy')], check=True)
 
+    @unittest.skipUnless((GAME / 'gamemd.exe').exists(), 'game not installed')
     def test_verified_executable_hook_boundaries(self):
         data = (GAME/'gamemd.exe').read_bytes()
         pe = struct.unpack_from('<I', data, 0x3C)[0]

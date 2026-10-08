@@ -13,12 +13,10 @@ ends the game exits instead of returning to the menu.
 import configparser, os, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "mod"))
-import csf, mixextract
+import csf, mixextract, ra2paths
 from add_import import main as add_import
 
-GAME = "/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
-PREFIX = "/mnt/data/SteamLibrary/steamapps/compatdata/2229850"
-STEAM = os.path.expanduser("~/.local/share/Steam")
+GAME, PREFIX, STEAM = ra2paths.GAME, ra2paths.PREFIX, ra2paths.STEAM   # see mod/ra2paths.py
 GAMESCOPE = os.path.join(HERE, "..", "yuri-gamescope.py")
 FILES = ["gamemd-spawn.exe", "yspawn.dll", "yspawn.ini", "yspawn.map", "yspawn.log"]
 
@@ -218,9 +216,7 @@ def launch(game=None, prefix=None, headless=None):
     env = dict(os.environ, STEAM_COMPAT_DATA_PATH=prefix, STEAM_COMPAT_CLIENT_INSTALL_PATH=STEAM,
                STEAM_COMPAT_INSTALL_PATH=game, STEAM_COMPAT_APP_ID="2229850",
                SteamAppId="2229850", SteamGameId="2229850")
-    proton = [os.path.join(STEAM, "steamapps/common/SteamLinuxRuntime_4/_v2-entry-point"),
-              "--verb=waitforexitandrun", "--",
-              os.path.join(STEAM, "steamapps/common/Proton - Experimental/proton"),
+    proton = [ra2paths.RUNTIME, "--verb=waitforexitandrun", "--", ra2paths.PROTON,
               "waitforexitandrun", os.path.join(game, "gamemd-spawn.exe")]
     if headless:
         cmd = ["gamescope", "-w", str(headless[0]), "-h", str(headless[1]), "--backend", "headless", "--", *proton]

@@ -8,9 +8,9 @@ Also writes the previews in mod/previews/ (liberator-*.png), drawn through voxel
 """
 import os, shutil, sys
 import numpy as np
-import vxl
+import vxl, ra2paths
 
-FA2 = "/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II/FinalAlert2"
+FA2 = os.path.join(ra2paths.GAME, "FinalAlert2")
 NORMALS = vxl.load_normal_table(os.path.join(FA2, "voxel_normal_tables.bin"), 4)
 
 

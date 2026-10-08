@@ -5,11 +5,14 @@ decision rules and confirm the production hooks still match the installed execut
 """
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
-GAME = Path('/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II')
+sys.path.insert(0, str(HERE.parent / 'mod'))
+import ra2paths
+GAME = Path(ra2paths.GAME)
 
 
 class PolicyTests(unittest.TestCase):

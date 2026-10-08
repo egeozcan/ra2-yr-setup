@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Re-apply the verified-working 2560x1440 setup (cnc-ddraw 6.3 + prefix override + gamescope).
 set -euo pipefail
-G="/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
 D="$(cd "$(dirname "$0")" && pwd)"
-PFX=/mnt/data/SteamLibrary/steamapps/compatdata/2229850/pfx
+# Game dir and Proton prefix: found through Steam, or set RA2YR_GAME / RA2YR_PREFIX (mod/ra2paths.py)
+G="$(python3 "$D/mod/ra2paths.py" game)"
+PFX="$(python3 "$D/mod/ra2paths.py" prefix)/pfx"
 # Wine names the Skirmish Setup launcher's process gamemd-spawn.ex (15 characters)
 GAMES='gamemd.exe|gamemd-spawn.ex|game.exe'
 pkill -TERM -x "$GAMES" || true

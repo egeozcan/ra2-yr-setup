@@ -20,9 +20,9 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import render as R, vxl
+import render as R, vxl, ra2paths
 
-GAME = "/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
+GAME = ra2paths.GAME
 FA2 = os.path.join(GAME, "FinalAlert2")
 THEATER_LETTERS = "TAUDLNG"      # temperate, snow, urban, desert, lunar, new urban, generic fallback
 BASE_SHP = "ggchdf.shp"

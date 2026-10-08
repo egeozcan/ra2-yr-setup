@@ -1,5 +1,8 @@
 #!/usr/bin/python3
-"""Save and restore the monitor mode around the Sunshine Yuri session."""
+"""Save and restore the monitor mode around the Sunshine Yuri session.
+
+The monitor is the one named by RA2YR_OUTPUT (a kscreen-doctor output name such as DP-2), else the
+primary one."""
 import json
 import os
 from pathlib import Path
@@ -15,7 +18,10 @@ if sys.argv[1:] == ['start']:
     if subprocess.run(['pgrep', '-x', 'gamemd.exe|gamemd-spawn.ex'], stdout=subprocess.DEVNULL).returncode == 0:
         raise SystemExit('Close Yuri before starting the streaming profile.')
     outputs = json.loads(subprocess.check_output(['kscreen-doctor', '-j']))['outputs']
-    output = next(o for o in outputs if o['name'] == 'DP-2' and o['enabled'])
+    enabled = sorted((o for o in outputs if o['enabled']), key=lambda o: o.get('priority') or 99)
+    if not enabled:
+        raise SystemExit('No monitor is on.')
+    output = next((o for o in enabled if o['name'] == os.environ.get('RA2YR_OUTPUT')), enabled[0])
     modes = [m for m in output['modes'] if m['size'] == {'width': 2560, 'height': 1440}]
     mode = min(modes, key=lambda m: abs(m['refreshRate'] - 60))
     state.parent.mkdir(parents=True, exist_ok=True)

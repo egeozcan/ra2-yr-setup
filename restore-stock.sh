@@ -2,8 +2,10 @@
 # Revert the GAME DIRECTORY to EA stock. Does NOT touch the prefix override or Steam launch options
 # (see HANDOFF.md "establish this FIRST" if you want a full original-stack revert).
 set -euo pipefail
-G="/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II"
 D="$(cd "$(dirname "$0")" && pwd)"
+# Game dir and Proton prefix: found through Steam, or set RA2YR_GAME / RA2YR_PREFIX (mod/ra2paths.py)
+G="$(python3 "$D/mod/ra2paths.py" game)"
+PFX="$(python3 "$D/mod/ra2paths.py" prefix)/pfx"
 # Wine names the Skirmish Setup launcher's process gamemd-spawn.ex (15 characters)
 GAMES='gamemd.exe|gamemd-spawn.ex|game.exe'
 pkill -TERM -x "$GAMES" || true
@@ -22,5 +24,5 @@ echo "Game dir restored to EA stock (DDrawCompat, 640x480 / 1024x768)."
 echo "NOTE: the prefix still has \"ddraw\"=\"native,builtin\" — with stock DDrawCompat that CRASHES"
 echo "      the game under Proton. Remove the override too:"
 echo "      cp '$D/backups/prefix/user.reg.before-ddraw-override' \\"
-echo "         /mnt/data/SteamLibrary/steamapps/compatdata/2229850/pfx/user.reg"
+echo "         '$PFX/user.reg'"
 echo "      and clear the Steam launch options."

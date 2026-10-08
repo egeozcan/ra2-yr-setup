@@ -5,8 +5,20 @@ Steam app **2229850**, Bazzite / KDE Wayland, Proton Experimental,
 
 Paths below are written as `<GAME>` (the game directory), `<PREFIX>` (the Proton prefix,
 `steamapps/compatdata/2229850/pfx`) and `<REPO>` (this folder). The actual values for this machine,
-plus its network and display details, are in `LOCAL.md`, which git ignores. The scripts still
-hard-code the game directory (`GAME`/`G` near the top of each) and the display output name.
+plus its network and display details, are in `LOCAL.md`, which git ignores.
+
+The scripts find the game through Steam (`mod/ra2paths.py`: the library in `libraryfolders.vdf` that
+holds the app manifest). Run `python3 mod/ra2paths.py` to see what it found. Environment variables
+override it:
+
+| Variable | Default |
+|---|---|
+| `RA2YR_STEAM` | `~/.local/share/Steam`, `~/.steam/steam` or the Flatpak Steam |
+| `RA2YR_GAME` | `<library>/steamapps/common/Command & Conquer Red Alert II` |
+| `RA2YR_PREFIX` | `<library>/steamapps/compatdata/2229850` (the folder with `pfx/` in it) |
+| `RA2YR_PROTON` | `Proton - Experimental/proton`, in any Steam library |
+| `RA2YR_BENCH_FARM` | `<library>/ra2-bench-farm` (benchmark slots; keep it on the prefix's filesystem) |
+| `RA2YR_OUTPUT` | the primary monitor (a `kscreen-doctor` output name such as `DP-2`) |
 
 ## Working configuration
 
@@ -1802,7 +1814,7 @@ and Isolation, mostly logic, 390 instead of 330.
 - `--jobs N` (suites) plays N games at once, with no windows (since 2026-10-07). With 8, the
   48-game `strat_mcv` suite of 60,000 frames took 5½ minutes; one game at a time takes about 20 s
   to 4 minutes each.
-  - Each game runs in a slot under `/mnt/data/SteamLibrary/ra2-bench-farm/slotK`. A slot has a
+  - Each game runs in a slot under `<library>/ra2-bench-farm/slotK` (`RA2YR_BENCH_FARM`). A slot has a
     game dir of links to the game's files, with its own copies of the exe, the DLL, `RA2MD.INI` and
     `ddraw.ini`, refreshed every game (a DLL installed between games is picked up). It also has its
     own Proton prefix, a reflink copy: Proton waits for a prefix's wineserver to end before it
@@ -1972,7 +1984,7 @@ from −1 (wiped out, killed nothing) to +1. Above 0, the row unit wins the trad
 - Checks: Tank Destroyers beat every tank, Flak Tracks and Prisms shred infantry, the Mastermind takes
   any ground vehicle, V3s lose every close fight, and Kirovs and Discs beat anything without
   anti-air.
-- Results: `/mnt/data/SteamLibrary/ra2-bench-results/2026-10-07/arena` (`base-units`: 15 vehicles against
+- Results: `<library>/ra2-bench-results/2026-10-07/arena` (`base-units`: 15 vehicles against
   23 types; `base-siege`, `long-siege*`: sieges; `sweep/lib*`: Liberator variants).
 
 Findings (scores at equal cost):

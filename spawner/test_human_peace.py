@@ -9,10 +9,13 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 import unittest
 
 HERE = Path(__file__).resolve().parent
-GAME = Path('/mnt/data/SteamLibrary/steamapps/common/Command & Conquer Red Alert II')
+sys.path.insert(0, str(HERE.parent / 'mod'))
+import ra2paths
+GAME = Path(ra2paths.GAME)
 DLL = Path(os.environ.get('PEACE_TEST_DLL', HERE / 'yspawn-test.dll'))
 
 
