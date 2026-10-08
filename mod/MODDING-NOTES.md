@@ -4,7 +4,7 @@ This file records what we learned while building the Liberator tank and the Chea
 (2026-09-25). It covers facts about the game's files and engine, how to make art that fits in, and the
 mistakes we made along the way.
 
-`README.md` describes what the mods contain and how to install them. This file explains why they are built
+`README.md` describes what the mods contain and how to install them, `docs/DEVLOG.md` in full detail. This file explains why they are built
 the way they are.
 
 Each fact is marked with how it was established:
@@ -262,7 +262,7 @@ Checked on screenshots on 2026-09-26 (`spawner/showcase.py`):
 - **Pre-placed map units didn't show up [in game].** Vehicles added to a map's `[Units]` (appended after
   `[Digest]`), owned by `<Player @ A>` or by a country name, never appeared for the player in a match started
   by `yspawn`. Nobody checked whether they existed under the shroud for some other house. Use the launcher's
-  own `[Units]` (README, quick skirmish launcher).
+  own `[Units]` (docs/DEVLOG.md, Quick skirmish launcher).
 - **Evidence:** the full screenshots and the voxels they show are in
   `logs/liberator-ingame-2026-09-26/` (not in git).
 

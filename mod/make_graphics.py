@@ -103,7 +103,7 @@ FONT = {
 }
 
 
-# Painted cameo art: an image made with an image model from a render of the voxel model (see README),
+# Painted cameo art: an image made with an image model from a render of the voxel model (see docs/DEVLOG.md),
 # cropped to CAMEO_ART_CROP (x0, y0, x1, y1; 5:4 like the 60x48 cameo). Without it the cameo is rendered.
 CAMEO_ART = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cameo-art", "liberator.png")
 CAMEO_ART_CROP = (100, 120, 1080, 904)

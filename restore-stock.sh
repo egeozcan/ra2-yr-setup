@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Revert the GAME DIRECTORY to EA stock. Does NOT touch the prefix override or Steam launch options
-# (see HANDOFF.md "establish this FIRST" if you want a full original-stack revert).
+# (docs/menu-fix-handoff-2026-09-15.md has the original stack, for a full revert).
 set -euo pipefail
 D="$(cd "$(dirname "$0")" && pwd)"
 # Game dir and Proton prefix: found through Steam, or set RA2YR_GAME / RA2YR_PREFIX (mod/ra2paths.py)

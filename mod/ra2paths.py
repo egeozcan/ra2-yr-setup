@@ -75,7 +75,7 @@ GAME = os.environ.get("RA2YR_GAME") or find_game(LIBRARY)
 PREFIX = os.environ.get("RA2YR_PREFIX") or os.path.join(LIBRARY, "steamapps", "compatdata", APP_ID)
 PROTON = os.environ.get("RA2YR_PROTON") or find_tool(STEAM, "Proton - Experimental", "proton")
 RUNTIME = find_tool(STEAM, "SteamLinuxRuntime_4", "_v2-entry-point")
-DEFAULT_SIZE = (2560, 1440)   # the tested resolution (README, Working configuration)
+DEFAULT_SIZE = (2560, 1440)   # the tested resolution (README, How the display setup works)
 
 
 def screen_size(game=None):

@@ -1,5 +1,5 @@
 # ---- Personal / account data -------------------------------------------------
-# Machine-specific paths, LAN address, hostname, display and client names (see README placeholders).
+# Machine-specific paths, LAN address, hostname, display and client names (see the placeholders in docs/DEVLOG.md).
 LOCAL.md
 
 # Steam localconfig.vdf copies (persona name, account ID, friends), Wine registry,
@@ -7,7 +7,7 @@ LOCAL.md
 backups/
 
 # Game logs, crash dumps and screenshots: local paths, Steam user ID, EA game art.
-# (only the renderer test write-up referenced from README.md is kept; checked: no personal data)
+# (only the renderer test write-up referenced from docs/DEVLOG.md is kept; checked: no personal data)
 logs/*
 !logs/menu-investigation/
 logs/menu-investigation/*

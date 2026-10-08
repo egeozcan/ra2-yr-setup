@@ -1,7 +1,7 @@
 """Native policy checks and execution of the actual x86 siege wrapper.
 
 Engine tests reuse test_human_peace's Unicorn harness and symbol-bearing DLL.
-Build as described in README; dependencies are unicorn, pefile and capstone.
+Build as described in docs/DEVLOG.md; dependencies are unicorn, pefile and capstone.
 """
 from pathlib import Path
 import struct

@@ -4,7 +4,7 @@
 usage: install-renderer.py [WIDTHxHEIGHT]      (default 2560x1440, the tested resolution)
 
   ddraw.dll   cnc-ddraw 6.3.0.0, from its GitHub release (kept in installers/, checked by SHA256)
-  ddraw.ini   the release's ddraw.ini with the tested settings (README, Working configuration)
+  ddraw.ini   the release's ddraw.ini with the tested settings (README, How the display setup works)
   RA2MD.INI   [Video] ScreenWidth/ScreenHeight set to the resolution
 apply-working.sh runs this when backups/working/ is missing, then adds the Wine DLL override.
 Close the game first: it keeps ddraw.dll open.
