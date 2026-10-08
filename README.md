@@ -68,6 +68,13 @@ this way skip the intro and menus and exit when the match ends. They also get:
   - picks a strategy (balanced, rush, boom, siege, naval).
 - **Oil defences:** a Brutal AI fortifies threatened oil derricks.
 
+<p>
+  <img src="docs/screenshots/skirmish-setup.png" width="49%"
+       alt="Skirmish Setup: map list, Lost Lake preview with start positions, four players with teams and AI levels">
+  <img src="docs/screenshots/skirmish-setup-rules.png" width="49%"
+       alt="Skirmish Setup: game settings (speed, starting base tier, credits) and rule switches, including Human in peace">
+</p>
+
 The settings are keys in `spawner/yspawn.ini`, and the Skirmish Setup window writes that file. The keys
 are documented in `spawner/yspawn.c` and `spawner/director.h` and, with examples, in `docs/DEVLOG.md`.
 
