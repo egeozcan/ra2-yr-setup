@@ -14,6 +14,15 @@ if pgrep -x "$GAMES" >/dev/null; then
   echo "the game is still running; close it first" >&2   # cp would overwrite its loaded ddraw.dll
   exit 1
 fi
+if [ ! -d "$D/backups/stock" ]; then
+  # no saved stock files: drop ours and let Steam put EA's back
+  rm -fv "$G/ddraw.dll" "$G/ddraw.ini"
+  echo
+  echo "Now restore EA's files: Steam > the game's Properties > Installed Files > Verify integrity."
+  echo "Then remove the line \"ddraw\"=\"native,builtin\" from '$PFX/user.reg' (with the game closed):"
+  echo "with it, EA's DDrawCompat crashes under Proton."
+  exit 0
+fi
 cp -v "$D/backups/stock/ddraw.dll"       "$G/ddraw.dll"
 cp -v "$D/backups/stock/DDrawCompat.ini" "$G/DDrawCompat.ini"
 cp -v "$D/backups/stock/RA2.INI"         "$G/RA2.INI"

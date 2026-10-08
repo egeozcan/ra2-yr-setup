@@ -20,6 +20,41 @@ override it:
 | `RA2YR_BENCH_FARM` | `<library>/ra2-bench-farm` (benchmark slots; keep it on the prefix's filesystem) |
 | `RA2YR_OUTPUT` | the primary monitor (a `kscreen-doctor` output name such as `DP-2`) |
 
+## Requirements and setup
+
+Needs Linux with Steam, **Command & Conquer: Red Alert 2 and Yuri's Revenge** from Steam (app 2229850,
+started once so its Proton prefix exists), Proton Experimental and the Steam Linux Runtime 4.0 (Steam
+installs both), and:
+
+| What | For |
+|---|---|
+| Python 3 (standard library only) | everything below; `mod/ra2paths.py`, the shell scripts |
+| [Gamescope](https://github.com/ValveSoftware/gamescope) | `yuri-gamescope.py` (Steam launch option), `spawn.py run`, benchmarks |
+| `numpy`, `Pillow` (in `mod/.venv`) | the mod art: `make_graphics.py`, `cheatdef_art.py`, `make_bulldozer.py` |
+| `podman` | `spawner/build.sh`: builds `yspawn.dll` with 32-bit mingw in a Fedora container (about 1 GB, first run) |
+| GTK 4, libadwaita and PyGObject in the system Python (`/usr/bin/python3`) | `spawner/skirmish.py`, the Skirmish Setup window |
+| a C compiler (`cc`) | the policy unit tests in `spawner/` and `mod/` |
+| `unicorn`, `pefile`, `capstone` (optional) | engine checks in `spawner/test_human_peace.py`, `test_director.py`; skipped without them |
+| KDE Plasma's `kscreen-doctor` (optional) | fitting Gamescope to the monitor and `sunshine-display.py`; without it Gamescope picks the size itself |
+
+Setup, with the game closed:
+
+1. `./apply-working.sh` installs cnc-ddraw 6.3 (`install-renderer.py`: downloaded from its GitHub
+   release, checked by SHA256) with the tested `ddraw.ini`, sets 2560×1440 in `RA2MD.INI` (pass another
+   size, e.g. `./apply-working.sh 1920x1080`) and adds the Wine `ddraw` override to the prefix. Set the
+   Steam launch options it prints. With the saved files in `backups/working/` (not published), it copies
+   those instead.
+2. Mod art: `python3 -m venv mod/.venv && mod/.venv/bin/pip install numpy pillow`, then
+   `mod/.venv/bin/python mod/make_graphics.py`, `mod/.venv/bin/python mod/cheatdef_art.py` and
+   `mod/.venv/bin/python mod/make_bulldozer.py` (they read stock art from the game's MIX files and write
+   `mod/assets/`).
+3. `python3 mod/build-tesla-mod.py install`: the mod and Brutal AI files into the game directory.
+4. `python3 spawner/spawn.py install`: builds and installs the quick skirmish launcher.
+5. `/usr/bin/python3 spawner/skirmish.py` (or `--install-desktop` for an application menu entry).
+
+`./restore-stock.sh` undoes step 1 (without `backups/stock/`, it removes cnc-ddraw and tells you to have Steam
+verify the game files); `build-tesla-mod.py uninstall` and `spawn.py uninstall` undo steps 3 and 4.
+
 ## Working configuration
 
 | Component | Setting |
@@ -155,7 +190,7 @@ Manual recovery: `python3 <REPO>/sunshine-display.py stop`.
 
 Steam launch options are now:
 `/usr/bin/python3 <REPO>/yuri-gamescope.py %command%`
-The wrapper retains the tested Gamescope game size (2560×1440), fullscreen
+The wrapper runs Gamescope at the game's resolution from `RA2MD.INI` (the tested 2560×1440), fullscreen
 behavior and renderer, but chooses the output size from the main display output's active mode.
 It produces the original 5120×1440 output locally and 2560×1440 for this
 streaming profile. This supersedes the literal launch options in the table.
