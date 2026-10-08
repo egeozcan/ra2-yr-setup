@@ -213,5 +213,6 @@ Bazzite with KDE Plasma on Wayland. Known AI limits and open crashes are listed 
 
 ## License
 
-MIT, see `LICENSE`. Red Alert 2 and Yuri's Revenge are EA's. This repository contains none of their
+GPL-3.0-or-later, see `LICENSE`. The launcher builds on engine addresses and layouts from the GPL-3 projects
+YRpp and yrpp-spawner. Red Alert 2 and Yuri's Revenge are EA's. This repository contains none of their
 files: the mod art is generated locally, from the game's own archives where it needs stock pieces.
